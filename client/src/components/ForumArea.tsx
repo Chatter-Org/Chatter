@@ -277,7 +277,7 @@ export function ForumArea() {
         setPosts((prev) =>
           prev.map((p) =>
             p.post_id === detail.post_id
-              ? { ...p, title: detail.title ?? p.title, body: detail.body ?? p.body, tags: detail.tags ?? p.tags, edited: true, edited_at: detail.edited_at }
+              ? { ...p, title: detail.title ?? p.title, body: detail.body ?? p.body, tags: detail.tags ?? p.tags, edited: detail.edited ?? true, edited_at: detail.edited_at ?? p.edited_at }
               : p
           )
         );

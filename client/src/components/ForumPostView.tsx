@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft, Trash2, Paperclip, X, Send, Pencil, Check,
-  CornerUpLeft, ChevronDown, ChevronRight, MessageSquare, ArrowUpDown,
+  CornerUpLeft, ChevronDown, ChevronRight, MessageSquare, ArrowUpDown, Tag,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -62,8 +62,15 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
   const { state } = useAppContext();
   const [post, setPost] = useState<ForumPost | null>(null);
   // The tags the post's channel offers, kept live by the channel update.
-  const channelTags =
-    state.channels.find((c) => c.channel_id === post?.channel_id)?.forum_tags ?? [];
+  const postChannel = state.channels.find((c) => c.channel_id === post?.channel_id);
+  const channelTags = postChannel?.forum_tags ?? [];
+  // Whoever curates the forum — the people who may pin in it — may retag
+  // anyone's post, though not change its words. The server checks the same.
+  const canRetag =
+    !!state.myPermissions?.manage_channels ||
+    (post?.channel_id
+      ? postChannel?.created_by === state.userId
+      : state.roomInfoMap[roomId]?.creator === state.userId);
   const [comments, setComments] = useState<ForumComment[]>([]);
   const [commentBody, setCommentBody] = useState("");
   const commentMentions = useTextareaMentions(setCommentBody);
@@ -90,6 +97,8 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
   const [editPostBody, setEditPostBody] = useState("");
   const editPostMentions = useTextareaMentions(setEditPostBody);
   const [editPostTags, setEditPostTags] = useState<string[]>([]);
+  // A curator retagging someone else's post: only the picker is offered.
+  const [retaggingPost, setRetaggingPost] = useState(false);
   const [savingPost, setSavingPost] = useState(false);
 
   // Edit state for comments (keyed by comment_id)
@@ -205,7 +214,8 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
                 title: detail.title ?? prev.title,
                 body: detail.body ?? prev.body,
                 tags: detail.tags ?? prev.tags,
-                edited: true,
+                // A curator's retag is not the author's edit, and says so.
+                edited: detail.edited ?? true,
                 edited_at: detail.edited_at ?? prev.edited_at,
               }
             : prev
@@ -386,6 +396,25 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
       setEditingPost(false);
     } catch (e: any) {
       toast.error(e.message || "Failed to edit post");
+    } finally {
+      setSavingPost(false);
+    }
+  };
+
+  const startRetaggingPost = () => {
+    if (!post) return;
+    setEditPostTags((post.tags ?? []).filter((id) => channelTags.some((t) => t.tag_id === id)));
+    setRetaggingPost(true);
+  };
+
+  const saveRetagPost = async () => {
+    if (!post) return;
+    setSavingPost(true);
+    try {
+      await apiEditForumPost(roomId, postId, undefined, undefined, editPostTags);
+      setRetaggingPost(false);
+    } catch (e) {
+      toast.error((e instanceof Error && e.message) || "Failed to change tags");
     } finally {
       setSavingPost(false);
     }
@@ -682,10 +711,34 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
                     <Pencil className="w-4 h-4" />
                   </button>
                 )}
+                {!isPostAuthor && canRetag && channelTags.length > 0 && !retaggingPost && (
+                  <button
+                    onClick={startRetaggingPost}
+                    className="text-muted-foreground hover:text-foreground transition-colors mt-1 cursor-pointer"
+                    title="Edit tags"
+                  >
+                    <Tag className="w-4 h-4" />
+                  </button>
+                )}
               </div>
-              <div className="mt-2">
-                <ForumTagList tagIds={post.tags} tags={channelTags} />
-              </div>
+              {retaggingPost ? (
+                <div className="mt-2 space-y-2">
+                  <ForumTagPicker tags={channelTags} value={editPostTags} onChange={setEditPostTags} />
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={saveRetagPost} disabled={savingPost} className="gap-1.5">
+                      <Check className="w-3 h-3" />
+                      {savingPost ? "Saving..." : "Save tags"}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setRetaggingPost(false)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2">
+                  <ForumTagList tagIds={post.tags} tags={channelTags} />
+                </div>
+              )}
               <p className="text-sm text-muted-foreground mt-1">
                 {authorDisplay} · {formatTime(post.created_at)}
                 {post.edited && (

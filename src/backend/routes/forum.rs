@@ -1025,11 +1025,28 @@ pub(crate) async fn edit_post(
         .flatten()
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Post not found"))?;
 
-    if post.author != user_id {
-        return Err(error_response(
-            StatusCode::FORBIDDEN,
-            "Only the author can edit this post",
-        ));
+    // The author edits anything. Whoever curates the forum — the people who
+    // may pin in it — may retag a post and nothing else: tags are how the
+    // forum is sorted, which is theirs to keep, while the words stay the
+    // author's. Their retag is not the author's edit, so it is not marked one.
+    let is_author = post.author == user_id;
+    if !is_author {
+        require_post_visible(&state, &post, &user_id).await?;
+        let perms = channel_permissions(&state, &room_id, &post.channel_id, &user_id).await;
+        let forum_owner = forum_owner_of(&state, &room_id, &post.channel_id).await;
+        let curator = user_id == forum_owner || perms.manage_channels;
+        if !curator {
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                "Only the author can edit this post",
+            ));
+        }
+        if req.title.is_some() || req.body.is_some() {
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                "Only the author can change a post's title or body",
+            ));
+        }
     }
 
     let mut set_doc = mongodb::bson::Document::new();
@@ -1076,8 +1093,10 @@ pub(crate) async fn edit_post(
     }
 
     let now = now_millis();
-    set_doc.insert("edited", true);
-    set_doc.insert("edited_at", now);
+    if is_author {
+        set_doc.insert("edited", true);
+        set_doc.insert("edited_at", now);
+    }
 
     let _ = coll
         .update_one(doc! { "_id": &post_id }, doc! { "$set": set_doc })
@@ -1095,7 +1114,8 @@ pub(crate) async fn edit_post(
         "title": new_title,
         "body": new_body,
         "tags": new_tags,
-        "edited_at": now,
+        "edited": post.edited || is_author,
+        "edited_at": if is_author { now } else { post.edited_at },
         "added_mentions": added,
         "suppress_role_mentions": suppress_role_mentions,
     });
