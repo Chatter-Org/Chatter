@@ -585,17 +585,19 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
         {!isVoice && ch.channel_type === "text" && (state.channelThreads[ch.channel_id]?.length ?? 0) > 0 && (
           // Tree lines, as forum replies have them: a trunk down from under
           // the channel's icon and an elbow into each thread, stopping at the
-          // last. The icon sits further in when the drag grip is drawn.
+          // last. The icon sits further in when the drag grip is drawn. Drawn
+          // in the secondary-text colour, not `border`: themes keep `border`
+          // faint on purpose, and it vanished as a line someone has to follow.
           <div className={`space-y-0.5 pb-1 pr-1 ${canManage ? "ml-9" : "ml-5"}`}>
             {state.channelThreads[ch.channel_id].map((thread, i, threads) => {
               const unreadMentions = state.threadMentions[thread.threadId] ?? 0;
               return (
                 <div key={thread.threadId} className="relative pl-3">
                   {i < threads.length - 1 && (
-                    <span aria-hidden className="absolute left-0 -top-0.5 -bottom-0.5 border-l-3 border-border" />
+                    <span aria-hidden className="absolute left-0 -top-0.5 -bottom-0.5 border-l-3 border-muted-foreground/60" />
                   )}
                   {/* Ends level with the row's middle: py-0.5 plus half a text-xs line. */}
-                  <span aria-hidden className="absolute left-0 -top-0.5 h-3 w-2 rounded-bl-md border-b-3 border-l-3 border-border" />
+                  <span aria-hidden className="absolute left-0 -top-0.5 h-3 w-2 rounded-bl-md border-b-3 border-l-3 border-muted-foreground/60" />
                 <button
                   onClick={() => {
                     // Threads live in their channel, so land there first.
