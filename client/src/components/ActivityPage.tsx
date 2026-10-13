@@ -14,7 +14,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { UserProfileDialog } from "./UserProfileDialog";
 import { displayUserId } from "@/lib/utils";
 import { AuthImage, AuthAvatarImage } from "@/components/AuthImage";
-import { AtSign, Users, MessageSquare, Clock, UserPlus, UserCheck, Ban, ChevronDown, Radio, Volume2, Monitor, MicOff, HeadphoneOff, Gamepad2, MessageCircle } from "lucide-react";
+import { AtSign, Users, MessageSquare, Clock, UserPlus, UserCheck, Ban, ChevronDown, Radio, Volume2, MicOff, HeadphoneOff, Gamepad2, MessageCircle } from "lucide-react";
+import { LivePill } from "./voice/LivePill";
 import { ActivityStats } from "./activity/ActivityStats";
 import { StorageManager } from "./activity/StorageManager";
 import { RecentDiscussions } from "./activity/RecentDiscussions";
@@ -674,8 +675,8 @@ export function ActivityPage() {
                             </span>
                           )}
                           {sharers.length > 0 && (
-                            <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-3xs font-semibold bg-info/20 text-info min-w-0 max-w-full">
-                              <Monitor className="h-3 w-3 shrink-0" />
+                            <span className="flex items-center gap-1.5 py-0.5 text-3xs font-semibold text-foreground min-w-0 max-w-full">
+                              <LivePill />
                               <span className="truncate">
                                 {sharers.length === 1
                                   ? `${state.userPresence[sharers[0].userId]?.displayName || displayUserId(sharers[0].userId)} is streaming`

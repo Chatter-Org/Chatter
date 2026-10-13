@@ -39,6 +39,7 @@ import { RoleManagementDialog } from "./RoleManagementDialog";
 import { NotificationSettingsPopover, NotificationBell } from "./NotificationSettingsPopover";
 import { resolveNotificationLevel } from "@/lib/notifications";
 import { VoiceConnectedPanel } from "./voice/VoiceConnectedPanel";
+import { LivePill } from "./voice/LivePill";
 import { clickable } from "@/lib/a11y";
 import {
   DEFAULT_PANEL_WIDTH,
@@ -677,9 +678,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
                           className="shrink-0 flex items-center justify-center min-h-9 md:min-h-0"
                           title={`Watch ${(state.userPresence[m.userId]?.displayName || displayUserId(m.userId))}'s screen`}
                         >
-                          <span className="rounded-full bg-red-600 px-1.5 py-px text-3xs font-bold leading-none tracking-wide text-white transition-colors hover:bg-red-500">
-                            LIVE
-                          </span>
+                          <LivePill className="transition-colors hover:bg-red-500" />
                         </button>
                       )}
                       {m.clipping && (

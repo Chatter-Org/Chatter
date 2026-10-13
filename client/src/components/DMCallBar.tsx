@@ -4,6 +4,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AuthAvatarImage } from "./AuthImage";
 import { displayUserId } from "@/lib/utils";
 import { Mic, MicOff, HeadphoneOff, Monitor, PhoneOff, Phone } from "lucide-react";
+import { LivePill } from "./voice/LivePill";
 
 /**
  * Voice and screen share for a DM.
@@ -114,10 +115,10 @@ export function DMCallBar({
                   payload: { open: true, sharer: m.userId },
                 })
               }
-              className="flex min-h-11 shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-info transition-colors hover:bg-info/20 cursor-pointer md:min-h-0"
+              className="flex min-h-11 shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-xs text-foreground transition-colors hover:bg-accent cursor-pointer md:min-h-0"
               title={`Watch ${name(m.userId)}'s screen`}
             >
-              <Monitor className="h-3 w-3" />
+              <LivePill />
               Watch
             </button>
           ))}
