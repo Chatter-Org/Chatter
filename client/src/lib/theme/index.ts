@@ -1,5 +1,6 @@
 export { ThemeProvider } from "./provider";
 export { useThemeSettings } from "./context";
+export { useReadableColor } from "./readable";
 export {
   checkContrast,
   deriveThemeVars,

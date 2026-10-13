@@ -46,3 +46,15 @@ export function mentionRoleColors(
   }
   return map;
 }
+
+/** The same map with every colour passed through `readable` — a role colour
+ *  picked on one theme, made legible on the one it is drawn on. An empty
+ *  colour stays empty: it means "no colour", which draws the primary style. */
+export function readableRoleColors(
+  colors: Map<string, string>,
+  readable: (color: string) => string,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [name, color] of colors) out.set(name, color ? readable(color) : "");
+  return out;
+}

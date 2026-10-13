@@ -7,6 +7,7 @@ import { apiGetMyPermissions } from "@/lib/api";
 import type { CustomRole, PermissionName, PermissionOverwrite, RolePermissions } from "@/lib/api";
 import { CHANNEL_PERMISSION_SECTIONS } from "@/lib/permissionMeta";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useReadableColor } from "@/lib/theme";
 
 /** Room-wide powers like manage_roles are absent by design — scoping them to a
  *  single channel is meaningless. */
@@ -166,6 +167,7 @@ export function ChannelOverwrites({
   channelId,
   header,
 }: ChannelOverwritesProps) {
+  const readable = useReadableColor();
   const [adding, setAdding] = useState(false);
 
   const roleName = useMemo(
@@ -177,7 +179,7 @@ export function ChannelOverwrites({
     if (ow.target_type === "everyone") return { text: "Everyone", color: undefined };
     if (ow.target_type === "role") {
       const role = roleName.get(ow.target_id);
-      return { text: role?.name ?? "Deleted role", color: role?.color || undefined };
+      return { text: role?.name ?? "Deleted role", color: readable(role?.color) || undefined };
     }
     const member = members.find((m) => m.userId === ow.target_id);
     return { text: member?.displayName ?? displayUserId(ow.target_id), color: undefined };
@@ -323,7 +325,7 @@ export function ChannelOverwrites({
                 <button
                   key={r.role_id}
                   className="w-full text-left text-xs px-2 py-1 rounded hover:bg-accent cursor-pointer"
-                  style={{ color: r.color || undefined }}
+                  style={{ color: readable(r.color) || undefined }}
                   onClick={() => addOverwrite("role", r.role_id)}
                 >
                   {r.name}

@@ -51,6 +51,7 @@ import {
   storeChannelPanelWidth,
 } from "@/lib/channelPanelWidth";
 import { toast } from "sonner";
+import { useReadableColor } from "@/lib/theme";
 
 
 /** Space each row needs beside its text, in pixels.
@@ -168,6 +169,7 @@ function VoiceTimer({ since }: { since: number }) {
 export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceChannel, onLeaveVoice, onToggleMute, onToggleDeafen, onToggleScreenShare, isScreenSharing, onToggleWebcam, isWebcamActive, connQualityRef, setUserVolumeRef, speakingUsersRef }: ChannelListProps) {
   const confirm = useConfirm();
   const { state, dispatch, selectChannel, createChannel, updateChannel, deleteChannel, moderateVoice, openThread } = useAppContext();
+  const readable = useReadableColor();
   const { screenFps } = useScreenShareFps();
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -1368,7 +1370,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
                             }}
                             className="rounded border-input"
                           />
-                          <span className="text-sm" style={{ color: r.color || undefined }}>{r.name}</span>
+                          <span className="text-sm" style={{ color: readable(r.color) || undefined }}>{r.name}</span>
                         </label>
                       ))}
                     </div>

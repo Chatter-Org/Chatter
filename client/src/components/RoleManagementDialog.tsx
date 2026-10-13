@@ -24,6 +24,7 @@ import {
 import type { CustomRole, RolePermissions } from "@/lib/api";
 import { toast } from "sonner";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { useReadableColor } from "@/lib/theme";
 
 const DEFAULT_ROLE_COLOR = "#6366f1";
 
@@ -79,6 +80,9 @@ function PermissionRow({
 export function RoleManagementDialog({ open, onOpenChange }: RoleManagementDialogProps) {
   const confirm = useConfirm();
   const { state, createRole, updateRole, deleteRole } = useAppContext();
+  // The swatch beside each role shows the colour as chosen; the name is drawn
+  // the way everyone on this theme will read it.
+  const readable = useReadableColor();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
@@ -232,7 +236,7 @@ export function RoleManagementDialog({ open, onOpenChange }: RoleManagementDialo
                     />
                     <span
                       className="text-sm flex-1 min-w-0 truncate"
-                      style={{ color: r.color || undefined }}
+                      style={{ color: readable(r.color) || undefined }}
                     >
                       {r.name}
                     </span>

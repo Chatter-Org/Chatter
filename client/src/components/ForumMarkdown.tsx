@@ -4,7 +4,8 @@ import { AuthImage } from "@/components/AuthImage";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
 import { useAppContext } from "@/lib/store";
-import { mentionRoleColors } from "@/lib/mentions";
+import { useReadableColor } from "@/lib/theme";
+import { mentionRoleColors, readableRoleColors } from "@/lib/mentions";
 import { remarkMentions } from "@/lib/remarkMentions";
 import { cn, displayUserId } from "@/lib/utils";
 
@@ -16,10 +17,11 @@ interface ForumMarkdownProps {
 export function ForumMarkdown({ content, className }: ForumMarkdownProps) {
   const { state } = useAppContext();
   const roomInfo = state.currentRoomId ? state.roomInfoMap[state.currentRoomId] : null;
+  const readable = useReadableColor();
   const roleColors = useMemo(
-    () => mentionRoleColors(state.customRoles, roomInfo),
+    () => readableRoleColors(mentionRoleColors(state.customRoles, roomInfo), readable),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.customRoles, roomInfo?.owner_name_color, roomInfo?.mod_name_color],
+    [state.customRoles, roomInfo?.owner_name_color, roomInfo?.mod_name_color, readable],
   );
   const myName = state.userId ? displayUserId(state.userId).toLowerCase() : "";
 

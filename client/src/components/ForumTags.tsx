@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { useReadableColor } from "@/lib/theme";
 
 /** One tag as a chip, tinted with its colour when it has one. */
 export function ForumTagChip({
@@ -33,8 +34,13 @@ export function ForumTagChip({
   onClick?: () => void;
   size?: "xs" | "sm";
 }) {
-  const style = tag.color
-    ? { color: tag.color, borderColor: tag.color, backgroundColor: `${tag.color}${selected === false ? "00" : "1f"}` }
+  const readable = useReadableColor();
+  // The colour was picked on someone's theme and is drawn on everyone's, so
+  // it is adapted to this one: text at 4.5:1, the border at the 3:1 a
+  // control's edge needs, and the tint taken from the adapted text colour.
+  const text = readable(tag.color);
+  const style = text
+    ? { color: text, borderColor: readable(tag.color, 3), backgroundColor: `${text}${selected === false ? "00" : "1f"}` }
     : undefined;
   const className = cn(
     "inline-flex items-center rounded-full border font-medium whitespace-nowrap",

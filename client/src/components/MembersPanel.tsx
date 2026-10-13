@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { ChevronLeft, ChevronRight, Crown, Shield, Smartphone, Gamepad2 } from "lucide-react";
 import { useAppContext, screenThumbnailsMap } from "@/lib/store";
+import { useReadableColor } from "@/lib/theme";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AuthAvatarImage } from "./AuthImage";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,6 +18,7 @@ interface MembersPanelProps {
 
 export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
   const { state } = useAppContext();
+  const readable = useReadableColor();
   const [profileOpen, setProfileOpen] = useState(false);
   const [selectedMember, setSelectedMember] = useState<{
     userId: string;
@@ -96,12 +98,13 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
       return r?.color || acc;
     }, undefined);
 
-    const nameColor =
+    const nameColor = readable(
       member.role === "owner" && roomInfo?.owner_name_color
         ? roomInfo.owner_name_color
         : member.role === "moderator" && roomInfo?.mod_name_color
           ? roomInfo.mod_name_color
-          : topRoleColor;
+          : topRoleColor,
+    );
 
     const nameFontUrl = presence?.nameFontUrl;
     if (nameFontUrl) {

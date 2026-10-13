@@ -49,12 +49,13 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { STANDARD_SHORTCODES } from "@/lib/emojiShortcodes";
 import { UserProfileDialog } from "./UserProfileDialog";
 import { CodeBlock } from "./CodeBlock";
+import { useReadableColor } from "@/lib/theme";
 
 // ─── Custom name font registration ──────────────────────────────────────────
 import { ensureFontFace } from "@/lib/fontFace";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { scrollBehavior } from "@/lib/theme/display";
-import { mentionRoleColors } from "@/lib/mentions";
+import { mentionRoleColors, readableRoleColors } from "@/lib/mentions";
 
 const urlRegex = /(https?:\/\/[^\s]+)/g;
 const imageExtensions = IMAGE_EXTENSIONS;
@@ -1203,18 +1204,22 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
     return r?.color || acc;
   }, undefined);
 
-  const senderNameColor =
+  // Role colours were picked on someone else's theme; draw them readable on
+  // this one (lib/theme/readable.ts).
+  const readable = useReadableColor();
+  const senderNameColor = readable(
     senderRole === "owner" && roomInfo?.owner_name_color
       ? roomInfo.owner_name_color
       : senderRole === "moderator" && roomInfo?.mod_name_color
         ? roomInfo.mod_name_color
-        : senderTopRoleColor;
+        : senderTopRoleColor,
+  );
 
   // Map of lowercase role name -> color (or "") for role mention rendering
   const roleNamesMap = useMemo(
-    () => mentionRoleColors(state.customRoles, roomInfo),
+    () => readableRoleColors(mentionRoleColors(state.customRoles, roomInfo), readable),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.customRoles, roomInfo?.owner_name_color, roomInfo?.mod_name_color],
+    [state.customRoles, roomInfo?.owner_name_color, roomInfo?.mod_name_color, readable],
   );
 
   const nameFontUrl = !isExternal ? state.userPresence[message.sender]?.nameFontUrl : undefined;

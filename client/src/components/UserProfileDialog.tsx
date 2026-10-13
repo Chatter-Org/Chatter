@@ -55,6 +55,7 @@ import {
 import { GripVertical, X, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { useReadableColor } from "@/lib/theme";
 
 const STATUS_OPTIONS = [
   { value: "online", label: "Online", color: "bg-success" },
@@ -281,6 +282,7 @@ export function UserProfileDialog({
   displayName,
 }: UserProfileDialogProps) {
   const confirm = useConfirm();
+  const readable = useReadableColor();
   const { state, dispatch, openDM, updateProfile, setManualStatus, kickMember, banMember, setMemberRole, deleteAccount, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, blockUser, unblockUser, assignMemberRoles } = useAppContext();
   const isSelf = userId === state.userId;
   const username = displayUserId(userId) || displayName;
@@ -697,9 +699,9 @@ export function UserProfileDialog({
                           canManage && "cursor-grab active:cursor-grabbing"
                         )}
                         style={{
-                          color: role.color || undefined,
-                          borderColor: role.color || undefined,
-                          backgroundColor: role.color ? `${role.color}15` : undefined,
+                          color: readable(role.color) || undefined,
+                          borderColor: readable(role.color, 3) || undefined,
+                          backgroundColor: role.color ? `${readable(role.color)}15` : undefined,
                         }}
                       >
                         {canManage && <GripVertical className="h-3 w-3 shrink-0 opacity-50" />}
@@ -729,8 +731,8 @@ export function UserProfileDialog({
                       key={role.role_id}
                       className="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium border opacity-40 hover:opacity-70 transition-opacity"
                       style={{
-                        color: role.color || undefined,
-                        borderColor: role.color || undefined,
+                        color: readable(role.color) || undefined,
+                        borderColor: readable(role.color, 3) || undefined,
                       }}
                       onClick={async () => {
                         const next = [...userRoleIds, role.role_id];
