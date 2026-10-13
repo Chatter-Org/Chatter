@@ -9,7 +9,8 @@ use super::super::{
         error_response, extract_token, get_allowed_channel_ids, get_user_from_token, mention_token,
         now_millis, regex_escape,
     },
-    state::{AppState, ChannelRecord, ThreadRecord},
+    push::role_names_by_user,
+    state::{AppState, ChannelRecord, RoomRecord, ThreadRecord},
 };
 use axum::{
     extract::{Path, State},
@@ -17,7 +18,7 @@ use axum::{
     response::Json,
 };
 use futures_util::TryStreamExt;
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{doc, Bson, Document};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -118,6 +119,43 @@ pub(crate) async fn mark_read(
     Ok(Json(json!({ "last_read_ts": ts })))
 }
 
+/// Whether a message is a mention of the reader, as an aggregation expression.
+/// The same judgement the live client makes (`wsHandler.ts`, the
+/// `m.room.message` branch) — change both together, or a refresh moves a ping
+/// somewhere else or drops it: named directly, named through a role they hold
+/// (unless the sender could not ping roles), answered by a reply, or in a DM.
+fn mention_expr(mention: &str, user_id: &str, roles: &[String], is_dm: bool) -> Bson {
+    if is_dm {
+        return Bson::Boolean(true);
+    }
+    let body = doc! { "$ifNull": ["$content.body", ""] };
+    let mut any = vec![
+        Bson::Document(doc! { "$regexMatch": {
+            "input": body.clone(),
+            "regex": regex_escape(mention),
+        }}),
+        Bson::Document(doc! { "$eq": ["$content.reply_to_sender", user_id] }),
+    ];
+    // The client reads `@word` tokens and compares them to role names, so
+    // only a role name that is a word can ever be matched.
+    let names: Vec<String> = roles
+        .iter()
+        .filter(|r| !r.is_empty() && r.chars().all(|c| c.is_alphanumeric() || c == '_'))
+        .map(|r| regex_escape(r))
+        .collect();
+    if !names.is_empty() {
+        any.push(Bson::Document(doc! { "$and": [
+            { "$ne": ["$content.suppress_role_mentions", true] },
+            { "$regexMatch": {
+                "input": body,
+                "regex": format!("@(?:{})(?![\\p{{L}}\\p{{N}}_])", names.join("|")),
+                "options": "i",
+            }},
+        ]}));
+    }
+    Bson::Document(doc! { "$or": any })
+}
+
 /// Unread and mention counts for every room the caller has joined.
 ///
 /// One aggregation per visible channel; both counts come back together so a
@@ -165,19 +203,46 @@ pub(crate) async fn get_unreads(
     let messages_coll = state.db.collection::<Document>("messages");
     let mention = mention_token(&user_id);
 
+    // Every message in a DM is addressed to the reader, so in a DM every
+    // unread is a mention — what the live client and push both already say.
+    // Counting only `@name` here turned a DM's red badge into a plain unread
+    // the moment the page was refreshed.
+    let mut dm_rooms: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Ok(mut cursor) = state
+        .db
+        .collection::<RoomRecord>("rooms")
+        .find(doc! { "_id": { "$in": &joined_rooms }, "is_dm": true })
+        .await
+    {
+        while let Ok(Some(room)) = cursor.try_next().await {
+            dm_rooms.insert(room.room_id);
+        }
+    }
+
     let mut unreads: Vec<Value> = Vec::new();
     let mut thread_mentions: Vec<Value> = Vec::new();
     for room_id in &joined_rooms {
         let allowed = get_allowed_channel_ids(&state, room_id, &user_id).await;
+        let is_dm = dm_rooms.contains(room_id);
+        let roles = role_names_by_user(&state, room_id, std::slice::from_ref(&user_id))
+            .await
+            .remove(&user_id)
+            .unwrap_or_default();
+        let is_mention = mention_expr(&mention, &user_id, &roles, is_dm);
 
-        // Channel ids to tally. A room with no channels still carries messages
-        // with an empty channel_id, so "" is always considered.
-        let mut channel_ids: Vec<String> = vec![String::new()];
+        // Channel ids to tally. A room with no channels carries its messages
+        // with an empty channel_id, so "" is its one bucket. A room that has
+        // channels does not get that bucket: no view of it shows a message
+        // without a channel, so one counted there (from before channels, or
+        // a webhook with none) could never be read and lit the room forever.
+        let mut channel_ids: Vec<String> = Vec::new();
+        let mut has_text_channels = false;
         if let Ok(mut cursor) = channels_coll.find(doc! { "room_id": room_id }).await {
             while let Ok(Some(ch)) = cursor.try_next().await {
                 if ch.channel_type != "text" {
                     continue;
                 }
+                has_text_channels = true;
                 if let Some(ref allowed) = allowed {
                     if !allowed.contains(&ch.channel_id) {
                         continue;
@@ -185,6 +250,9 @@ pub(crate) async fn get_unreads(
                 }
                 channel_ids.push(ch.channel_id);
             }
+        }
+        if !has_text_channels {
+            channel_ids.push(String::new());
         }
 
         for channel_id in channel_ids {
@@ -195,6 +263,8 @@ pub(crate) async fn get_unreads(
                 "origin_server_ts": { "$gt": since },
                 "sender": { "$ne": &user_id },
                 "content.msgtype": { "$ne": "m.system" },
+                // A deleted message keeps its row, and was counted.
+                "redacted": { "$ne": true },
                 // Thread replies are stored with no channel_id, so without
                 // this every one of them counted toward the channel-less
                 // bucket of whatever room it was in. A thread is unread on its
@@ -212,16 +282,7 @@ pub(crate) async fn get_unreads(
                 doc! { "$group": {
                     "_id": Value::Null.to_string(),
                     "count": { "$sum": 1 },
-                    "mentions": { "$sum": {
-                        "$cond": [
-                            { "$regexMatch": {
-                                "input": { "$ifNull": ["$content.body", ""] },
-                                "regex": regex_escape(&mention),
-                            }},
-                            1,
-                            0,
-                        ]
-                    }},
+                    "mentions": { "$sum": { "$cond": [is_mention.clone(), 1, 0] } },
                     // Newest unread message in this channel, so a client can
                     // answer "which channel saw the most recent unread" and
                     // land on it rather than only counting how many.

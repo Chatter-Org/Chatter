@@ -733,7 +733,7 @@ async fn dnd_users(state: &AppState, user_ids: &[String]) -> Vec<String> {
 
 /// The lowercased role names each user answers to in this room — both the
 /// built-in role from the members cache and any custom roles assigned.
-async fn role_names_by_user(
+pub(crate) async fn role_names_by_user(
     state: &AppState,
     room_id: &str,
     user_ids: &[String],

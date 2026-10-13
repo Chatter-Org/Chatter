@@ -1,6 +1,7 @@
 import type { AppState, Action, VoiceChannelMember } from "./types";
 import type { MatrixMessage, PollState } from "../api";
 import { initialState, THREAD_PREVIEW_LIMIT } from "./types";
+import { bucketsFromServer, deriveRoomUnreads } from "../unreads";
 
 /**
  * Fold the poll state a page of messages arrived with into the poll map.
@@ -94,6 +95,19 @@ function withRoomVoiceCounts(state: AppState): AppState {
   return changed ? { ...state, roomInfoMap } : state;
 }
 
+/** Channel kinds whose view is not the chat timeline. */
+const NON_TIMELINE_CHANNELS = new Set(["forum", "whiteboard", "theater", "showcase", "spatial", "voice"]);
+
+function isChatRoomType(roomType: string | undefined): boolean {
+  return roomType !== "forum" && roomType !== "whiteboard" && roomType !== "watchparty";
+}
+
+/** Recompute the room badges from the buckets they summarise. Every case that
+ *  touches a bucket ends here, so the two can never disagree. */
+function withRoomUnreads(state: AppState): AppState {
+  return { ...state, ...deriveRoomUnreads(state) };
+}
+
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "LOGIN":
@@ -123,7 +137,7 @@ export function reducer(state: AppState, action: Action): AppState {
       // it. Clearing it used to blank the new room's voice channels until
       // something happened to refetch them — which, on a room switch, nothing
       // did.
-      return deriveRoomVoice({
+      return withRoomUnreads(deriveRoomVoice({
         ...state,
         currentRoomId: action.payload,
         currentChannelId: null,
@@ -139,9 +153,19 @@ export function reducer(state: AppState, action: Action): AppState {
         screenViewers: preserveVoice ? state.screenViewers : {},
         typingUsers: [],
         adminDashboardOpen: false,
-        roomMentions: action.payload
-          ? { ...state.roomMentions, [action.payload]: 0 }
-          : state.roomMentions,
+        // Only the room's *loose* pings are dismissed by opening it — a DM,
+        // a forum, a thread reply: what has no channel row to keep showing
+        // it. A ping in a channel stays on that channel until it is read,
+        // and so stays on the room if the reader leaves without reading it.
+        roomLooseMentions: action.payload
+          ? { ...state.roomLooseMentions, [action.payload]: 0 }
+          : state.roomLooseMentions,
+        // A room with no timeline (a forum, a whiteboard, a watch party)
+        // never mounts the chat view that clears the rest on arrival.
+        roomLooseUnreads:
+          action.payload && !isChatRoomType(state.roomInfoMap[action.payload]?.room_type)
+            ? { ...state.roomLooseUnreads, [action.payload]: 0 }
+            : state.roomLooseUnreads,
         myPermissions: null,
         companionPanel: null,
         roomEvents: [],
@@ -161,7 +185,7 @@ export function reducer(state: AppState, action: Action): AppState {
         threadMessages: [],
         threadReplyingTo: null,
         threadPins: [],
-      });
+      }));
     }
     case "SET_MESSAGES":
       return {
@@ -514,15 +538,15 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     }
     case "SET_MENTION":
-      return {
+      return withRoomUnreads({
         ...state,
-        roomMentions: {
-          ...state.roomMentions,
+        roomLooseMentions: {
+          ...state.roomLooseMentions,
           [action.payload.roomId]: action.payload.hasMention
-            ? (state.roomMentions[action.payload.roomId] || 0) + 1
+            ? (state.roomLooseMentions[action.payload.roomId] || 0) + 1
             : 0,
         },
-      };
+      });
     case "SET_REPLYING_TO":
       return { ...state, replyingTo: action.payload };
     // A thread has its own composer, so it has its own reply target. Sharing
@@ -862,8 +886,20 @@ export function reducer(state: AppState, action: Action): AppState {
         channelId && state.currentRoomId
           ? { ...state.lastChannelByRoom, [state.currentRoomId]: channelId }
           : state.lastChannelByRoom;
-      return {
+      // A text channel is cleared by the chat view once it has measured the
+      // unread for its "New" divider. Every other kind opens a view that
+      // never does, so its highlight would outlive the visit.
+      const channelType = state.channels.find((c) => c.channel_id === channelId)?.channel_type ?? "";
+      const unreads = !channelId || !NON_TIMELINE_CHANNELS.has(channelType)
+        ? {}
+        : {
+            channelUnreadCounts: { ...state.channelUnreadCounts, [channelId]: 0 },
+            channelMentions: { ...state.channelMentions, [channelId]: 0 },
+            channelLatestUnreadTs: { ...state.channelLatestUnreadTs, [channelId]: 0 },
+          };
+      return withRoomUnreads({
         ...state,
+        ...unreads,
         lastChannelByRoom: remembered,
         currentChannelId: action.payload,
         messages: [],
@@ -887,7 +923,7 @@ export function reducer(state: AppState, action: Action): AppState {
         threadMessages: [],
         threadReplyingTo: null,
         threadPins: [],
-      };
+      });
     }
     case "ADD_CHANNEL":
       if (state.channels.some((c) => c.channel_id === action.payload.channel_id)) return state;
@@ -1001,15 +1037,16 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     }
     case "SET_CHANNEL_MENTION":
-      return {
+      return withRoomUnreads({
         ...state,
+        channelRoomIds: { ...state.channelRoomIds, [action.payload.channelId]: action.payload.roomId },
         channelMentions: {
           ...state.channelMentions,
           [action.payload.channelId]: action.payload.hasMention
             ? (state.channelMentions[action.payload.channelId] || 0) + 1
             : 0,
         },
-      };
+      });
     case "SET_THREAD_MENTION":
       return {
         ...state,
@@ -1024,8 +1061,9 @@ export function reducer(state: AppState, action: Action): AppState {
       const channelId = action.payload.channelId;
       const ts = action.payload.ts;
       const latest = state.channelLatestUnreadTs;
-      return {
+      return withRoomUnreads({
         ...state,
+        channelRoomIds: { ...state.channelRoomIds, [channelId]: action.payload.roomId },
         channelUnreadCounts: {
           ...state.channelUnreadCounts,
           [channelId]: (state.channelUnreadCounts[channelId] || 0) + 1,
@@ -1034,7 +1072,7 @@ export function reducer(state: AppState, action: Action): AppState {
           ts === undefined
             ? latest
             : { ...latest, [channelId]: Math.max(latest[channelId] || 0, ts) },
-      };
+      });
     }
     case "SET_NOTIFICATION_SETTINGS":
       return { ...state, notificationSettings: action.payload };
@@ -1074,32 +1112,14 @@ export function reducer(state: AppState, action: Action): AppState {
     // Server-computed unreads replace the in-memory tallies wholesale — they are
     // authoritative, and a partial merge would double-count anything the client
     // had already counted this session.
-    case "SET_UNREADS": {
-      const channelUnreadCounts: Record<string, number> = {};
-      const channelMentions: Record<string, number> = {};
-      const channelLatestUnreadTs: Record<string, number> = {};
-      const roomUnreadCounts: Record<string, number> = {};
-      const roomMentions: Record<string, number> = {};
-      for (const entry of action.payload) {
-        if (entry.channel_id) {
-          channelUnreadCounts[entry.channel_id] = entry.count;
-          if (entry.mentions > 0) channelMentions[entry.channel_id] = entry.mentions;
-          if (entry.latest_ts) channelLatestUnreadTs[entry.channel_id] = entry.latest_ts;
-        }
-        roomUnreadCounts[entry.room_id] = (roomUnreadCounts[entry.room_id] || 0) + entry.count;
-        if (entry.mentions > 0) {
-          roomMentions[entry.room_id] = (roomMentions[entry.room_id] || 0) + entry.mentions;
-        }
-      }
-      return {
+    case "SET_UNREADS":
+      return withRoomUnreads({
         ...state,
-        channelUnreadCounts,
-        channelMentions,
-        channelLatestUnreadTs,
-        roomUnreadCounts,
-        roomMentions,
-      };
-    }
+        ...bucketsFromServer(action.payload, {
+          roomId: state.currentRoomId,
+          channelId: state.currentChannelId,
+        }),
+      });
     // Server-computed unread mentions replace the session's tallies wholesale,
     // same as the counts above: they are authoritative and a merge would
     // double-count whatever this client already saw.
@@ -1111,25 +1131,28 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, threadMentions };
     }
     case "CLEAR_CHANNEL_UNREAD":
-      return {
+      return withRoomUnreads({
         ...state,
         channelUnreadCounts: { ...state.channelUnreadCounts, [action.payload]: 0 },
         channelMentions: { ...state.channelMentions, [action.payload]: 0 },
         channelLatestUnreadTs: { ...state.channelLatestUnreadTs, [action.payload]: 0 },
-      };
+      });
+    // The room's loose bucket only — what has no channel. Its channels are
+    // cleared one by one as they are read.
     case "INCREMENT_ROOM_UNREAD":
-      return {
+      return withRoomUnreads({
         ...state,
-        roomUnreadCounts: {
-          ...state.roomUnreadCounts,
-          [action.payload]: (state.roomUnreadCounts[action.payload] || 0) + 1,
+        roomLooseUnreads: {
+          ...state.roomLooseUnreads,
+          [action.payload]: (state.roomLooseUnreads[action.payload] || 0) + 1,
         },
-      };
+      });
     case "CLEAR_ROOM_UNREAD":
-      return {
+      return withRoomUnreads({
         ...state,
-        roomUnreadCounts: { ...state.roomUnreadCounts, [action.payload]: 0 },
-      };
+        roomLooseUnreads: { ...state.roomLooseUnreads, [action.payload]: 0 },
+        roomLooseMentions: { ...state.roomLooseMentions, [action.payload]: 0 },
+      });
     case "UPDATE_DM_STREAK": {
       const existing = state.roomInfoMap[action.payload.roomId];
       if (!existing) return state;

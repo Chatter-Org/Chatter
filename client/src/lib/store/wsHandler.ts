@@ -452,62 +452,61 @@ export function createWsMessageHandler(
   return (msg: any) => {
     if (msg.type === "m.room.message") {
       maybeNotify(msg);
-      if (msg.room_id === stateRef.current.currentRoomId) {
-        const msgChannelId = msg.channel_id || msg.content?.channel_id;
-        const currentChannelId = stateRef.current.currentChannelId;
-        // Only add to displayed messages if it belongs to the current channel
-        const isForCurrentChannel = msgChannelId
-          ? msgChannelId === currentChannelId
-          : !currentChannelId;
-        if (isForCurrentChannel) {
-          dispatch({ type: "ADD_MESSAGE", payload: msg });
-        } else if (msg.sender !== stateRef.current.userId && msg.content?.msgtype !== "m.system") {
-          // Track per-channel unreads/mentions for messages in a different channel
-          // (or messages without a channel_id, which belong to the room's default channel)
-          const unreadChannelId =
-            msgChannelId ||
-            stateRef.current.channels.find((c) => c.channel_type === "text" || !c.channel_type)?.channel_id;
-          if (unreadChannelId) {
-            dispatch({ type: "INCREMENT_CHANNEL_UNREAD", payload: { channelId: unreadChannelId, ts: msg.origin_server_ts } });
-          }
-          const myUsername = stateRef.current.userId ? displayUserId(stateRef.current.userId) : "";
-          const bodyText = msg.content?.body || "";
-          const hasUserMention = myUsername !== "" && bodyText.includes(`@${myUsername}`);
-          if (hasUserMention || (!roleMentionsSuppressed(msg) && hasRoleMention(bodyText, stateRef))) {
-            if (unreadChannelId) {
-              dispatch({ type: "SET_CHANNEL_MENTION", payload: { channelId: unreadChannelId, hasMention: true } });
-            }
-            dispatch({ type: "SET_MENTION", payload: { roomId: msg.room_id, hasMention: true } });
-            const ownStatus = stateRef.current.userPresence[stateRef.current.userId ?? ""]?.status;
-            if (ownStatus !== "dnd") playSound("mention", packFor(stateRef, msg.room_id));
-          }
-        }
-      } else if (msg.content?.msgtype !== "m.system" && msg.sender !== stateRef.current.userId) {
-        const isDm =
-          msg.is_dm === true || stateRef.current.roomInfoMap[msg.room_id]?.is_direct === true;
-        const myUsername = stateRef.current.userId ? displayUserId(stateRef.current.userId) : "";
+      const cur = stateRef.current;
+      const msgChannelId: string = msg.channel_id || msg.content?.channel_id || "";
+      const inCurrentRoom = msg.room_id === cur.currentRoomId;
+      // Only add to displayed messages if it belongs to the current channel
+      const isForCurrentChannel =
+        inCurrentRoom &&
+        (msgChannelId ? msgChannelId === cur.currentChannelId : !cur.currentChannelId);
+      if (isForCurrentChannel) {
+        dispatch({ type: "ADD_MESSAGE", payload: msg });
+      } else if (msg.sender !== cur.userId && msg.content?.msgtype !== "m.system") {
+        // One rule for every room, the open one included, and the same one
+        // `GET /api/unreads` applies (`read_markers.rs`) — the two halves have
+        // to agree, or a refresh moves the ping somewhere else or drops it.
+        // A message lands in its channel's bucket; with no channel it is the
+        // room's own (a DM). A message in the open room without a channel_id
+        // belongs to the room's default channel, which is loaded; for any
+        // other room the channels are not, so there is no fallback.
+        const unreadChannelId =
+          msgChannelId ||
+          (inCurrentRoom
+            ? cur.channels.find((c) => c.channel_type === "text" || !c.channel_type)?.channel_id
+            : undefined);
+        const me = cur.userId ?? "";
+        const myUsername = me ? displayUserId(me) : "";
         const bodyText = msg.content?.body || "";
-        const hasMention =
+        const isDm = msg.is_dm === true || cur.roomInfoMap[msg.room_id]?.is_direct === true;
+        // A reply to you is addressed to you, the same as being named. It
+        // used to arrive as a separate `m.reply_notification` that played
+        // the ping and lit the *room* — never the channel — so the sound
+        // came with no way to find what made it.
+        const isMention =
+          isDm ||
           (myUsername !== "" && bodyText.includes(`@${myUsername}`)) ||
+          (me !== "" && msg.content?.reply_to_sender === me) ||
           (!roleMentionsSuppressed(msg) && hasRoleMention(bodyText, stateRef));
-        const ownStatus = stateRef.current.userPresence[stateRef.current.userId ?? ""]?.status;
-        const msgChannelId = msg.channel_id || msg.content?.channel_id;
-        dispatch({ type: "INCREMENT_ROOM_UNREAD", payload: msg.room_id });
-        // Track the per-channel unread too, so the channel is highlighted once
-        // the user switches to that room. Channels of other rooms aren't loaded,
-        // so this is keyed off the event's own channel_id with no fallback.
-        if (msgChannelId) {
-          dispatch({ type: "INCREMENT_CHANNEL_UNREAD", payload: { channelId: msgChannelId, ts: msg.origin_server_ts } });
-        }
-        if (isDm || hasMention) {
-          if (ownStatus !== "dnd") playSound("mention", packFor(stateRef, msg.room_id));
+        if (unreadChannelId) {
           dispatch({
-            type: "SET_MENTION",
-            payload: { roomId: msg.room_id, hasMention: true },
+            type: "INCREMENT_CHANNEL_UNREAD",
+            payload: { roomId: msg.room_id, channelId: unreadChannelId, ts: msg.origin_server_ts },
           });
+          if (isMention) {
+            dispatch({
+              type: "SET_CHANNEL_MENTION",
+              payload: { roomId: msg.room_id, channelId: unreadChannelId, hasMention: true },
+            });
+          }
+        } else {
+          dispatch({ type: "INCREMENT_ROOM_UNREAD", payload: msg.room_id });
+          if (isMention) {
+            dispatch({ type: "SET_MENTION", payload: { roomId: msg.room_id, hasMention: true } });
+          }
         }
-        if (hasMention && msgChannelId) {
-          dispatch({ type: "SET_CHANNEL_MENTION", payload: { channelId: msgChannelId, hasMention: true } });
+        if (isMention) {
+          const ownStatus = cur.userPresence[me]?.status;
+          if (ownStatus !== "dnd") playSound("mention", packFor(stateRef, msg.room_id));
         }
       }
     } else if (msg.type === "m.room.member") {
@@ -909,14 +908,9 @@ export function createWsMessageHandler(
         new CustomEvent("sound-rejected", { detail: { scope: String(msg.scope || "") } }),
       );
     } else if (msg.type === "m.reply_notification") {
-      if (msg.room_id !== stateRef.current.currentRoomId) {
-        const ownStatus = stateRef.current.userPresence[stateRef.current.userId ?? ""]?.status;
-        if (ownStatus !== "dnd") playSound("mention", packFor(stateRef, msg.room_id));
-        dispatch({
-          type: "SET_MENTION",
-          payload: { roomId: msg.room_id, hasMention: true },
-        });
-      }
+      // Deliberately nothing. The reply's own `m.room.message` carries
+      // `reply_to_sender` and is counted, pinged and sounded there, on the
+      // channel it was said in; acting here as well would ring twice.
     }
     // The user's own favourite GIFs, changed on this or another device.
     else if (msg.type === "gif_favorites") {
@@ -1074,12 +1068,11 @@ export function createWsMessageHandler(
       } else if (msg.type === "forum.comment.edited" || msg.type === "forum.comment.deleted") {
         if (msg.post_id) forgetForumPreview(msg.post_id, msg.comment_id ?? null);
       }
-      // Set mention badge for forum posts from other rooms
+      // A new post in another room is something unread there, not a ping:
+      // it names nobody. A post that does name the reader is raised as a
+      // mention by notifyForumMention below.
       if (msg.type === "forum.post.created" && msg.room_id !== stateRef.current.currentRoomId && msg.post?.author !== stateRef.current.userId) {
-        dispatch({
-          type: "SET_MENTION",
-          payload: { roomId: msg.room_id, hasMention: true },
-        });
+        dispatch({ type: "INCREMENT_ROOM_UNREAD", payload: msg.room_id });
       }
       notifyForumMention(msg, stateRef, dispatch);
     }

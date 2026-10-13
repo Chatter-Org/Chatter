@@ -360,7 +360,7 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
           // A row rather than a tile: the name gets the sidebar's full width
           // instead of truncating inside a half-width square, and a room costs
           // one line rather than five.
-          "group/card relative flex w-full items-center gap-2 rounded-md py-1 pl-1 pr-1.5 text-left transition-colors cursor-pointer",
+          "group/card relative flex w-full items-center gap-2 rounded-md py-1 pl-3 pr-1.5 text-left transition-colors cursor-pointer",
           isActive
             ? "bg-sidebar-accent text-sidebar-accent-foreground"
             : "hover:bg-sidebar-accent/50",
@@ -370,12 +370,18 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
         )}
       >
         {/* The active room reads from a bar rather than a glow, so it survives
-            every theme without a hand-picked purple. */}
+            every theme without a hand-picked purple. Any other room with
+            something unread wears a dot in the same spot — the rail's stub
+            pill, spelled for a row. */}
         <span
           aria-hidden
           className={cn(
-            "absolute left-0 top-1/2 -translate-y-1/2 w-0.5 rounded-r-full transition-all",
-            isActive ? "h-5 bg-sidebar-primary" : "h-0 bg-transparent",
+            "absolute top-1/2 -translate-y-1/2 transition-all",
+            isActive
+              ? "left-0 h-5 w-0.5 rounded-r-full bg-sidebar-primary"
+              : unreadCount > 0 || hasMention
+                ? "left-1 size-1.5 rounded-full bg-sidebar-foreground"
+                : "left-0 h-0 w-0.5 bg-transparent",
           )}
         />
         {/* Room icon / initial */}
@@ -1208,6 +1214,12 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
                       <>
                         {sortedGroups.map((group) => {
                           const groupRooms = group.room_ids.filter((id) => regularRoomIds.includes(id));
+                          const groupUnread = folderUnread(
+                            groupRooms,
+                            state.roomMentions,
+                            state.roomUnreadCounts,
+                            state.currentRoomId,
+                          );
                           return (
                             <div key={group.group_id} className="mb-1">
                               {/* Group header */}
@@ -1248,6 +1260,17 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
                                 <span className="text-2xs font-semibold text-muted-foreground truncate">
                                   {group.name}
                                 </span>
+                                {/* A closed folder carries its rooms' unread
+                                    state, since a badge on a row nobody can
+                                    see is a badge nobody can see. */}
+                                {group.collapsed && groupUnread.unread && (
+                                  <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-sidebar-foreground" />
+                                )}
+                                {group.collapsed && groupUnread.mentions > 0 && (
+                                  <span className="flex h-[15px] min-w-[15px] shrink-0 items-center justify-center rounded-full bg-destructive px-1 text-3xs font-bold leading-none text-white">
+                                    {groupUnread.mentions > 99 ? "99+" : groupUnread.mentions}
+                                  </span>
+                                )}
                                 <span className="ui-hint ml-auto mr-5 shrink-0">
                                   {groupRooms.length}
                                 </span>

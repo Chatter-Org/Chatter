@@ -2,6 +2,7 @@ import type { MatrixMessage, PinnedMessage, RoomInfo, RoomGroup, Channel, Channe
 import type { Dispatch } from "react";
 import type { NotificationLevel, NotificationSettings } from "../notifications";
 import type { ProfileTheme } from "../profileTheme";
+import type { ServerUnread } from "../unreads";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -120,6 +121,7 @@ export interface AppState {
   // Watch-party viewers: room_id -> list of user_ids currently receiving the video
   watchViewers: Record<string, string[]>;
   // UI
+  /** Derived — see lib/unreads.ts. Written only by `withRoomUnreads`. */
   roomMentions: Record<string, number>;
   /** Notification level keyed by `${room_id}|${channel_id}`; see lib/notifications.ts */
   notificationSettings: NotificationSettings;
@@ -129,9 +131,17 @@ export interface AppState {
   /** Recently active threads, keyed by the channel they hang in. What the
    *  channel list previews beneath each channel; see THREAD_PREVIEW_LIMIT. */
   channelThreads: Record<string, ThreadPreview[]>;
+  /** Derived — see lib/unreads.ts. Written only by `withRoomUnreads`. */
   roomUnreadCounts: Record<string, number>;
   channelUnreadCounts: Record<string, number>;
   channelMentions: Record<string, number>;
+  /** The room each counted channel belongs to, so a room's badge can be summed
+   *  from its channels even when that room is not open. */
+  channelRoomIds: Record<string, string>;
+  /** Unreads and mentions with no channel to sit in: a DM's messages, a forum
+   *  post, a reply in a thread you are part of. */
+  roomLooseUnreads: Record<string, number>;
+  roomLooseMentions: Record<string, number>;
   /** Newest unread message's timestamp per channel, so a room's unread banner
    *  can name which channel saw the most recent unread and jump to it. */
   channelLatestUnreadTs: Record<string, number>;
@@ -296,7 +306,7 @@ export type Action =
   | { type: "REMOVE_ROOM_EVENT"; payload: string }
   | { type: "SET_MY_RSVP"; payload: { eventId: string; status: RsvpStatus | "" } }
   | { type: "CLOSE_SEARCH" }
-  | { type: "SET_MENTION"; payload: { roomId: string; hasMention: boolean; increment?: boolean } }
+  | { type: "SET_MENTION"; payload: { roomId: string; hasMention: boolean } }
   | { type: "SET_REPLYING_TO"; payload: MatrixMessage | null }
   | { type: "SET_PINNED_MESSAGES"; payload: { pins: PinnedMessage[]; hasMore: boolean; nextOffset: number } }
   | { type: "APPEND_PINNED_MESSAGES"; payload: { pins: PinnedMessage[]; hasMore: boolean; nextOffset: number } }
@@ -379,16 +389,16 @@ export type Action =
     }
   | { type: "UPDATE_VOICE_CHANNEL_OCCUPIED_SINCE"; payload: { channelId: string; since: number | null } }
   | { type: "SET_WATCH_VIEWERS"; payload: { roomId: string; users: string[] } }
-  | { type: "SET_CHANNEL_MENTION"; payload: { channelId: string; hasMention: boolean } }
+  | { type: "SET_CHANNEL_MENTION"; payload: { roomId: string; channelId: string; hasMention: boolean } }
   | { type: "SET_THREAD_MENTION"; payload: { threadId: string; hasMention: boolean } }
-  | { type: "INCREMENT_CHANNEL_UNREAD"; payload: { channelId: string; ts?: number } }
+  | { type: "INCREMENT_CHANNEL_UNREAD"; payload: { roomId: string; channelId: string; ts?: number } }
   | { type: "SET_NOTIFICATION_SETTINGS"; payload: NotificationSettings }
   | { type: "SET_CONTINUITY"; payload: { drafts: Record<string, string> } }
   | { type: "SET_DRAFT"; payload: { roomId: string; channelId: string; text: string } }
   | { type: "SET_CHANNEL_THREADS"; payload: Record<string, ThreadPreview[]> }
   | { type: "THREAD_ACTIVITY"; payload: ThreadPreview }
   | { type: "SET_NOTIFICATION_LEVEL"; payload: { roomId: string; channelId: string; level: NotificationLevel | "default" } }
-  | { type: "SET_UNREADS"; payload: { room_id: string; channel_id: string; count: number; mentions: number; latest_ts?: number }[] }
+  | { type: "SET_UNREADS"; payload: ServerUnread[] }
   | { type: "SET_THREAD_MENTIONS"; payload: { thread_id: string; mentions: number }[] }
   | { type: "CLEAR_CHANNEL_UNREAD"; payload: string }
   | { type: "UPDATE_DM_STREAK"; payload: { roomId: string; streakCount: number; lastMessageTs: number } }
@@ -441,6 +451,9 @@ export const initialState: AppState = {
   roomUnreadCounts: {},
   channelUnreadCounts: {},
   channelMentions: {},
+  channelRoomIds: {},
+  roomLooseUnreads: {},
+  roomLooseMentions: {},
   channelLatestUnreadTs: {},
   threadMentions: {},
   currentView: "chat",

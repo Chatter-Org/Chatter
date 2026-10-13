@@ -1496,7 +1496,9 @@ function ChannelItem({
         isSelected
           ? "bg-accent text-accent-foreground"
           : unreadHighlight
-            ? "text-white font-bold hover:bg-accent/50"
+            // The theme's foreground rather than white: in a light theme
+            // white is the background, and an unread channel vanished.
+            ? "text-foreground font-bold hover:bg-accent/50"
             : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
       }`}
       {...clickable(onSelect, `Open ${channel.name}`)}
@@ -1506,7 +1508,7 @@ function ChannelItem({
         <GripVertical className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-50 cursor-grab" />
       )}
       {unreadHighlight && (unreadCount ?? 0) > 0 && (
-        <span className="text-xs font-bold text-white shrink-0">[{unreadCount! > 99 ? "99+" : unreadCount}]</span>
+        <span className="text-xs font-bold text-foreground shrink-0">[{unreadCount! > 99 ? "99+" : unreadCount}]</span>
       )}
       {icon}
       <span className="truncate text-sm">{channel.name}</span>

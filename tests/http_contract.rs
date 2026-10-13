@@ -2160,6 +2160,149 @@ async fn a_thread_mention_stays_unread_until_the_thread_itself_is_read() {
 }
 
 #[tokio::test]
+async fn unreads_count_replies_and_dms_as_mentions_and_skip_deleted_messages() {
+    // The live client pings for a reply to you and for every DM, and the
+    // refreshed counts have to agree — or the red badge a reader heard arrive
+    // turns into a plain unread, or vanishes, the moment they reload. A
+    // deleted message keeps its row and must not be counted at all.
+    let server = spawn_server().await;
+    let client = Client::new();
+
+    let (alice_user_id, alice_token) =
+        register_user(&client, &server.base_url, "alice", "pw").await;
+    let (_bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+    let room_id = create_room(
+        &client,
+        &server.base_url,
+        &alice_token,
+        "Pings",
+        None,
+        false,
+    )
+    .await;
+    let join = client
+        .post(format!(
+            "{}/_matrix/client/r0/rooms/{room_id}/join",
+            server.base_url
+        ))
+        .header("authorization", bearer(&bob_token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(join.status(), StatusCode::OK);
+
+    let send = |token: String, room: String, txn: &'static str, body: Value| {
+        let client = client.clone();
+        let base = server.base_url.clone();
+        async move {
+            let res = client
+                .put(format!(
+                    "{base}/_matrix/client/r0/rooms/{room}/send/m.room.message/{txn}"
+                ))
+                .header("authorization", bearer(&token))
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+            let body: Value = res.json().await.unwrap();
+            body["event_id"].as_str().unwrap().to_string()
+        }
+    };
+
+    let question = send(
+        alice_token.clone(),
+        room_id.clone(),
+        "a1",
+        json!({ "msgtype": "m.text", "body": "anyone around?" }),
+    )
+    .await;
+    send(
+        bob_token.clone(),
+        room_id.clone(),
+        "b1",
+        json!({ "msgtype": "m.text", "body": "just chatting" }),
+    )
+    .await;
+    send(
+        bob_token.clone(),
+        room_id.clone(),
+        "b2",
+        json!({ "msgtype": "m.text", "body": "yes", "in_reply_to": question }),
+    )
+    .await;
+    let regretted = send(
+        bob_token.clone(),
+        room_id.clone(),
+        "b3",
+        json!({ "msgtype": "m.text", "body": "never mind" }),
+    )
+    .await;
+    let redacted = client
+        .delete(format!(
+            "{}/_matrix/client/r0/rooms/{}/redact/{}/d1",
+            server.base_url, room_id, regretted
+        ))
+        .header("authorization", bearer(&bob_token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(redacted.status(), StatusCode::OK);
+
+    let dm_id = create_room(
+        &client,
+        &server.base_url,
+        &bob_token,
+        "",
+        Some(vec![alice_user_id.clone()]),
+        true,
+    )
+    .await;
+    send(
+        bob_token.clone(),
+        dm_id.clone(),
+        "d1",
+        json!({ "msgtype": "m.text", "body": "hey" }),
+    )
+    .await;
+    send(
+        bob_token.clone(),
+        dm_id.clone(),
+        "d2",
+        json!({ "msgtype": "m.text", "body": "you there?" }),
+    )
+    .await;
+
+    let body: Value = client
+        .get(format!("{}/api/unreads", server.base_url))
+        .header("authorization", bearer(&alice_token))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let totals = |room: &str| {
+        body["unreads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["room_id"] == room)
+            .fold((0, 0), |(count, mentions), row| {
+                (
+                    count + row["count"].as_i64().unwrap(),
+                    mentions + row["mentions"].as_i64().unwrap(),
+                )
+            })
+    };
+
+    // Two from bob survive; the reply to alice is the one mention.
+    assert_eq!(totals(&room_id), (2, 1));
+    // Every DM message is addressed to her.
+    assert_eq!(totals(&dm_id), (2, 2));
+}
+
+#[tokio::test]
 async fn chunked_upload_reports_what_it_holds_and_can_be_abandoned_on_purpose() {
     // An interrupted upload used to be unfinishable: the chunks it had already
     // sent sat in a staging dir addressed by an id nothing could ask about, so
