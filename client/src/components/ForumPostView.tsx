@@ -451,10 +451,12 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
       <div key={comment.comment_id}>
         <div
           id={`forum-comment-${comment.comment_id}`}
+          // No box: the tree lines are what group a reply with its parent,
+          // and a frame round every comment drew a grid instead of a thread.
+          // The reply being answered still stands out, as a wash.
           className={cn(
-            "group rounded-md border p-2.5 transition-colors",
-            isReplyTarget && "border-primary/60 bg-primary/5",
-            comment.deleted && "border-dashed",
+            "group rounded-md px-1.5 py-1 transition-colors",
+            isReplyTarget && "bg-primary/5 ring-1 ring-primary/40",
           )}
         >
           {comment.deleted ? (
@@ -582,16 +584,34 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
         </div>
 
         {node.replies.length > 0 && !isFolded && (
-          <div
-            className={cn(
-              "mt-2 space-y-2",
-              // The rail stops stepping in after a few levels: a long
-              // back-and-forth would otherwise walk off the right of a phone,
-              // and by then the rail says less than the reply button did.
-              node.depth < MAX_THREAD_INDENT ? "ml-3 border-l pl-3" : "border-l pl-3",
-            )}
-          >
-            {node.replies.map(renderComment)}
+          // Tree lines: a trunk down from the parent and an elbow into each
+          // reply. The trunk is drawn per reply rather than as one border so
+          // it can stop at the last one instead of running on past it.
+          //
+          // The steps shrink after a few levels: a long back-and-forth would
+          // otherwise walk off the right of a phone, and by then the lines say
+          // less than the reply button did.
+          <div className={cn("mt-1 space-y-1", node.depth < MAX_THREAD_INDENT ? "ml-3" : "ml-1")}>
+            {node.replies.map((child, i) => {
+              const deep = node.depth >= MAX_THREAD_INDENT;
+              return (
+                <div key={child.comment.comment_id} className={cn("relative", deep ? "pl-3" : "pl-5")}>
+                  {i < node.replies.length - 1 && (
+                    <span aria-hidden className="absolute left-0 -top-1 -bottom-1 border-l border-border" />
+                  )}
+                  <span
+                    aria-hidden
+                    className={cn(
+                      // Starts in the gap above, so it meets the trunk; ends level with
+                      // the author line (py-1 plus half a text-xs line).
+                      "absolute left-0 -top-1 h-4 rounded-bl-lg border-b border-l border-border",
+                      deep ? "w-2.5" : "w-4",
+                    )}
+                  />
+                  {renderComment(child)}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
