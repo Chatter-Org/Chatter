@@ -553,10 +553,22 @@ export function ChatLayout() {
   };
 
   const showChannelColumn = hasChannels;
+  // The channel column carries the call's controls at its foot in every room,
+  // so the bottom voice bar is only needed where that column is not showing:
+  // a room with no channels, the activity page, the admin dashboard, or a
+  // column folded away. Off the call's room it also covers rooms with no
+  // channels of their own; on it, a channel-less room (a DM) has its own bar.
+  const [channelPanelCollapsed, setChannelPanelCollapsed] = useState(false);
+  const channelColumnHasVoice =
+    !isMobile && showChannelColumn && !channelPanelCollapsed &&
+    !state.adminDashboardOpen && !!state.currentRoomId;
+  const showDesktopVoiceBar =
+    state.inVoiceChannel && !channelColumnHasVoice && (!isOnVoiceRoom || showChannelColumn);
 
   const renderChannelList = (asDrawer: boolean) => (
     <ChannelList
       asDrawer={asDrawer}
+      onCollapsedChange={asDrawer ? undefined : setChannelPanelCollapsed}
       onChannelSelected={asDrawer ? () => setMobileDrawer(null) : undefined}
       onJoinVoiceChannel={(channelId) => {
         const ch = state.channels.find((c) => c.channel_id === channelId);
@@ -830,12 +842,13 @@ export function ChatLayout() {
               </Suspense>
               </ErrorBoundary>
             </div>
-            {/* Voice bar: shown when in voice while viewing a different room, and
+            {/* Voice bar: on desktop, wherever the channel column is not there
+                to carry the call's controls (see showDesktopVoiceBar), and
                 always on mobile — there the channel column is a drawer, so this
                 is the only reachable mute and hang-up. The mobile bar is its
                 own component: a phone needs thumb-sized targets and a place to
                 see who is in the call, neither of which fits in this strip. */}
-            {state.inVoiceChannel && (!isOnVoiceRoom || isMobile) && (
+            {(isMobile ? state.inVoiceChannel : showDesktopVoiceBar) && (
               isMobile ? (
               <MobileCallBar
                 channelName={state.voiceChannelName || "Voice"}

@@ -20,6 +20,9 @@ interface VoiceConnectedPanelProps {
   onToggleWebcam?: () => void;
   onToggleScreenShare?: () => void;
   onLeaveVoice?: () => void;
+  /** Set while the call is in a room other than the one on screen: the
+   *  room / channel line then takes you back to it. */
+  onNavigate?: () => void;
 }
 
 /** Four bars, lit up to the sampled quality, drawn in the call's status colour. */
@@ -61,7 +64,9 @@ export function VoiceConnectedPanel({
   onToggleWebcam,
   onToggleScreenShare,
   onLeaveVoice,
+  onNavigate,
 }: VoiceConnectedPanelProps) {
+  const where = channelName ? `${roomName} / ${channelName}` : roomName;
   // Straight from the peer connection, which reports a change as it happens;
   // the quality numbers are sampled and only colour the bars once it is up.
   const isOk = s === "connected";
@@ -95,9 +100,19 @@ export function VoiceConnectedPanel({
         </span>
         <div className="min-w-0 flex-1 leading-tight">
           <div className={`truncate text-xs font-semibold ${statusColor}`}>{status}</div>
-          <div className="truncate text-3xs text-muted-foreground" title={channelName ? `${roomName} / ${channelName}` : roomName}>
-            {channelName ? `${roomName} / ${channelName}` : roomName}
-          </div>
+          {onNavigate ? (
+            <button
+              onClick={onNavigate}
+              className="block max-w-full truncate text-left text-3xs text-muted-foreground hover:text-foreground hover:underline cursor-pointer"
+              title={`Go to ${where}`}
+            >
+              {where}
+            </button>
+          ) : (
+            <div className="truncate text-3xs text-muted-foreground" title={where}>
+              {where}
+            </div>
+          )}
         </div>
         {onLeaveVoice && (
           <button

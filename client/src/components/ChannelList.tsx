@@ -131,6 +131,9 @@ interface ChannelListProps {
   connQualityRef?: React.MutableRefObject<ConnQualityData>;
   setUserVolumeRef?: React.MutableRefObject<((userId: string, vol: number) => void) | null>;
   speakingUsersRef?: React.MutableRefObject<Set<string>>;
+  /** Told whenever the column folds or unfolds, so the layout knows whether
+   *  the call controls at its foot are on screen. */
+  onCollapsedChange?: (collapsed: boolean) => void;
 }
 
 function VoiceTimer({ since }: { since: number }) {
@@ -149,9 +152,9 @@ function VoiceTimer({ since }: { since: number }) {
   return <span className="text-success text-3xs font-mono ml-1 shrink-0">{str}</span>;
 }
 
-export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceChannel, onLeaveVoice, onToggleMute, onToggleDeafen, onToggleScreenShare, isScreenSharing, onToggleWebcam, isWebcamActive, connQualityRef, setUserVolumeRef, speakingUsersRef }: ChannelListProps) {
+export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceChannel, onLeaveVoice, onToggleMute, onToggleDeafen, onToggleScreenShare, isScreenSharing, onToggleWebcam, isWebcamActive, connQualityRef, setUserVolumeRef, speakingUsersRef, onCollapsedChange }: ChannelListProps) {
   const confirm = useConfirm();
-  const { state, dispatch, selectChannel, createChannel, updateChannel, deleteChannel, moderateVoice, openThread } = useAppContext();
+  const { state, dispatch, selectRoom, selectChannel, createChannel, updateChannel, deleteChannel, moderateVoice, openThread } = useAppContext();
   const readable = useReadableColor();
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -231,6 +234,9 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
 
   // Mobile collapse — default collapsed on small screens
   const [panelCollapsed, setPanelCollapsed] = useState(() => !asDrawer && window.innerWidth < 768);
+  useEffect(() => {
+    onCollapsedChange?.(panelCollapsed);
+  }, [panelCollapsed, onCollapsedChange]);
 
   // Drag state
   const [dragChannelId, setDragChannelId] = useState<string | null>(null);
@@ -1038,19 +1044,17 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
         </div>
       </ScrollArea>
 
-      {/* Voice controls toolbar, for the room the call is actually in.
-          `inVoiceChannel` is global, so on its own it put a set of controls at
-          the foot of every room's channel list — including rooms with no
-          connection to the call. Browsing away from a call already raises the
-          voice bar along the bottom of the window, which is reachable from
-          wherever the reader has wandered to; a second copy buried in the
-          channel list of an unrelated room was only ever a duplicate. */}
-      {!panelCollapsed && state.inVoiceChannel && state.voiceRoomId === roomId && (
+      {/* The call's controls, in every room's channel list for as long as the
+          call lasts, so they stay where the hand expects them whichever room
+          is being read. The layout's bottom voice bar stands in only where no
+          column is showing. In the phone drawer the call bar is always on
+          screen, so the drawer only repeats it for the call's own room. */}
+      {!panelCollapsed && state.inVoiceChannel && (!asDrawer || state.voiceRoomId === roomId) && (
         <VoiceConnectedPanel
           publisherState={state.voicePublisherState}
           quality={connData.quality}
           pingMs={connData.pingMs}
-          roomName={roomInfo?.name ?? ""}
+          roomName={(state.voiceRoomId && state.roomInfoMap[state.voiceRoomId]?.name) || ""}
           channelName={state.voiceChannelName}
           isMuted={state.isMuted}
           isDeafened={state.isDeafened}
@@ -1061,6 +1065,11 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
           onToggleWebcam={onToggleWebcam}
           onToggleScreenShare={onToggleScreenShare}
           onLeaveVoice={onLeaveVoice}
+          onNavigate={
+            state.voiceRoomId && state.voiceRoomId !== roomId
+              ? () => { if (state.voiceRoomId) void selectRoom(state.voiceRoomId); }
+              : undefined
+          }
         />
       )}
 
