@@ -170,7 +170,7 @@ export function VoiceConnectedPanel({
             <button
               onClick={onToggleScreenShare}
               className={`${TILE} flex-1 rounded-l-md ${
-                isScreenSharing ? "bg-info/15 text-info hover:bg-info/25" : TILE_IDLE
+                isScreenSharing ? "bg-red-600 text-white hover:bg-red-500" : TILE_IDLE
               }`}
               title={isScreenSharing ? "Stop sharing" : "Share your screen"}
               aria-label={isScreenSharing ? "Stop sharing" : "Share your screen"}
@@ -181,7 +181,7 @@ export function VoiceConnectedPanel({
             <ScreenFpsMenu>
               <button
                 className={`${TILE} w-4 shrink-0 rounded-r-md border-l border-background/50 ${
-                  isScreenSharing ? "bg-info/15 text-info hover:bg-info/25" : TILE_IDLE
+                  isScreenSharing ? "bg-red-600 text-white hover:bg-red-500" : TILE_IDLE
                 }`}
                 title="Screen share quality"
                 aria-label="Screen share quality"
