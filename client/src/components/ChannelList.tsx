@@ -40,6 +40,7 @@ import { NotificationSettingsPopover, NotificationBell } from "./NotificationSet
 import { resolveNotificationLevel } from "@/lib/notifications";
 import { VoiceConnectedPanel } from "./voice/VoiceConnectedPanel";
 import { LivePill } from "./voice/LivePill";
+import { ScreenPeek } from "./voice/ScreenPeek";
 import { clickable } from "@/lib/a11y";
 import {
   DEFAULT_PANEL_WIDTH,
@@ -630,6 +631,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
                 : undefined;
               return (
                 <div key={m.userId}>
+                  <ScreenPeek userId={m.userId} name={state.userPresence[m.userId]?.displayName || displayUserId(m.userId)}>
                   <div
                     className={`flex items-center gap-1.5 px-1 py-0.5 text-sm rounded transition-colors ${isSpeaking ? (speakingLook ? "" : "text-success bg-success/10 shadow-[0_0_6px_1px_var(--success)]") : "text-muted-foreground"} ${!isMe ? "cursor-pointer hover:bg-accent/50" : ""}`}
                     style={speakingLook}
@@ -739,6 +741,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
                       )}
                     </div>
                   </div>
+                  </ScreenPeek>
                   {isExpanded && !isMe && (
                     <div className="flex items-center gap-1.5 px-1 py-1 ml-3">
                       <button

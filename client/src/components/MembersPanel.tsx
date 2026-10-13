@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { ChevronLeft, ChevronRight, Crown, Shield, Smartphone, Gamepad2 } from "lucide-react";
-import { useAppContext, screenThumbnailsMap } from "@/lib/store";
+import { useAppContext } from "@/lib/store";
 import { useReadableColor } from "@/lib/theme";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AuthAvatarImage } from "./AuthImage";
@@ -10,6 +10,7 @@ import { profileWashStyle, readProfileTheme } from "@/lib/profileTheme";
 import { memberCanViewChannel } from "@/lib/permissions";
 import { ensureFontFace } from "@/lib/fontFace";
 import { UserProfileDialog } from "./UserProfileDialog";
+import { ScreenPeek } from "./voice/ScreenPeek";
 
 interface MembersPanelProps {
   collapsed: boolean;
@@ -115,19 +116,11 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
     // dozens of others wants something quieter than a card usually does.
     const wash = profileWashStyle(readProfileTheme(presence), "tab");
 
-    // A still of a live screen share, shown on hover for a member who is
-    // sharing but is not the viewer's own call. Only outside a voice channel:
-    // inside one the member list has a real "Watch" button and a live stream,
-    // so a still would only ever lag it. Gated on a hover-capable pointer, so
-    // a touch user never chases a thumbnail that never reveals.
-    const thumbnail =
-      !state.inVoiceChannel && state.activeScreenSharers.includes(member.userId)
-        ? screenThumbnailsMap.get(member.userId)
-        : null;
-
+    // Hovering a member sharing in a call the viewer is not in shows a still of
+    // their screen; `ScreenPeek` draws nothing for anyone else.
     return (
+      <ScreenPeek key={member.userId} userId={member.userId} name={effectiveName} side="left">
       <div
-        key={member.userId}
         onClick={() => {
           setSelectedMember({ ...member, displayName: effectiveName });
           setProfileOpen(true);
@@ -198,14 +191,8 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
             </span>
           )}
         </div>
-        {thumbnail && (
-          <img
-            src={thumbnail}
-            alt={`${effectiveName}'s screen`}
-            className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 h-9 w-16 rounded-md border border-border shadow-lg object-cover can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity duration-150"
-          />
-        )}
       </div>
+      </ScreenPeek>
     );
   };
 

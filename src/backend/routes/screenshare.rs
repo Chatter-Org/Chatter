@@ -11,11 +11,12 @@
 //! keeps the thumbnail honest (it is a real frame, not a guess) and keeps the
 //! cost on the one machine already paying to encode the share.
 //!
-//! Reading is gated to room members, the same guard the members list is drawn
-//! under, so a link to a share reveals nothing to anyone outside the room.
+//! Reading is gated to room members, and each still to members who can view the
+//! channel it is shared in — a share in a private voice channel is as private
+//! as the channel, whether it is watched live or peeked at.
 
 use super::super::{
-    helpers::{error_response, extract_token, get_user_from_token},
+    helpers::{channel_permissions, error_response, extract_token, get_user_from_token},
     state::{AppState, RoomRecord},
 };
 use axum::{
@@ -26,7 +27,7 @@ use axum::{
 use mongodb::bson::doc;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 /// A downscaled JPEG is a few tens of kilobytes; anything larger is a client
 /// ignoring the contract rather than a share worth posting.
@@ -89,9 +90,9 @@ pub(crate) async fn put_screen_thumbnail(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Every still the room's current shares have, keyed by sharer. Read by a
-/// member who is not in the call, so the members list can show what is on
-/// screen on hover without ever subscribing to the stream.
+/// Every still the room's current shares have that the caller may see, keyed by
+/// sharer. Read by a member who is not in the call, so hovering a sharer's name
+/// shows what is on screen without ever subscribing to the stream.
 pub(crate) async fn get_screen_thumbnails(
     State(state): State<Arc<AppState>>,
     Path(room_id): Path<String>,
@@ -126,13 +127,38 @@ pub(crate) async fn get_screen_thumbnails(
         }
     }
 
-    let publishers = state.screen_publishers.read().await;
+    // Copied out under the lock, then judged: the permission check reads the
+    // database, and holding the publishers lock across it would stall every
+    // share starting or stopping in the meantime.
+    let candidates: Vec<(String, String, String)> = {
+        let publishers = state.screen_publishers.read().await;
+        publishers
+            .iter()
+            .filter(|(_, publisher)| publisher.room_id == room_id)
+            .filter_map(|(sharer, publisher)| {
+                publisher
+                    .thumbnail
+                    .as_ref()
+                    .map(|t| (sharer.clone(), publisher.channel_id.clone(), t.clone()))
+            })
+            .collect()
+    };
+
+    let mut visible: HashMap<String, bool> = HashMap::new();
     let mut thumbnails = serde_json::Map::new();
-    for (sharer, publisher) in publishers.iter() {
-        if publisher.room_id == room_id {
-            if let Some(thumbnail) = publisher.thumbnail.as_ref() {
-                thumbnails.insert(sharer.clone(), json!(thumbnail));
+    for (sharer, channel_id, thumbnail) in candidates {
+        let can_view = match visible.get(&channel_id) {
+            Some(v) => *v,
+            None => {
+                let v = channel_permissions(&state, &room_id, &channel_id, &user_id)
+                    .await
+                    .view_channel;
+                visible.insert(channel_id.clone(), v);
+                v
             }
+        };
+        if can_view {
+            thumbnails.insert(sharer, json!(thumbnail));
         }
     }
 

@@ -452,10 +452,12 @@ export function useWebRTCScreen() {
   // A still of the share, posted from the sharer's own capture so a member who
   // is *not* in the call can hover their name and see what is on screen. The
   // server never decodes the forwarded stream, so this is the only place a
-  // frame can be grabbed cheaply — and it runs only while sharing.
+  // frame can be grabbed cheaply — and it runs only while sharing. Posted to the
+  // call's room, not the one on screen: the share stays in its call while the
+  // sharer reads elsewhere, and the server drops a still for the wrong room.
   useEffect(() => {
-    if (!state.isScreenSharing || !state.currentRoomId || !state.userId) return;
-    const roomId = state.currentRoomId;
+    if (!state.isScreenSharing || !state.voiceRoomId || !state.userId) return;
+    const roomId = state.voiceRoomId;
     const userId = state.userId;
     const timer = setInterval(() => {
       const stream = screenStreamRef.current;
@@ -464,7 +466,7 @@ export function useWebRTCScreen() {
       if (thumbnail) void apiPutScreenThumbnail(roomId, userId, thumbnail);
     }, SCREEN_THUMBNAIL_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [state.isScreenSharing, state.currentRoomId, state.userId]);
+  }, [state.isScreenSharing, state.voiceRoomId, state.userId]);
 
   // Method to update external stats for frozen detection
   const updateConnStats = useCallback((stats: Record<string, PeerStats>) => {

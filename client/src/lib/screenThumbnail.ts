@@ -1,4 +1,5 @@
 import { screenThumbnailsMap } from "@/lib/store";
+import type { AppState } from "@/lib/store/types";
 
 /** One downscaled JPEG of a live screen share, as a `data:` URL.
  *
@@ -63,6 +64,18 @@ export function captureScreenThumbnail(stream: MediaStream): string | null {
   return canvas.toDataURL("image/jpeg", JPEG_QUALITY);
 }
 
+/** Everything drawing a still re-reads it when the set changes. The map is a
+ *  module map, not reducer state, so without this a row would only ever show
+ *  the still it happened to read when something else re-rendered it. */
+const listeners = new Set<() => void>();
+
+export function subscribeScreenThumbnails(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 /** Replace the room's set of stills with the one the server just reported, so
  *  a share that stopped or a sharer who left drops out of the hover peek. */
 export function syncScreenThumbnails(thumbnails: Record<string, string>) {
@@ -70,4 +83,32 @@ export function syncScreenThumbnails(thumbnails: Record<string, string>) {
   for (const [sharer, thumbnail] of Object.entries(thumbnails)) {
     screenThumbnailsMap.set(sharer, thumbnail);
   }
+  listeners.forEach((listener) => listener());
+}
+
+export function clearScreenThumbnails() {
+  if (screenThumbnailsMap.size === 0) return;
+  screenThumbnailsMap.clear();
+  listeners.forEach((listener) => listener());
+}
+
+/** Who in the room on screen is sharing in a call the viewer is *not* in — the
+ *  people a still is for. Someone in the same channel has the live stream and
+ *  a "Watch" button, so a still would only ever lag it; someone in another
+ *  channel, or in no call at all, has nothing else to see it by. */
+export function peekableSharers(
+  state: Pick<
+    AppState,
+    "currentRoomId" | "voiceChannelMembers" | "voiceChannelRooms" | "inVoiceChannel" | "voiceChannelId"
+  >,
+): Set<string> {
+  const ownChannel = state.inVoiceChannel ? state.voiceChannelId : null;
+  const sharers = new Set<string>();
+  for (const [channelId, members] of Object.entries(state.voiceChannelMembers)) {
+    if (channelId === ownChannel || state.voiceChannelRooms[channelId] !== state.currentRoomId) continue;
+    for (const member of members) {
+      if (member.screen_sharing) sharers.add(member.userId);
+    }
+  }
+  return sharers;
 }
