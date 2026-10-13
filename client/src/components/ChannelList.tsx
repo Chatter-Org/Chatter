@@ -3,7 +3,7 @@ import type { ConnQualityData } from "./VoiceControls";
 import { useAppContext } from "@/lib/store";
 import {
   Hash, Volume2, Volume1, VolumeX, Plus, Pencil, Trash2, ChevronDown, ChevronRight,
-  Mic, MicOff, PhoneOff, Monitor, HeadphoneOff, Camera, FolderPlus, GripVertical, PanelLeftClose, PanelLeftOpen, Lock, Shield, ImagePlus, X, Scissors,
+  Mic, MicOff, PhoneOff, HeadphoneOff, Camera, FolderPlus, GripVertical, PanelLeftClose, PanelLeftOpen, Lock, Shield, ImagePlus, X, Scissors,
   Film, LayoutList, Move3d, PenTool, Sparkles, Bot, ShieldOff, MessagesSquare,
 } from "lucide-react";
 import { displayUserId } from "@/lib/utils";
@@ -674,10 +674,12 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
                             e.stopPropagation();
                             dispatch({ type: "SET_SCREEN_VIEWER", payload: { open: true, sharer: m.userId } });
                           }}
-                          className="shrink-0 p-0.5 rounded hover:bg-info/20 transition-colors flex items-center justify-center min-h-9 min-w-9 md:min-h-0 md:min-w-0"
+                          className="shrink-0 flex items-center justify-center min-h-9 md:min-h-0"
                           title={`Watch ${(state.userPresence[m.userId]?.displayName || displayUserId(m.userId))}'s screen`}
                         >
-                          <Monitor className="h-3 w-3 text-info" />
+                          <span className="rounded-full bg-red-600 px-1.5 py-px text-3xs font-bold leading-none tracking-wide text-white transition-colors hover:bg-red-500">
+                            LIVE
+                          </span>
                         </button>
                       )}
                       {m.clipping && (
