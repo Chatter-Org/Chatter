@@ -28,6 +28,19 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
     : null;
 
   const { customRoles, memberCustomRoles } = state;
+  // With a thread open the list is the thread's: whoever has posted in it —
+  // the root's author and everyone who replied. Not `thread_participants`,
+  // which also holds people who were only named or answered. The replies are
+  // loaded whole and kept live, so this follows the thread as it grows.
+  const threadPosters = useMemo(() => {
+    if (!state.activeThreadEventId || !state.threadRootMessage) return null;
+    const ids = new Set<string>([state.threadRootMessage.sender]);
+    for (const m of state.threadMessages) {
+      if (m.content?.msgtype !== "m.system") ids.add(m.sender);
+    }
+    return ids;
+  }, [state.activeThreadEventId, state.threadRootMessage, state.threadMessages]);
+
   const grouped = useMemo(() => {
     const currentChannel = state.channels.find((c) => c.channel_id === state.currentChannelId);
     const roles = { customRoles, memberCustomRoles };
@@ -38,6 +51,7 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
     const offline: typeof state.roomMembers = [];
 
     for (const m of state.roomMembers) {
+      if (threadPosters && !threadPosters.has(m.userId)) continue;
       // Hide members who cannot see this channel under its overwrites.
       if (!memberCanViewChannel(roles, currentChannel, m)) continue;
 
@@ -49,7 +63,7 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
       else members.push(m);
     }
     return { owners, moderators, members, offline };
-  }, [state.roomMembers, state.channels, state.currentChannelId, state.userPresence, customRoles, memberCustomRoles]);
+  }, [state.roomMembers, state.channels, state.currentChannelId, state.userPresence, customRoles, memberCustomRoles, threadPosters]);
 
   if (!state.currentRoomId) return null;
 
@@ -212,7 +226,7 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
     <div className="w-full md:w-56 md:border-l flex flex-col shrink-0 h-full rounded-lg">
       <div className="flex items-center gap-2 border-b px-3 py-3">
         <h3 className="ui-heading">
-          Members
+          {threadPosters ? "In this thread" : "Members"}
         </h3>
         <span className="inline-flex items-center rounded-full bg-secondary px-2 py-0.5 text-xs font-medium">
           {grouped.owners.length + grouped.moderators.length + grouped.members.length + grouped.offline.length}
