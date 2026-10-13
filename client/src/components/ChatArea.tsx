@@ -64,6 +64,7 @@ import { cn, displayUserId } from "@/lib/utils";
 import { readProfileAccent } from "@/lib/profileTheme";
 import { toast } from "sonner";
 import { scrollBehavior } from "@/lib/theme/display";
+import { oldestUnreadEventId } from "@/lib/unreads";
 
 // Opening a channel holds the newest message while the page settles: avatars,
 // images and embeds all resolve their heights after the first render, and each
@@ -189,7 +190,9 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
   // Starts null so the first pass after a mount counts as a channel change —
   // ChatArea unmounts when a forum/whiteboard/showcase channel or a thread is
   // open, and the channel it comes back on still needs its unread cleared.
-  const prevChannelIdRef = useRef<string | null>(null);
+  // Keyed by room *and* channel: a DM has no channel, so moving from one DM
+  // to another changes nothing a channel id alone could see.
+  const prevScopeRef = useRef<string | null>(null);
   const currentChannelIdRef = useRef<string | null>(state.currentChannelId);
 
   // Room-level unread banner state
@@ -395,9 +398,18 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
   // Detect channel change and capture unread count for "New" divider
   useEffect(() => {
     const channelId = state.currentChannelId;
-    if (channelId !== prevChannelIdRef.current) {
+    const roomId = state.currentRoomId;
+    const scope = `${roomId ?? ""}|${channelId ?? ""}`;
+    if (scope !== prevScopeRef.current) {
       currentChannelIdRef.current = channelId;
-      const count = state.channelUnreadCounts[channelId ?? ""] || 0;
+      // A DM's unreads are the room's own bucket, not a channel's. Read from
+      // this render's state, so the room effect above clearing that bucket
+      // in the same pass has not reached it yet.
+      const count = channelId
+        ? state.channelUnreadCounts[channelId] || 0
+        : roomId && state.roomInfoMap[roomId]?.is_direct
+          ? state.roomLooseUnreads[roomId] || 0
+          : 0;
       unreadCountRef.current = count;
       if (state.currentRoomId) markChannelRead(state.currentRoomId, channelId ?? undefined);
       // Either way we open at the newest message, so the tracking ref agrees,
@@ -411,18 +423,19 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
         pendingDividerRef.current = true;
         showNewDividerRef.current = true;
         setShowNewDivider(true);
+        setFirstUnreadEventId(null);
         // Clear the badge immediately — count is already captured in unreadCountRef for the divider
-        dispatch({ type: "CLEAR_CHANNEL_UNREAD", payload: channelId! });
+        if (channelId) dispatch({ type: "CLEAR_CHANNEL_UNREAD", payload: channelId });
       } else {
         pendingDividerRef.current = false;
         showNewDividerRef.current = false;
         setShowNewDivider(false);
         setFirstUnreadEventId(null);
       }
-      prevChannelIdRef.current = channelId;
+      prevScopeRef.current = scope;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.currentChannelId]);
+  }, [state.currentChannelId, state.currentRoomId]);
 
   // Track whether user is near bottom + trigger older message loading on scroll up
   useEffect(() => {
@@ -465,11 +478,11 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
       if (!nearBottom && scrollTop < clientHeight * 2 && scrollHeight > clientHeight) {
         loadOlderMessages();
       }
-      // Clear unread divider when user scrolls to bottom
+      // Reaching the bottom reads the channel. The divider itself stays until
+      // the reader leaves: a channel opens *at* the bottom, so clearing it
+      // here took it down on the landing scroll, before anyone saw it.
       if (nearBottom && showNewDividerRef.current) {
         showNewDividerRef.current = false;
-        setShowNewDivider(false);
-        setFirstUnreadEventId(null);
         const channelId = currentChannelIdRef.current;
         if (channelId) {
           dispatch({ type: "CLEAR_CHANNEL_UNREAD", payload: channelId });
@@ -626,12 +639,15 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
   // When messages load for a channel with unreads, compute the first unread event ID
   useLayoutEffect(() => {
     if (pendingDividerRef.current && state.messages.length > 0) {
-      const count = unreadCountRef.current;
-      const idx = Math.max(0, state.messages.length - count);
-      setFirstUnreadEventId(state.messages[idx]?.event_id ?? null);
-      pendingDividerRef.current = false;
+      const found = oldestUnreadEventId(state.messages, unreadCountRef.current, state.userId);
+      // Not loaded yet: stay pending, so scrolling back far enough to load
+      // the oldest unread puts the line on it then.
+      if (found) {
+        setFirstUnreadEventId(found);
+        pendingDividerRef.current = false;
+      }
     }
-  }, [state.messages]);
+  }, [state.messages, state.userId]);
 
   // The "New" divider is a marker to scroll up to, not a scroll target.
   //
@@ -1776,12 +1792,11 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
               return (
                 <div key={msg.event_id} data-anchor-id={msg.event_id}>
                   {showUnreadDivider && (
-                    <div ref={newDividerRef} className="flex items-center gap-2 py-1.5 px-2">
-                      <div className="h-px flex-1 bg-destructive" />
-                      <span className="text-xs font-semibold text-destructive whitespace-nowrap">
+                    <div ref={newDividerRef} className="flex items-center gap-2 py-1.5 px-2" aria-label="New messages">
+                      <div className="h-px flex-1 bg-destructive/40" />
+                      <span className="text-2xs font-semibold uppercase tracking-wide text-destructive/70 whitespace-nowrap">
                         New
                       </span>
-                      <div className="h-px flex-1 bg-destructive" />
                     </div>
                   )}
                   {showDateDivider && (

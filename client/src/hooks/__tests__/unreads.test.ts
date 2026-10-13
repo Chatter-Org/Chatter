@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bucketsFromServer, deriveRoomUnreads, type UnreadBuckets } from "@/lib/unreads";
+import { bucketsFromServer, deriveRoomUnreads, oldestUnreadEventId, type UnreadBuckets } from "@/lib/unreads";
 import { reducer } from "@/lib/store/reducer";
 import { initialState, type AppState } from "@/lib/store/types";
 
@@ -85,5 +85,27 @@ describe("reducer unread flow", () => {
     s = reducer(s, { type: "SELECT_CHANNEL", payload: "#show" });
     expect(s.channelUnreadCounts["#show"]).toBe(0);
     expect(s.roomUnreadCounts["!r"] || 0).toBe(0);
+  });
+});
+
+describe("oldestUnreadEventId", () => {
+  const msg = (event_id: string, sender: string, extra: object = {}) => ({ event_id, sender, ...extra });
+
+  it("steps over the reader's own messages, system lines and deletions", () => {
+    const timeline = [
+      msg("$1", "@bob"),
+      msg("$2", "@bob"),
+      msg("$3", "@me"),
+      msg("$4", "@sys", { content: { msgtype: "m.system" } }),
+      msg("$5", "@bob", { redacted: true }),
+      msg("$6", "@bob"),
+    ];
+    // Two unread: $6 and $2. Stepping back two rows landed on $5.
+    expect(oldestUnreadEventId(timeline, 2, "@me")).toBe("$2");
+  });
+
+  it("places nothing while the oldest unread is not loaded", () => {
+    expect(oldestUnreadEventId([msg("$1", "@bob")], 3, "@me")).toBeNull();
+    expect(oldestUnreadEventId([msg("$1", "@bob")], 0, "@me")).toBeNull();
   });
 });

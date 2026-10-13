@@ -107,3 +107,37 @@ export function bucketsFromServer(
   }
   return out;
 }
+
+/** The fields `oldestUnreadEventId` reads off a timeline message. */
+interface CountedMessage {
+  event_id: string;
+  sender: string;
+  redacted?: boolean;
+  content?: { msgtype?: string };
+}
+
+/**
+ * The message the unread divider goes above: the oldest of the newest
+ * `count` messages that were counted as unread. It walks back counting only
+ * what the unread tally counts — someone else's, not a system line, not
+ * deleted — because the timeline also holds the reader's own replies, and
+ * stepping back `count` rows put the line too low by every one of them.
+ *
+ * `null` while the oldest unread is older than what is loaded: a line on the
+ * top loaded message would claim the backlog starts there.
+ */
+export function oldestUnreadEventId(
+  messages: CountedMessage[],
+  count: number,
+  me: string | null,
+): string | null {
+  if (count <= 0) return null;
+  let seen = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.sender === me || m.redacted || m.content?.msgtype === "m.system") continue;
+    seen += 1;
+    if (seen === count) return m.event_id;
+  }
+  return null;
+}
