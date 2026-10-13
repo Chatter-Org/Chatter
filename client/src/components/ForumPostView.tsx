@@ -597,14 +597,14 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
               return (
                 <div key={child.comment.comment_id} className={cn("relative", deep ? "pl-3" : "pl-5")}>
                   {i < node.replies.length - 1 && (
-                    <span aria-hidden className="absolute left-0 -top-1 -bottom-1 border-l-2 border-border" />
+                    <span aria-hidden className="absolute left-0 -top-1 -bottom-1 border-l-3 border-border" />
                   )}
                   <span
                     aria-hidden
                     className={cn(
                       // Starts in the gap above, so it meets the trunk; ends level with
                       // the author line (py-1 plus half a text-xs line).
-                      "absolute left-0 -top-1 h-4 rounded-bl-lg border-b-2 border-l-2 border-border",
+                      "absolute left-0 -top-1 h-4 rounded-bl-lg border-b-3 border-l-3 border-border",
                       deep ? "w-2.5" : "w-4",
                     )}
                   />

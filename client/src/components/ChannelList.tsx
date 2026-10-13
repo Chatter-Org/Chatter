@@ -592,10 +592,10 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
               return (
                 <div key={thread.threadId} className="relative pl-3">
                   {i < threads.length - 1 && (
-                    <span aria-hidden className="absolute left-0 -top-0.5 -bottom-0.5 border-l-2 border-border" />
+                    <span aria-hidden className="absolute left-0 -top-0.5 -bottom-0.5 border-l-3 border-border" />
                   )}
                   {/* Ends level with the row's middle: py-0.5 plus half a text-xs line. */}
-                  <span aria-hidden className="absolute left-0 -top-0.5 h-3 w-2 rounded-bl-md border-b-2 border-l-2 border-border" />
+                  <span aria-hidden className="absolute left-0 -top-0.5 h-3 w-2 rounded-bl-md border-b-3 border-l-3 border-border" />
                 <button
                   onClick={() => {
                     // Threads live in their channel, so land there first.
