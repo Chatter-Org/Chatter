@@ -74,8 +74,9 @@ export interface AppState {
   channelCategories: ChannelCategory[];
   currentChannelId: string | null;
   /** The channel a user last opened in each room, so returning to a room lands
-   *  where they were reading rather than on its first channel. Text channels
-   *  only; a stale or deleted id falls back to the room's first text channel. */
+   *  where they were reading rather than on its first channel. Saved across a
+   *  reload by lib/lastChannel.ts; never a voice channel, and a stale or
+   *  deleted id falls back to the room's first text channel. */
   lastChannelByRoom: Record<string, string>;
   // Voice channels: channel_id -> the members of that voice channel.
   //

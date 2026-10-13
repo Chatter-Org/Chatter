@@ -127,6 +127,7 @@ import {
 import type { ProfileTheme } from "../profileTheme";
 import { reducer } from "./reducer";
 import { createWsMessageHandler } from "./wsHandler";
+import { loadLastChannels, pickLandingChannel, saveLastChannels } from "../lastChannel";
 
 
 
@@ -517,6 +518,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "game_activity", game }));
     });
   }, []);
+
+  // Keep where the reader was in each room past a reload.
+  useEffect(() => {
+    saveLastChannels(state.userId, state.lastChannelByRoom);
+  }, [state.userId, state.lastChannelByRoom]);
 
   // Update document title with total unread notification count
   useEffect(() => {
@@ -1059,15 +1065,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const channelsData = await apiGetChannels(roomId);
           dispatch({ type: "SET_CHANNELS", payload: channelsData.channels || [] });
           dispatch({ type: "SET_CHANNEL_CATEGORIES", payload: channelsData.categories || [] });
-          const textChannels = (channelsData.channels || []).filter((c: any) => c.channel_type === "text");
-          if (textChannels.length > 0) {
-            // Land where the reader last was in this room, not on whichever
-            // channel the room happens to list first. A remembered channel that
-            // is gone, or no longer a text channel, falls back to the first one.
-            const remembered = stateRef.current.lastChannelByRoom[roomId];
-            const match = remembered ? textChannels.find((c: any) => c.channel_id === remembered) : undefined;
-            selectedChannelId = (match ?? textChannels[0]).channel_id;
-            dispatch({ type: "SELECT_CHANNEL", payload: selectedChannelId! });
+          // Land where the reader last was in this room — this session, or
+          // before a reload (lib/lastChannel.ts) — not on whichever channel
+          // the room happens to list first. A remembered channel that is gone
+          // falls back to the first text channel.
+          const remembered =
+            stateRef.current.lastChannelByRoom[roomId] ??
+            loadLastChannels(stateRef.current.userId)[roomId];
+          const landing = pickLandingChannel(channelsData.channels || [], remembered);
+          if (landing) {
+            selectedChannelId = landing.channel_id;
+            dispatch({ type: "SELECT_CHANNEL", payload: selectedChannelId });
           }
         } catch {
           dispatch({ type: "SET_CHANNELS", payload: [] });
