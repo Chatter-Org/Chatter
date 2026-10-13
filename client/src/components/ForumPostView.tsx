@@ -621,7 +621,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b shrink-0">
+      <div className="flex items-center gap-2 px-2 md:px-4 py-1.5 md:py-2 border-b shrink-0">
         <Button variant="ghost" size="sm" onClick={onBack} className="gap-1.5">
           <ArrowLeft className="w-4 h-4" />
           Back
@@ -630,7 +630,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-4">
+        <div className="p-3 md:p-4 space-y-4">
           {/* Post title & meta */}
           {editingPost ? (
             <div className="space-y-3">
@@ -672,7 +672,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
           ) : (
             <div>
               <div className="flex items-start gap-2">
-                <h1 className="text-2xl font-bold leading-tight flex-1">{post.title}</h1>
+                <h1 className="text-xl md:text-2xl font-bold leading-tight flex-1 min-w-0 break-words">{post.title}</h1>
                 {isPostAuthor && (
                   <button
                     onClick={startEditingPost}
@@ -770,7 +770,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
       {/* Comment input */}
       <div
         className={cn(
-          "border-t p-3 shrink-0 transition-colors",
+          "border-t p-2 md:p-3 shrink-0 transition-colors",
           dragging && "outline-2 outline-dashed outline-primary -outline-offset-2 bg-primary/5",
         )}
         onDragEnter={onDragEnter}
@@ -820,7 +820,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
               ))}
             </div>
           )}
-          <div className="flex gap-2">
+          <div className="flex items-end gap-1 md:gap-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -871,7 +871,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
                     handleSubmitComment();
                   }
                 }}
-                className="min-h-[40px] max-h-[120px] resize-none"
+                className="min-h-[44px] md:min-h-[40px] max-h-[120px] resize-none"
                 rows={1}
               />
             </div>

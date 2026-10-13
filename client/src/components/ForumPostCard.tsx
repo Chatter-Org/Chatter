@@ -40,7 +40,7 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, tags }: Foru
 
   return (
     <div
-      className="group relative flex gap-3 rounded-lg border p-3 transition-colors hover:bg-accent/50 cursor-pointer"
+      className="group relative flex gap-2.5 sm:gap-3 rounded-lg border p-2.5 sm:p-3 transition-colors hover:bg-accent/50 cursor-pointer"
       {...clickable(onClick, `Open post: ${post.title}`)}
     >
       {/* Thumbnail — the lead image, with a count when the post holds more,
@@ -50,7 +50,7 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, tags }: Foru
           <AuthImage
             src={thumbnail}
             alt=""
-            className="w-24 h-24 object-cover rounded-md bg-muted"
+            className="w-16 h-16 sm:w-24 sm:h-24 object-cover rounded-md bg-muted"
           />
           {images.length === 0 && videos.length > 0 && (
             <span className="absolute inset-0 flex items-center justify-center">

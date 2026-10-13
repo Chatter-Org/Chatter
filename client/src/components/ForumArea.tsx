@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppContext } from "@/lib/store";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   apiListForumPosts,
   apiCreateForumPost,
@@ -56,6 +57,7 @@ const sortLabels: Record<SortMode, string> = {
 export function ForumArea() {
   const confirm = useConfirm();
   const { state } = useAppContext();
+  const isMobile = useIsMobile();
   const roomId = state.currentRoomId;
   const roomInfo = roomId ? state.roomInfoMap[roomId] : null;
   // Each forum channel keeps its own posts. No channel is a room that is a
@@ -330,8 +332,11 @@ export function ForumArea() {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b shrink-0 gap-3">
-        <div className="min-w-0 shrink-0">
+      {/* On a phone the controls drop to a row of their own and lose their
+          labels: one row of title, search, sort, tags and "New Post" ran off
+          the right of the screen. */}
+      <div className={cn("flex border-b shrink-0", isMobile ? "flex-wrap items-center gap-2 px-3 py-2" : "items-center justify-between px-4 py-3 gap-3")}>
+        <div className={cn("min-w-0", isMobile ? "flex-1" : "shrink-0")}>
           <h2 className="font-semibold text-sm truncate">
             {forumChannel?.name || roomInfo?.name || "Forum"}
           </h2>
@@ -341,14 +346,20 @@ export function ForumArea() {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2 flex-1 justify-end">
-          <div className="relative max-w-xs flex-1">
+        {isMobile && (
+          <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5 shrink-0 h-9">
+            <Plus className="w-4 h-4" />
+            New
+          </Button>
+        )}
+        <div className={cn("flex items-center gap-2 flex-1 justify-end", isMobile && "basis-full")}>
+          <div className={cn("relative flex-1", !isMobile && "max-w-xs")}>
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             <Input
               placeholder="Search posts..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-8 pl-8 text-xs"
+              className={cn("pl-8", isMobile ? "h-9 text-base" : "h-8 text-xs")}
             />
             {searchQuery && (
               <button
@@ -361,9 +372,14 @@ export function ForumArea() {
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-1.5 shrink-0 h-8 text-xs">
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn("gap-1.5 shrink-0 text-xs", isMobile ? "h-9 w-9 px-0" : "h-8")}
+                aria-label={`Sort: ${sortLabels[sortMode]}`}
+              >
                 <ArrowUpDown className="w-3.5 h-3.5" />
-                {sortLabels[sortMode]}
+                {!isMobile && sortLabels[sortMode]}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -383,24 +399,27 @@ export function ForumArea() {
               variant="outline"
               size="sm"
               onClick={() => setManageTagsOpen(true)}
-              className="gap-1.5 shrink-0 h-8 text-xs"
+              className={cn("gap-1.5 shrink-0 text-xs", isMobile ? "h-9 w-9 px-0" : "h-8")}
               title="Set up this forum's tags"
+              aria-label="Set up this forum's tags"
             >
               <Tags className="w-3.5 h-3.5" />
-              Tags
+              {!isMobile && "Tags"}
             </Button>
           )}
-          <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5 shrink-0 h-8">
-            <Plus className="w-4 h-4" />
-            New Post
-          </Button>
+          {!isMobile && (
+            <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5 shrink-0 h-8">
+              <Plus className="w-4 h-4" />
+              New Post
+            </Button>
+          )}
         </div>
       </div>
 
       {/* Filter by tag. Search is not filtered on the server, so its results
           are narrowed below instead. */}
       {channelTags.length > 0 && (
-        <div className="flex items-center gap-1 overflow-x-auto px-4 py-2 border-b shrink-0">
+        <div className={cn("flex items-center gap-1 overflow-x-auto py-2 border-b shrink-0", isMobile ? "px-3" : "px-4")}>
           <ForumTagChip
             tag={{ tag_id: "", name: "All", color: "" }}
             selected={tagFilter === null}
@@ -420,7 +439,7 @@ export function ForumArea() {
       {/* Posts list. Full width, like every other list in the app: a row is a
           thumbnail, a title and two lines of excerpt, and capping it at 768px
           left most of a wide window empty either side of it. */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className={cn("flex-1 overflow-y-auto", isMobile ? "p-2" : "p-4")}>
         <div className="space-y-2">
           {posts.length === 0 && !loading && (
             <div className="text-center py-12 text-muted-foreground">
@@ -624,7 +643,9 @@ function CreatePostDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          "transition-colors",
+          // Scrolls inside the screen: with a phone keyboard up, a dialog
+          // this tall put its Create button somewhere nobody could reach.
+          "transition-colors max-h-[90dvh] overflow-y-auto max-sm:p-4",
           dragging && "outline-2 outline-dashed outline-primary -outline-offset-2 bg-primary/5",
         )}
         onDragEnter={onDragEnter}

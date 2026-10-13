@@ -39,7 +39,7 @@ import { isSameFile } from "@/lib/uploadResume";
 import { DMCallBar } from "./DMCallBar";
 import { usePendingFiles, MAX_ATTACHMENTS } from "@/hooks/usePendingFiles";
 import { useInterruptedUploads } from "@/hooks/useInterruptedUploads";
-import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, UserPlus, Pencil, Pin, Smile, Phone, PhoneOff } from "lucide-react";
+import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, UserPlus, Pencil, Pin, Smile, Phone, PhoneOff, Paperclip, Plus, SendHorizontal } from "lucide-react";
 import { CommandBar } from "./CommandBar";
 import { AddToDMDialog } from "./AddToDMDialog";
 import { PollDialog } from "./PollDialog";
@@ -50,6 +50,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -2016,7 +2022,7 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
               </span>
             </div>
           )}
-          <div className="relative flex items-end gap-2">
+          <div className={cn("relative flex items-end", isMobile ? "gap-1" : "gap-2")}>
             {/* Mention autocomplete */}
             {mentionOpen && (
               <MentionMenu matches={mentionMatches} selectedIdx={selectedMentionIdx} onSelect={completeMention} />
@@ -2061,6 +2067,41 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
               multiple
               onChange={handleFileSelect}
             />
+            {/* On a phone the extras share one menu: three icons beside the
+                input left it a few words wide. The spoiler banner above still
+                says when that mode is on, so nothing is hidden by folding it. */}
+            {isMobile ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="shrink-0 size-11" aria-label="More options">
+                    <Plus className="h-5 w-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="start">
+                  {can(state, "attach_files") && (
+                    <DropdownMenuItem asChild disabled={attachmentsRemaining <= 0}>
+                      {/* A label, as on desktop: it opens the picker from the
+                          tap itself, which a scripted click() cannot promise. */}
+                      <label htmlFor="chat-file-input" className="cursor-pointer">
+                        <Paperclip className="h-4 w-4" />
+                        Attach files
+                      </label>
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onSelect={() => setIsSpoiler((v) => !v)}>
+                    <EyeOff className="h-4 w-4" />
+                    {isSpoiler ? "Turn off spoiler" : "Mark as spoiler"}
+                  </DropdownMenuItem>
+                  {can(state, "send_messages") && (
+                    <DropdownMenuItem onSelect={() => setPollOpen(true)}>
+                      <BarChart3 className="h-4 w-4" />
+                      Create a poll
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <>
             {/* No longer disabled while something is uploading: a send in
                 flight belongs to the outgoing queue now, so the composer is
                 free the moment it is handed over. */}
@@ -2104,6 +2145,8 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
               >
                 <BarChart3 className="h-4 w-4" />
               </Button>
+            )}
+              </>
             )}
 
             <div className="relative flex-1 min-w-0">
@@ -2205,11 +2248,12 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
 
             <Button
               onClick={handleSend}
-              size={isMobile ? "lg" : "default"}
+              size={isMobile ? "icon" : "default"}
               disabled={displayLength > MAX_MESSAGE_LENGTH}
-              className={`shrink-0 ${isMobile ? "px-4 text-base" : ""}`}
+              className={cn("shrink-0", isMobile && "size-11")}
+              aria-label="Send"
             >
-              Send
+              {isMobile ? <SendHorizontal className="h-5 w-5" /> : "Send"}
             </Button>
           </div>
         </div>
