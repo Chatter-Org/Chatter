@@ -104,10 +104,8 @@ On GitHub, the same checks run in `.github/workflows/rust-quality.yml`.
 - `src/components/PollCard.tsx` - The card an `m.poll` draws in place of its body, and the one `m.poll_results` draws
 - `src/components/PollDialog.tsx` - Composing a poll: question, answers, how long it runs
 - `src/components/MembersPanel.tsx` - Room members with presence indicators
-- `src/components/VoiceControls.tsx` - Voice orchestrator composing hooks and sub-components
-- `src/components/voice/VoiceToolbar.tsx` - Join/leave/mute/PTT/screen share buttons
-- `src/components/voice/VoiceDebugPanel.tsx` - Debug stats overlay
-- `src/components/voice/VoiceMemberList.tsx` - Voice member cards with volume sliders
+- `src/components/VoiceControls.tsx` - Voice orchestrator: owns the voice/screen/webcam hooks, always mounted and hidden, draws no controls of its own
+- `src/components/voice/VoiceConnectedPanel.tsx` - The call's controls at the foot of the channel list, in every room while in a call; the layout's `VoiceBar` stands in where no channel column is showing
 - `src/components/RoomDialogs.tsx` - Create/Join room dialogs
 - Vite dev server proxies API calls to `localhost:8000` for hot-reload development
 

@@ -1,10 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { useRef, useEffect, useState } from "react";
 import { useAppContext } from "@/lib/store";
 import { useWebRTCVoice } from "@/hooks/useWebRTCVoice";
 import { useWebRTCScreen } from "@/hooks/useWebRTCScreen";
@@ -12,9 +6,6 @@ import { useWebRTCWebcam } from "@/hooks/useWebRTCWebcam";
 import { useConnectionStats } from "@/hooks/useConnectionStats";
 import { useSpeakingDetection } from "@/hooks/useSpeakingDetection";
 import type { VoiceRestoreState } from "@/lib/voiceRejoin";
-import { VoiceToolbar } from "./voice/VoiceToolbar";
-import { VoiceDebugPanel } from "./voice/VoiceDebugPanel";
-import { VoiceMemberList } from "./voice/VoiceMemberList";
 import { CameraSelectModal } from "./CameraSelectModal";
 
 export type ConnectionQuality = 0 | 1 | 2 | 3 | 4;
@@ -55,9 +46,7 @@ function computeQuality(connStats: Record<string, import("@/lib/webrtc").PeerSta
 
 export function VoiceControls({ joinVoiceRef, leaveVoiceRef, releaseVoiceRef, toggleMuteRef, toggleDeafenRef, startScreenShareRef, stopScreenShareRef, startWebcamRef, stopWebcamRef, connQualityRef, setUserVolumeRef, speakingUsersRef }: VoiceControlsProps) {
   const { state } = useAppContext();
-  const [debugOpen, setDebugOpen] = useState(false);
   const [cameraModalOpen, setCameraModalOpen] = useState(false);
-  const [volumes, setVolumes] = useState<Record<string, number>>({});
 
   // Cross-hook cleanup coordination
   const cleanupScreenRef = useRef(async () => {});
@@ -156,95 +145,15 @@ export function VoiceControls({ joinVoiceRef, leaveVoiceRef, releaseVoiceRef, to
   // Expose to parent (e.g. ChannelList speaking indicator)
   if (speakingUsersRef) speakingUsersRef.current = speakingUsers;
 
-  // Volume control bridge
-  const setUserVolume = useCallback((userId: string, vol: number) => {
-    voice.setUserVolume(userId, vol);
-    setVolumes((v) => ({ ...v, [userId]: vol }));
-  }, [voice.setUserVolume]);
-
-  // Watch user bridge (needs joinVoice from voice hook)
-  const watchUser = useCallback(async (sharerId: string) => {
-    await screen.watchUser(sharerId, voice.joinVoice);
-  }, [screen.watchUser, voice.joinVoice]);
-
-  if (!state.currentRoomId) return null;
-  if (state.voiceMembers.length === 0) return null;
-
+  // Nothing of the call is drawn here: its controls are the channel list's
+  // panel and the layout's voice bar. This component stays mounted, hidden,
+  // because it owns the call's peer connections — it only draws the camera
+  // picker the controls open.
   return (
-    <div className="w-52 border-r flex flex-col h-full shrink-0">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b">
-        <span className="ui-heading">
-          Voice Channel
-        </span>
-        <span className="inline-flex items-center rounded-full bg-secondary px-1.5 py-0.5 text-3xs font-medium text-muted-foreground">
-          {state.voiceMembers.length}
-        </span>
-      </div>
-
-      {/* Members list */}
-      <VoiceMemberList
-        inVoiceChannel={state.inVoiceChannel}
-        voiceMembers={state.voiceMembers}
-        userId={state.userId}
-        isMuted={state.isMuted}
-        voiceMemberStates={state.voiceMemberStates}
-        activeScreenSharers={state.activeScreenSharers}
-        activeWebcamStreamers={state.activeWebcamStreamers}
-        selectedScreenSharer={state.selectedScreenSharer}
-        screenViewerOpen={state.screenViewerOpen}
-        connStats={connStats}
-        speakingUsers={speakingUsers}
-        volumes={volumes}
-        userPresence={state.userPresence}
-        onSetUserVolume={setUserVolume}
-        onWatchUser={watchUser}
-      />
-
-      {/* Debug modal */}
-      <Dialog open={debugOpen && state.inVoiceChannel} onOpenChange={setDebugOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>WebRTC Debug</DialogTitle>
-          </DialogHeader>
-          <VoiceDebugPanel connStats={connStats} />
-        </DialogContent>
-      </Dialog>
-
-      {/* Camera device selection modal */}
-      <CameraSelectModal
-        open={cameraModalOpen}
-        onClose={() => setCameraModalOpen(false)}
-        onStart={(deviceId, fps) => webcam.startWebcam(deviceId, fps)}
-      />
-
-      {/* Controls at bottom */}
-      <VoiceToolbar
-        inVoiceChannel={state.inVoiceChannel}
-        isMuted={state.isMuted}
-        isDeafened={state.isDeafened}
-        voiceInputMode={state.voiceInputMode}
-        isScreenSharing={state.isScreenSharing}
-        isWebcamActive={state.isWebcamActive}
-        debugOpen={debugOpen}
-        hideScreenShare={
-          (state.voiceRoomId
-            ? state.roomInfoMap[state.voiceRoomId]?.room_type
-            : state.currentRoomId
-              ? state.roomInfoMap[state.currentRoomId]?.room_type
-              : undefined) === "watchparty"
-        }
-        onJoinVoice={voice.joinVoice}
-        onLeaveVoice={voice.leaveVoice}
-        onToggleMute={voice.toggleMute}
-        onToggleDeafen={voice.toggleDeafen}
-        onToggleInputMode={voice.toggleInputMode}
-        onStartScreenShare={screen.startScreenShare}
-        onStopScreenShare={screen.stopScreenShare}
-        onStartWebcam={() => setCameraModalOpen(true)}
-        onStopWebcam={webcam.stopWebcam}
-        onToggleDebug={() => setDebugOpen((o) => !o)}
-      />
-    </div>
+    <CameraSelectModal
+      open={cameraModalOpen}
+      onClose={() => setCameraModalOpen(false)}
+      onStart={(deviceId, fps) => webcam.startWebcam(deviceId, fps)}
+    />
   );
 }

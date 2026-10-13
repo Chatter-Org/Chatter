@@ -734,9 +734,14 @@ export function ChatLayout() {
             )}
 
             {/* Main content: admin dashboard, activity page, or voice column + chat/forum + members */}
-            {/* VoiceControls is always mounted here (sr-only when not visible) so WebRTC/stats stay alive across page navigations */}
+            {/* VoiceControls owns the call's connections and draws nothing of it
+                (the controls are the channel list's panel and the voice bar),
+                so it is always mounted, out of sight, to keep the call alive
+                across navigation. It used to unhide as a column of its own in a
+                room with no channels — and so, for a moment, in every room
+                while its channels loaded. */}
             <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
-              <div className={isMobile || !state.currentRoomId || state.adminDashboardOpen || isDmRoom || hasChannels || isWatchPartyRoom || isForumRoom || isWhiteboardRoom || isShowcaseChannel || isSpatialChannel ? "sr-only" : "shrink-0"}>
+              <div className="sr-only">
                 <VoiceControls
                   joinVoiceRef={joinVoiceRef}
                   leaveVoiceRef={leaveVoiceRef}
