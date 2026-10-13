@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
-import type { ConnectionQuality, ConnQualityData } from "./VoiceControls";
-import { canShareScreen } from "@/lib/webrtc";
+import type { ConnQualityData } from "./VoiceControls";
 import { useAppContext } from "@/lib/store";
 import {
   Hash, Volume2, Volume1, VolumeX, Plus, Pencil, Trash2, ChevronDown, ChevronRight,
@@ -39,8 +38,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { RoleManagementDialog } from "./RoleManagementDialog";
 import { NotificationSettingsPopover, NotificationBell } from "./NotificationSettingsPopover";
 import { resolveNotificationLevel } from "@/lib/notifications";
-import { ScreenFpsMenu } from "./voice/ScreenFpsMenu";
-import { useScreenShareFps } from "@/hooks/useScreenShareFps";
+import { VoiceConnectedPanel } from "./voice/VoiceConnectedPanel";
 import { clickable } from "@/lib/a11y";
 import {
   DEFAULT_PANEL_WIDTH,
@@ -135,21 +133,6 @@ interface ChannelListProps {
   speakingUsersRef?: React.MutableRefObject<Set<string>>;
 }
 
-function SignalBars({ quality, pingMs }: { quality: ConnectionQuality; pingMs: number | null }) {
-  const colors = ["text-muted-foreground", "text-destructive", "text-orange-400", "text-success", "text-success"];
-  const color = colors[quality];
-  const tooltip = pingMs != null ? `${pingMs} ms` : "Connecting...";
-  return (
-    <svg width="16" height="14" viewBox="0 0 16 14" className={`shrink-0 ${color}`} fill="currentColor">
-      <title>{tooltip}</title>
-      <rect x="0" y="10" width="3" height="4" rx="0.5" opacity={quality >= 1 ? 1 : 0.3} />
-      <rect x="4.5" y="7" width="3" height="7" rx="0.5" opacity={quality >= 2 ? 1 : 0.3} />
-      <rect x="9" y="3.5" width="3" height="10.5" rx="0.5" opacity={quality >= 3 ? 1 : 0.3} />
-      <rect x="13" y="0" width="3" height="14" rx="0.5" opacity={quality >= 4 ? 1 : 0.3} />
-    </svg>
-  );
-}
-
 function VoiceTimer({ since }: { since: number }) {
   const [elapsed, setElapsed] = useState(() => Date.now() - since);
   useEffect(() => {
@@ -170,7 +153,6 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
   const confirm = useConfirm();
   const { state, dispatch, selectChannel, createChannel, updateChannel, deleteChannel, moderateVoice, openThread } = useAppContext();
   const readable = useReadableColor();
-  const { screenFps } = useScreenShareFps();
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editChannelId, setEditChannelId] = useState<string | null>(null);
@@ -1064,110 +1046,22 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
           wherever the reader has wandered to; a second copy buried in the
           channel list of an unrelated room was only ever a duplicate. */}
       {!panelCollapsed && state.inVoiceChannel && state.voiceRoomId === roomId && (
-        <div className="border-t px-2 py-2 space-y-1.5 shrink-0">
-          <div className="flex items-center gap-1 px-1">
-            {(() => {
-              // Straight from the peer connection, which reports a change as it
-              // happens. connData is polled every 500ms off stats gathered every
-              // 2s, so reading status from it left "Connecting..." on screen for
-              // seconds after the call was up — and after the entrance sound had
-              // already played. connData still supplies the quality numbers,
-              // which are genuinely a sampled thing.
-              const s = state.voicePublisherState;
-              const isOk = s === "connected";
-              const isBad = s === "failed" || s === "disconnected";
-              return (
-                <>
-                  <div className={`h-2 w-2 rounded-full ${
-                    isOk ? "bg-success" : isBad ? "bg-destructive" : "bg-warning"
-                  } animate-pulse`} />
-                  <span className={`text-xs font-medium truncate ${
-                    isOk ? "text-success" : isBad ? "text-destructive" : "text-warning"
-                  }`}>
-                    {isOk ? "Voice Connected" :
-                     s === "connecting" || s === "new" ? "Connecting..." :
-                     s === "failed" ? "Connection Failed" :
-                     s === "disconnected" ? "Reconnecting..." :
-                     "Voice Connected"}
-                  </span>
-                </>
-              );
-            })()}
-          </div>
-          <div className="flex items-center gap-1">
-            <SignalBars quality={connData.quality} pingMs={connData.pingMs} />
-            <button
-              onClick={onToggleMute}
-              disabled={state.isDeafened}
-              className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 min-h-11 md:min-h-0 text-xs font-medium transition-colors ${
-                state.isMuted || state.isDeafened
-                  ? "bg-destructive/20 text-destructive hover:bg-destructive/30"
-                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-              }`}
-              title={state.isDeafened ? "Undeafen to unmute" : state.isMuted ? "Unmute" : "Mute"}
-            >
-              {state.isMuted || state.isDeafened ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-            </button>
-            <button
-              onClick={onToggleDeafen}
-              className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 min-h-11 md:min-h-0 text-xs font-medium transition-colors ${
-                state.isDeafened
-                  ? "bg-destructive/20 text-destructive hover:bg-destructive/30"
-                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-              }`}
-              title={state.isDeafened ? "Undeafen" : "Deafen"}
-            >
-              <HeadphoneOff className="h-3.5 w-3.5" />
-            </button>
-            {onToggleWebcam && (
-              <button
-                onClick={onToggleWebcam}
-                className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 min-h-11 md:min-h-0 text-xs font-medium transition-colors ${
-                  isWebcamActive
-                    ? "bg-success/20 text-success hover:bg-success/30"
-                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                }`}
-                title={isWebcamActive ? "Stop camera" : "Share camera"}
-              >
-                <Camera className="h-3.5 w-3.5" />
-              </button>
-            )}
-            {onToggleScreenShare && canShareScreen() && (
-              <div className="flex-1 flex">
-                <button
-                  onClick={onToggleScreenShare}
-                  className={`flex-1 flex items-center justify-center gap-1.5 rounded-l-md px-2 py-1.5 min-h-11 md:min-h-0 text-xs font-medium transition-colors ${
-                    isScreenSharing
-                      ? "bg-info/20 text-info hover:bg-info/30"
-                      : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                  }`}
-                  title={isScreenSharing ? "Stop sharing" : "Share screen"}
-                >
-                  <Monitor className="h-3.5 w-3.5" />
-                </button>
-                <ScreenFpsMenu>
-                  <button
-                    className={`flex items-center justify-center rounded-r-md border-l border-background/40 px-1 py-1.5 text-[10px] font-medium leading-none transition-colors ${
-                      isScreenSharing
-                        ? "bg-info/20 text-info hover:bg-info/30"
-                        : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                    }`}
-                    title="Screen share quality"
-                  >
-                    {screenFps}
-                  </button>
-                </ScreenFpsMenu>
-              </div>
-            )}
-            <button
-              onClick={onLeaveVoice}
-              className="flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 min-h-11 md:min-h-0 text-xs font-medium bg-destructive/20 text-destructive hover:bg-destructive/30 transition-colors"
-              title="Disconnect"
-            >
-              <PhoneOff className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
+        <VoiceConnectedPanel
+          publisherState={state.voicePublisherState}
+          quality={connData.quality}
+          pingMs={connData.pingMs}
+          roomName={roomInfo?.name ?? ""}
+          channelName={state.voiceChannelName}
+          isMuted={state.isMuted}
+          isDeafened={state.isDeafened}
+          isWebcamActive={isWebcamActive}
+          isScreenSharing={isScreenSharing}
+          onToggleMute={onToggleMute}
+          onToggleDeafen={onToggleDeafen}
+          onToggleWebcam={onToggleWebcam}
+          onToggleScreenShare={onToggleScreenShare}
+          onLeaveVoice={onLeaveVoice}
+        />
       )}
 
       {/* Create channel dialog */}
