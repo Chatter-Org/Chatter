@@ -2164,6 +2164,9 @@ export interface ForumPost {
   reactions: Record<string, string[]>;
   edited?: boolean;
   edited_at?: number;
+  /** Set only on a pinned post: who pinned it to the forum, and when. */
+  pinned_by?: string;
+  pinned_at?: number;
 }
 
 export interface ForumComment {
@@ -2346,6 +2349,29 @@ export async function apiEditForumPost(
   if (!res.ok) {
     const data = await res.json().catch(() => null);
     throw new Error(data?.error || "Failed to edit post");
+  }
+  return res.json();
+}
+
+/** Pin a post to the top of its forum. The forum's creator or a moderator only. */
+export async function apiPinForumPost(roomId: string, postId: string) {
+  const res = await authenticatedFetch(`/api/forum/${roomId}/posts/${postId}/pin`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || "Failed to pin post");
+  }
+  return res.json() as Promise<{ pinned: boolean; pinned_at: number }>;
+}
+
+export async function apiUnpinForumPost(roomId: string, postId: string) {
+  const res = await authenticatedFetch(`/api/forum/${roomId}/posts/${postId}/pin`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || "Failed to unpin post");
   }
   return res.json();
 }

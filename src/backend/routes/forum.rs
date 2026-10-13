@@ -11,8 +11,8 @@ use super::super::{
     },
     push::{added_mentions, spawn_message_push, MessageNotification},
     state::{
-        AppState, ChannelRecord, ForumCommentRecord, ForumPostRecord, ForumTag, ReactionRecord,
-        RoomRecord,
+        AppState, ChannelRecord, ForumCommentRecord, ForumPinRecord, ForumPostRecord, ForumTag,
+        ReactionRecord, RoomRecord,
     },
 };
 use axum::{
@@ -322,10 +322,17 @@ fn requested_images(single: &Option<String>, many: &Option<Vec<String>>) -> Vec<
     urls
 }
 
-fn post_to_json(post: &ForumPostRecord, reactions: &HashMap<String, Vec<String>>) -> Value {
+/// `pin` is the post's pin row when it has one: who pinned it and when ride
+/// alongside the post so every viewer's card draws the same badge, without a
+/// second request per post.
+fn post_to_json(
+    post: &ForumPostRecord,
+    reactions: &HashMap<String, Vec<String>>,
+    pin: &Option<ForumPinRecord>,
+) -> Value {
     let images = images_of(&post.image_url, &post.image_urls);
     let videos = post.video_urls.clone();
-    json!({
+    let mut value = json!({
         "post_id": post.post_id,
         "room_id": post.room_id,
         "channel_id": post.channel_id,
@@ -345,7 +352,14 @@ fn post_to_json(post: &ForumPostRecord, reactions: &HashMap<String, Vec<String>>
         "reactions": reactions,
         "edited": post.edited,
         "edited_at": post.edited_at,
-    })
+    });
+    if let Some(pin) = pin {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("pinned_by".to_string(), json!(pin.pinned_by));
+            obj.insert("pinned_at".to_string(), json!(pin.pinned_at));
+        }
+    }
+    value
 }
 
 fn comment_to_json(
@@ -461,6 +475,72 @@ async fn get_reactions_for_event(state: &AppState, event_id: &str) -> HashMap<St
     reactions
 }
 
+/// How many posts one forum channel may hold pinned. Discord's ceiling for a
+/// channel's pins; the same bound keeps the forum's pinned strip scannable and
+/// the pin query cheap.
+const MAX_FORUM_PINS: usize = 50;
+
+/// The channel's pins keyed by post id, so a page of posts costs one pin read
+/// rather than one per card. A room that is a forum itself keys its pins by the
+/// empty channel it resolves to, which is what a pin was written with.
+async fn forum_pins_for_channel(
+    state: &AppState,
+    room_id: &str,
+    channel_id: &str,
+) -> HashMap<String, ForumPinRecord> {
+    let mut by_post: HashMap<String, ForumPinRecord> = HashMap::new();
+    if let Ok(mut cursor) = state
+        .db
+        .collection::<ForumPinRecord>("forum_pins")
+        .find(doc! { "room_id": room_id, "channel_id": channel_id })
+        .await
+    {
+        while let Ok(Some(record)) = cursor.try_next().await {
+            by_post.insert(record.post_id.clone(), record);
+        }
+    }
+    by_post
+}
+
+/// One post's pin row, if it has one.
+async fn forum_pin_of(state: &AppState, post_id: &str) -> Option<ForumPinRecord> {
+    state
+        .db
+        .collection::<ForumPinRecord>("forum_pins")
+        .find_one(doc! { "_id": post_id })
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Whoever set this forum up: the channel's creator, or the room's for a room
+/// that is a forum itself with no forum channels. A moderator or owner reaches
+/// the pin gate through `manage_channels` instead, so this only names the extra
+/// case — the plain member who built the forum and can still curate it.
+async fn forum_owner_of(state: &AppState, room_id: &str, channel_id: &str) -> String {
+    if channel_id.is_empty() {
+        state
+            .db
+            .collection::<RoomRecord>("rooms")
+            .find_one(doc! { "_id": room_id })
+            .await
+            .ok()
+            .flatten()
+            .map(|room| room.creator)
+            .unwrap_or_default()
+    } else {
+        state
+            .db
+            .collection::<ChannelRecord>("channels")
+            .find_one(doc! { "_id": channel_id, "room_id": room_id })
+            .await
+            .ok()
+            .flatten()
+            .map(|ch| ch.created_by)
+            .unwrap_or_default()
+    }
+}
+
 // ─── 1. Create Post ─────────────────────────────────────────────────────────
 
 pub(crate) async fn create_post(
@@ -525,7 +605,7 @@ pub(crate) async fn create_post(
 
     let suppress_role_mentions =
         role_mentions_suppressed(&state, &room_id, &user_id, &post.body).await;
-    let post_json = post_to_json(&post, &HashMap::new());
+    let post_json = post_to_json(&post, &HashMap::new(), &None);
     let broadcast_msg = json!({
         "type": "forum.post.created",
         "room_id": room_id,
@@ -579,12 +659,47 @@ pub(crate) async fn list_posts(
     if let Some(tag) = query.tag.as_deref().filter(|t| !t.is_empty()) {
         filter.insert("tags", tag);
     }
+    let first_page = query.before.is_none();
     if let Some(before) = query.before {
         let op = if sort_dir == -1 { "$lt" } else { "$gt" };
         filter.insert(cursor_field, doc! { op: before });
     }
 
+    // One query for the channel's pins, so a page of posts costs one pin read
+    // rather than one per card.
+    let pins = forum_pins_for_channel(&state, &room_id, &channel_id).await;
+    let pinned_ids: Vec<String> = pins.keys().cloned().collect();
+
+    // Pinned posts lead the first page, newest pin first, and are left out of
+    // the paged feed on every page — so a pin is seen once, at the top, rather
+    // than again wherever its sort order would have put it. The cursor a client
+    // pages with is therefore always an unpinned post's.
     let mut posts: Vec<Value> = Vec::new();
+    if first_page && !pinned_ids.is_empty() {
+        let mut pinned_filter = filter.clone();
+        pinned_filter.insert("_id", doc! { "$in": &pinned_ids });
+        let mut pinned: Vec<ForumPostRecord> = Vec::new();
+        if let Ok(mut cursor) = coll.find(pinned_filter).await {
+            while let Ok(Some(post)) = cursor.try_next().await {
+                pinned.push(post);
+            }
+        }
+        pinned.sort_by_key(|p| {
+            std::cmp::Reverse(pins.get(&p.post_id).map_or(0, |pin| pin.pinned_at))
+        });
+        for post in pinned {
+            let reactions = get_reactions_for_event(&state, &post.post_id).await;
+            let pin = pins.get(post.post_id.as_str()).cloned();
+            posts.push(post_to_json(&post, &reactions, &pin));
+        }
+    }
+    if !pinned_ids.is_empty() {
+        filter.insert("_id", doc! { "$nin": &pinned_ids });
+    }
+
+    // `limit + 1` is fetched so `has_more` needs no count: it is whether that
+    // extra row came back.
+    let mut fetched = 0usize;
     if let Ok(mut cursor) = coll
         .find(filter)
         .sort(doc! { sort_field: sort_dir })
@@ -592,17 +707,14 @@ pub(crate) async fn list_posts(
         .await
     {
         while let Ok(Some(post)) = cursor.try_next().await {
-            if posts.len() < limit as usize {
+            fetched += 1;
+            if fetched <= limit as usize {
                 let reactions = get_reactions_for_event(&state, &post.post_id).await;
-                posts.push(post_to_json(&post, &reactions));
+                posts.push(post_to_json(&post, &reactions, &None));
             }
         }
     }
-
-    let has_more = posts.len() > limit as usize;
-    if has_more {
-        posts.truncate(limit as usize);
-    }
+    let has_more = fetched > limit as usize;
 
     Ok(Json(json!({ "posts": posts, "has_more": has_more })))
 }
@@ -664,8 +776,10 @@ pub(crate) async fn get_post(
         })
         .collect();
 
+    let pin = forum_pin_of(&state, &post_id).await;
+
     Ok(Json(json!({
-        "post": post_to_json(&post, &reactions),
+        "post": post_to_json(&post, &reactions, &pin),
         "comments": comments,
     })))
 }
@@ -700,6 +814,14 @@ pub(crate) async fn delete_post(
             doc! { "_id": &post_id },
             doc! { "$set": { "deleted": true } },
         )
+        .await;
+
+    // A deleted post's pin goes with it, or the pin list would name a post that
+    // is gone. The post deletion already tells the room, so no second event.
+    let _ = state
+        .db
+        .collection::<ForumPinRecord>("forum_pins")
+        .delete_one(doc! { "_id": &post_id })
         .await;
 
     let broadcast_msg = json!({
@@ -1227,6 +1349,7 @@ pub(crate) async fn search_posts(
         "deleted": false,
     };
     let mut results: Vec<Value> = Vec::new();
+    let pins = forum_pins_for_channel(&state, &room_id, &channel_id).await;
 
     if let Ok(mut cursor) = coll.find(filter).sort(doc! { "last_activity": -1 }).await {
         while let Ok(Some(post)) = cursor.try_next().await {
@@ -1235,12 +1358,139 @@ pub(crate) async fn search_posts(
             }
             if post.title.to_lowercase().contains(&q) || post.body.to_lowercase().contains(&q) {
                 let reactions = get_reactions_for_event(&state, &post.post_id).await;
-                results.push(post_to_json(&post, &reactions));
+                let pin = pins.get(post.post_id.as_str()).cloned();
+                results.push(post_to_json(&post, &reactions, &pin));
             }
         }
     }
 
     Ok(Json(json!({ "posts": results })))
+}
+
+// ─── 11. Pin Post ───────────────────────────────────────────────────────────
+
+/// Pin a forum post to its forum channel. Whoever set the forum up (its channel
+/// creator, or the room's creator for a room that is a forum itself) and anyone
+/// who can manage channels — owners and moderators — may pin; a plain member
+/// may not. The pin is the post's own row, so pinning does not touch the post
+/// and a moderator's pin survives the author editing their own post.
+pub(crate) async fn pin_post(
+    State(state): State<Arc<AppState>>,
+    Path((room_id, post_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user_id = validate_forum_member(&state, &headers, &room_id).await?;
+
+    let coll = state.db.collection::<ForumPostRecord>("forum_posts");
+    let post = coll
+        .find_one(doc! { "_id": &post_id, "room_id": &room_id, "deleted": false })
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Post not found"))?;
+    require_post_visible(&state, &post, &user_id).await?;
+
+    let perms = channel_permissions(&state, &room_id, &post.channel_id, &user_id).await;
+    let forum_owner = forum_owner_of(&state, &room_id, &post.channel_id).await;
+    if user_id != forum_owner && !perms.manage_channels {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            "Only the forum's creator or a moderator can pin its posts",
+        ));
+    }
+
+    let pins_coll = state.db.collection::<ForumPinRecord>("forum_pins");
+    if pins_coll
+        .find_one(doc! { "_id": &post_id })
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "Post is already pinned",
+        ));
+    }
+
+    let pin_count = pins_coll
+        .count_documents(doc! { "room_id": &room_id, "channel_id": &post.channel_id })
+        .await
+        .unwrap_or(0);
+    if pin_count >= MAX_FORUM_PINS as u64 {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("This forum already has the maximum of {MAX_FORUM_PINS} pinned posts"),
+        ));
+    }
+
+    let pinned_at = now_millis();
+    let record = ForumPinRecord {
+        post_id: post_id.clone(),
+        room_id: room_id.clone(),
+        channel_id: post.channel_id.clone(),
+        pinned_by: user_id.clone(),
+        pinned_at,
+    };
+    pins_coll
+        .insert_one(&record)
+        .await
+        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to pin post"))?;
+
+    let event = json!({
+        "type": "forum.post.pinned",
+        "room_id": room_id,
+        "channel_id": post.channel_id,
+        "post_id": post_id,
+        "post_title": post.title,
+        "pinned_by": user_id,
+        "pinned_at": pinned_at,
+    });
+    broadcast_to_room(&state, &room_id, &event).await;
+
+    Ok(Json(json!({ "pinned": true, "pinned_at": pinned_at })))
+}
+
+/// Unpin a forum post. Same gate as pinning, so whoever could pin it can take
+/// the pin back.
+pub(crate) async fn unpin_post(
+    State(state): State<Arc<AppState>>,
+    Path((room_id, post_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user_id = validate_forum_member(&state, &headers, &room_id).await?;
+
+    let pins_coll = state.db.collection::<ForumPinRecord>("forum_pins");
+    let record = pins_coll
+        .find_one(doc! { "_id": &post_id, "room_id": &room_id })
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Post is not pinned"))?;
+
+    let perms = channel_permissions(&state, &room_id, &record.channel_id, &user_id).await;
+    let forum_owner = forum_owner_of(&state, &room_id, &record.channel_id).await;
+    if user_id != forum_owner && !perms.manage_channels {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            "Only the forum's creator or a moderator can unpin its posts",
+        ));
+    }
+
+    let _ = pins_coll
+        .delete_one(doc! { "_id": &post_id, "room_id": &room_id })
+        .await;
+
+    let event = json!({
+        "type": "forum.post.unpinned",
+        "room_id": room_id,
+        "channel_id": record.channel_id,
+        "post_id": post_id,
+        "sender": user_id,
+    });
+    broadcast_to_room(&state, &room_id, &event).await;
+
+    Ok(Json(json!({ "unpinned": true })))
 }
 
 #[cfg(test)]

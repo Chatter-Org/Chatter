@@ -23,7 +23,7 @@ use super::{
         events::{create_event, delete_event, list_events, list_rsvps, set_rsvp, update_event},
         forum::{
             create_comment, create_post, delete_comment, delete_post, edit_comment, edit_post,
-            get_post, list_posts, search_posts, set_tags,
+            get_post, list_posts, pin_post, search_posts, set_tags, unpin_post,
         },
         forum_links::get_forum_preview,
         friends::{
@@ -436,6 +436,10 @@ pub(crate) fn build_router() -> Router<Arc<AppState>> {
         .route(
             "/api/forum/{room_id}/posts/{post_id}/comments/{comment_id}",
             delete(delete_comment).put(edit_comment),
+        )
+        .route(
+            "/api/forum/{room_id}/posts/{post_id}/pin",
+            post(pin_post).delete(unpin_post),
         )
         // Events
         .route(

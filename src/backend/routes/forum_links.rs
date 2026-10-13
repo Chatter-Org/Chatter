@@ -16,9 +16,7 @@
 use super::super::{
     helpers::{error_response, extract_token, get_allowed_channel_ids, get_user_from_token},
     ratelimit,
-    state::{
-        AppState, ChannelRecord, ForumCommentRecord, ForumPostRecord, RoomRecord, UserRecord,
-    },
+    state::{AppState, ChannelRecord, ForumCommentRecord, ForumPostRecord, RoomRecord, UserRecord},
 };
 use axum::{
     extract::{Path, Query, State},
@@ -143,7 +141,7 @@ pub(crate) async fn get_forum_preview(
     }
     if !channel_id.is_empty() {
         if let Some(allowed) = get_allowed_channel_ids(&state, &room_id, &user_id).await {
-            if !allowed.iter().any(|c| *c == channel_id) {
+            if !allowed.contains(&channel_id) {
                 return Err(unavailable());
             }
         }

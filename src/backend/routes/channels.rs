@@ -583,9 +583,16 @@ pub(crate) async fn delete_channel(
                 .collection::<mongodb::bson::Document>("forum_comments")
                 .delete_many(doc! { "post_id": { "$in": post_ids } })
                 .await;
-            let _ = posts_coll.delete_many(post_filter).await;
+            let _ = posts_coll.delete_many(post_filter.clone()).await;
         }
     }
+
+    // Their pins go with them, or the pin list would name posts that are gone.
+    let _ = state
+        .db
+        .collection::<mongodb::bson::Document>("forum_pins")
+        .delete_many(post_filter.clone())
+        .await;
 
     // Remove voice channel state for this channel
     {

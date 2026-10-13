@@ -3137,3 +3137,161 @@ async fn recv_matching_rev(ws: &mut common::WsStream, rev: i64) -> Value {
         }
     }
 }
+
+#[tokio::test]
+async fn forum_posts_can_be_pinned_by_their_creator_and_moderators() {
+    let server = spawn_server().await;
+    let client = Client::new();
+
+    let (alice_user_id, alice_token) =
+        register_user(&client, &server.base_url, "alice", "pw").await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+
+    // A room that is a forum itself: its posts carry no channel, and its creator
+    // is who set it up.
+    let room_response = client
+        .post(format!("{}/_matrix/client/r0/createRoom", server.base_url))
+        .header("authorization", bearer(&alice_token))
+        .json(&json!({
+            "name": "Forum",
+            "topic": "",
+            "invite": [bob_user_id],
+            "is_direct": false,
+            "room_type": "forum",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(room_response.status(), StatusCode::OK);
+    let room_id = room_response.json::<Value>().await.unwrap()["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let create = client
+        .post(format!("{}/api/forum/{}/posts", server.base_url, room_id))
+        .header("authorization", bearer(&alice_token))
+        .json(&json!({ "title": "Keep me", "body": "hello" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::OK);
+    let post_id = create.json::<Value>().await.unwrap()["post_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // A later post, which the default activity sort would list first.
+    let newer = client
+        .post(format!("{}/api/forum/{}/posts", server.base_url, room_id))
+        .header("authorization", bearer(&alice_token))
+        .json(&json!({ "title": "Newer", "body": "later" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(newer.status(), StatusCode::OK);
+    let newer_id = newer.json::<Value>().await.unwrap()["post_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // A plain member cannot pin.
+    let forbidden = client
+        .post(format!(
+            "{}/api/forum/{}/posts/{}/pin",
+            server.base_url, room_id, post_id
+        ))
+        .header("authorization", bearer(&bob_token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+    let mut bob_ws = ws_connect_authenticated(&server.ws_url, &bob_token).await;
+
+    // The forum's creator can.
+    let pinned = client
+        .post(format!(
+            "{}/api/forum/{}/posts/{}/pin",
+            server.base_url, room_id, post_id
+        ))
+        .header("authorization", bearer(&alice_token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pinned.status(), StatusCode::OK);
+
+    let pin_event = recv_event_type(&mut bob_ws, "forum.post.pinned").await;
+    assert_eq!(pin_event["post_id"], post_id);
+    assert_eq!(pin_event["pinned_by"], alice_user_id);
+
+    // Pinning twice is rejected.
+    let duplicate = client
+        .post(format!(
+            "{}/api/forum/{}/posts/{}/pin",
+            server.base_url, room_id, post_id
+        ))
+        .header("authorization", bearer(&alice_token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(duplicate.status(), StatusCode::BAD_REQUEST);
+
+    // Every member reads the pin on the post itself, and the pinned post leads
+    // the list despite being the older one — listed once, not again below.
+    let list: Value = client
+        .get(format!("{}/api/forum/{}/posts", server.base_url, room_id))
+        .header("authorization", bearer(&bob_token))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let posts = list["posts"].as_array().unwrap();
+    assert_eq!(posts.len(), 2);
+    assert_eq!(posts[0]["post_id"], post_id);
+    assert_eq!(posts[1]["post_id"], newer_id);
+    assert!(posts[1].get("pinned_by").is_none());
+    assert_eq!(posts[0]["pinned_by"], alice_user_id);
+    assert!(posts[0]["pinned_at"].as_i64().unwrap() > 0);
+
+    // A plain member cannot unpin either.
+    let forbidden_unpin = client
+        .delete(format!(
+            "{}/api/forum/{}/posts/{}/pin",
+            server.base_url, room_id, post_id
+        ))
+        .header("authorization", bearer(&bob_token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forbidden_unpin.status(), StatusCode::FORBIDDEN);
+
+    // The creator can take it back.
+    let unpinned = client
+        .delete(format!(
+            "{}/api/forum/{}/posts/{}/pin",
+            server.base_url, room_id, post_id
+        ))
+        .header("authorization", bearer(&alice_token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unpinned.status(), StatusCode::OK);
+
+    let unpin_event = recv_event_type(&mut bob_ws, "forum.post.unpinned").await;
+    assert_eq!(unpin_event["post_id"], post_id);
+
+    // Unpinning an unpinned post is a 404.
+    let unpin_missing = client
+        .delete(format!(
+            "{}/api/forum/{}/posts/{}/pin",
+            server.base_url, room_id, post_id
+        ))
+        .header("authorization", bearer(&alice_token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unpin_missing.status(), StatusCode::NOT_FOUND);
+}

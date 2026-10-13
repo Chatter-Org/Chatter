@@ -878,6 +878,11 @@ pub(crate) async fn delete_room(
     let _ = forum_comments_coll
         .delete_many(doc! { "room_id": &room_id })
         .await;
+    let _ = state
+        .db
+        .collection::<super::super::state::ForumPinRecord>("forum_pins")
+        .delete_many(doc! { "room_id": &room_id })
+        .await;
 
     // Remove whiteboard data
     let whiteboard_coll = state

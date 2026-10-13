@@ -237,6 +237,16 @@ async fn create_indexes(db: &mongodb::Database) {
         )
         .await;
 
+    // forum_pins: a forum channel's pinned posts, newest pin first
+    let _ = db
+        .collection::<mongodb::bson::Document>("forum_pins")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "room_id": 1, "channel_id": 1, "pinned_at": -1 })
+                .build(),
+        )
+        .await;
+
     // uploads: index on user_id
     let _ = db
         .collection::<mongodb::bson::Document>("uploads")

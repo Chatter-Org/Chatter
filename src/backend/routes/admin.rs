@@ -669,6 +669,10 @@ pub(crate) async fn admin_delete_room(
         .delete_many(doc! { "room_id": &room_id })
         .await;
     let _ = db
+        .collection::<mongodb::bson::Document>("forum_pins")
+        .delete_many(doc! { "room_id": &room_id })
+        .await;
+    let _ = db
         .collection::<mongodb::bson::Document>("whiteboard_strokes")
         .delete_many(doc! { "room_id": &room_id })
         .await;

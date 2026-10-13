@@ -5,6 +5,9 @@ import {
   apiListForumPosts,
   apiCreateForumPost,
   apiDeleteForumPost,
+  apiGetForumPost,
+  apiPinForumPost,
+  apiUnpinForumPost,
   apiSearchForumPosts,
   apiUploadFile,
   type ForumPost,
@@ -54,6 +57,21 @@ const sortLabels: Record<SortMode, string> = {
   popular: "Popular",
 };
 
+/**
+ * Pinned posts first, newest pin first, then the rest in the list's sort —
+ * the order the server pages in, kept when a pin, an unpin or a reply moves a
+ * post without a reload. Only the activity sort re-sorts the rest: in the
+ * others a post keeps the place the server gave it.
+ */
+function orderForumPosts(posts: ForumPost[], sort: SortMode): ForumPost[] {
+  const pinned = posts
+    .filter((p) => p.pinned_at)
+    .sort((a, b) => (b.pinned_at ?? 0) - (a.pinned_at ?? 0));
+  const rest = posts.filter((p) => !p.pinned_at);
+  if (sort === "activity") rest.sort((a, b) => b.last_activity - a.last_activity);
+  return [...pinned, ...rest];
+}
+
 export function ForumArea() {
   const confirm = useConfirm();
   const { state } = useAppContext();
@@ -73,9 +91,17 @@ export function ForumArea() {
   const canManageTags =
     !!forumChannel &&
     (forumChannel.created_by === state.userId || !!state.myPermissions?.manage_channels);
+  // Pins are the same two people's, plus the room's creator for a room that is
+  // a forum itself (it has no channel to have created). The server checks it.
+  const canPin =
+    !!state.myPermissions?.manage_channels ||
+    (forumChannel ? forumChannel.created_by === state.userId : roomInfo?.creator === state.userId);
 
   const [posts, setPosts] = useState<ForumPost[]>([]);
   const [hasMore, setHasMore] = useState(false);
+  // Read by the socket handlers, which need to know what is loaded now.
+  const postsRef = useRef(posts);
+  postsRef.current = posts;
   const [loading, setLoading] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -106,7 +132,12 @@ export function ForumArea() {
     try {
       const data = await apiListForumPosts(roomId, 20, before, sort, channelId, tag);
       if (append) {
-        setPosts((prev) => [...prev, ...data.posts]);
+        // A post unpinned since the first page sits in the list already and
+        // can come back in a later one.
+        setPosts((prev) => {
+          const held = new Set(prev.map((p) => p.post_id));
+          return [...prev, ...data.posts.filter((p) => !held.has(p.post_id))];
+        });
       } else {
         setPosts(data.posts);
       }
@@ -198,7 +229,11 @@ export function ForumArea() {
           // New posts go to the end for oldest-first sort
           setPosts((prev) => [...prev, detail.post]);
         } else {
-          setPosts((prev) => [detail.post, ...prev]);
+          // Below the pinned posts, which stay on top whatever arrives.
+          setPosts((prev) => {
+            const pins = prev.filter((p) => p.pinned_at);
+            return [...pins, detail.post, ...prev.filter((p) => !p.pinned_at)];
+          });
         }
       }
     };
@@ -220,11 +255,7 @@ export function ForumArea() {
               ? { ...p, comment_count: p.comment_count + 1, last_activity: Date.now() }
               : p
           );
-          // Only re-sort if we're in activity mode
-          if (sortMode === "activity") {
-            return updated.sort((a, b) => b.last_activity - a.last_activity);
-          }
-          return updated;
+          return orderForumPosts(updated, sortMode);
         });
       }
     };
@@ -253,6 +284,41 @@ export function ForumArea() {
       }
     };
 
+    const onPostPinned = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!roomId || detail.room_id !== roomId || (detail.channel_id || null) !== channelId) return;
+      const pin = { pinned_by: detail.pinned_by, pinned_at: detail.pinned_at };
+      if (postsRef.current.some((p) => p.post_id === detail.post_id)) {
+        setPosts((prev) =>
+          orderForumPosts(prev.map((p) => (p.post_id === detail.post_id ? { ...p, ...pin } : p)), sortMode),
+        );
+      } else if (!isSearching) {
+        // A post further down than anything loaded still belongs at the top.
+        apiGetForumPost(roomId, detail.post_id)
+          .then(({ post }) => {
+            if (tagFilter && !(post.tags ?? []).includes(tagFilter)) return;
+            setPosts((prev) =>
+              prev.some((p) => p.post_id === post.post_id)
+                ? prev
+                : orderForumPosts([{ ...post, ...pin }, ...prev], sortMode),
+            );
+          })
+          .catch(() => {});
+      }
+    };
+    const onPostUnpinned = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail.room_id !== roomId) return;
+      setPosts((prev) =>
+        orderForumPosts(
+          prev.map((p) =>
+            p.post_id === detail.post_id ? { ...p, pinned_by: undefined, pinned_at: undefined } : p,
+          ),
+          sortMode,
+        ),
+      );
+    };
+
     const onOpenPost = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       // A post in another channel stays parked until that channel is showing.
@@ -267,6 +333,8 @@ export function ForumArea() {
     window.addEventListener("forum.post.created", onPostCreated);
     window.addEventListener("forum.post.deleted", onPostDeleted);
     window.addEventListener("forum.post.edited", onPostEdited);
+    window.addEventListener("forum.post.pinned", onPostPinned);
+    window.addEventListener("forum.post.unpinned", onPostUnpinned);
     window.addEventListener("forum.comment.created", onCommentCreated);
     window.addEventListener("forum.comment.deleted", onCommentDeleted);
     return () => {
@@ -274,6 +342,8 @@ export function ForumArea() {
       window.removeEventListener("forum.post.created", onPostCreated);
       window.removeEventListener("forum.post.deleted", onPostDeleted);
       window.removeEventListener("forum.post.edited", onPostEdited);
+      window.removeEventListener("forum.post.pinned", onPostPinned);
+      window.removeEventListener("forum.post.unpinned", onPostUnpinned);
       window.removeEventListener("forum.comment.created", onCommentCreated);
       window.removeEventListener("forum.comment.deleted", onCommentDeleted);
     };
@@ -289,9 +359,23 @@ export function ForumArea() {
     }
   };
 
+  // The broadcast moves the post for everyone, this client included.
+  const handleTogglePin = async (post: ForumPost) => {
+    if (!roomId) return;
+    try {
+      if (post.pinned_at) await apiUnpinForumPost(roomId, post.post_id);
+      else await apiPinForumPost(roomId, post.post_id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to update pin");
+    }
+  };
+
   const handleLoadMore = () => {
-    if (posts.length === 0) return;
-    const last = posts[posts.length - 1];
+    // Page from the last unpinned post: pinned ones are outside the paged feed,
+    // so their sort fields say nothing about where the next page starts.
+    const unpinned = posts.filter((p) => !p.pinned_at);
+    if (unpinned.length === 0) return;
+    const last = unpinned[unpinned.length - 1];
     // Use the correct cursor field based on sort mode
     let cursor: number;
     switch (sortMode) {
@@ -465,6 +549,8 @@ export function ForumArea() {
                 onClick={() => setSelectedPostId(post.post_id)}
                 onDelete={() => handleDeletePost(post.post_id)}
                 canDelete={canDelete}
+                canPin={canPin}
+                onTogglePin={() => handleTogglePin(post)}
                 tags={channelTags}
               />
             );

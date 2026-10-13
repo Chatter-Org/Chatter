@@ -1056,7 +1056,8 @@ export function createWsMessageHandler(
     // Forum real-time events — dispatch as custom events for ForumArea to handle
     else if (msg.type === "forum.post.created" || msg.type === "forum.post.deleted" ||
              msg.type === "forum.comment.created" || msg.type === "forum.comment.deleted" ||
-             msg.type === "forum.post.edited" || msg.type === "forum.comment.edited") {
+             msg.type === "forum.post.edited" || msg.type === "forum.comment.edited" ||
+             msg.type === "forum.post.pinned" || msg.type === "forum.post.unpinned") {
       window.dispatchEvent(
         new CustomEvent(msg.type, { detail: msg })
       );

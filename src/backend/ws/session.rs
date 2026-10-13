@@ -2551,6 +2551,7 @@ fn parse_profile_theme(value: &Value) -> Option<ProfileThemeRecord> {
 ///
 /// A struct rather than a tuple because every broadcast site reads all of it
 /// and there are now enough fields that position stops meaning anything.
+#[derive(Default)]
 struct ProfileFields {
     avatar_url: String,
     about: String,
@@ -2558,19 +2559,6 @@ struct ProfileFields {
     display_name: String,
     name_font_url: String,
     profile_theme: ProfileThemeRecord,
-}
-
-impl Default for ProfileFields {
-    fn default() -> Self {
-        Self {
-            avatar_url: String::new(),
-            about: String::new(),
-            banner_url: String::new(),
-            display_name: String::new(),
-            name_font_url: String::new(),
-            profile_theme: ProfileThemeRecord::default(),
-        }
-    }
 }
 
 async fn get_user_profile(state: &AppState, user_id: &str) -> ProfileFields {

@@ -1,5 +1,5 @@
 import { forumFiles, forumImages, forumVideos, type ForumPost, type ForumTag } from "@/lib/api";
-import { MessageSquare, Trash2, Play, Paperclip, Link } from "lucide-react";
+import { MessageSquare, Trash2, Play, Paperclip, Link, Pin, PinOff } from "lucide-react";
 import { ForumMarkdown } from "@/components/ForumMarkdown";
 import { AuthImage } from "@/components/AuthImage";
 import { ForumReactions } from "@/components/ForumReactions";
@@ -24,11 +24,15 @@ interface ForumPostCardProps {
   onClick: () => void;
   onDelete?: () => void;
   canDelete: boolean;
+  /** Whether this viewer may pin and unpin the forum's posts. */
+  canPin?: boolean;
+  onTogglePin?: () => void;
   /** The channel's tags, to draw the ones this post wears. */
   tags?: ForumTag[];
 }
 
-export function ForumPostCard({ post, onClick, onDelete, canDelete, tags }: ForumPostCardProps) {
+export function ForumPostCard({ post, onClick, onDelete, canDelete, canPin, onTogglePin, tags }: ForumPostCardProps) {
+  const pinned = !!post.pinned_at;
   const authorDisplay = displayUserId(post.author);
   const images = forumImages(post);
   const videos = forumVideos(post);
@@ -40,7 +44,9 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, tags }: Foru
 
   return (
     <div
-      className="group relative flex gap-2.5 sm:gap-3 rounded-lg border p-2.5 sm:p-3 transition-colors hover:bg-accent/50 cursor-pointer"
+      className={`group relative flex gap-2.5 sm:gap-3 rounded-lg border p-2.5 sm:p-3 transition-colors hover:bg-accent/50 cursor-pointer ${
+        pinned ? "border-primary/40 bg-primary/5" : ""
+      }`}
       {...clickable(onClick, `Open post: ${post.title}`)}
     >
       {/* Thumbnail — the lead image, with a count when the post holds more,
@@ -70,9 +76,30 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, tags }: Foru
       {/* Content */}
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div className="flex items-start justify-between gap-2">
-          <h3 className="font-semibold text-sm leading-tight line-clamp-1">
-            {post.title}
+          <h3 className="flex min-w-0 items-center gap-1.5 font-semibold text-sm leading-tight">
+            {pinned && (
+              <Pin
+                className="w-3.5 h-3.5 shrink-0 text-primary"
+                aria-label="Pinned"
+              />
+            )}
+            <span className="line-clamp-1">{post.title}</span>
           </h3>
+          {/* Pushes the actions to the right edge whatever the title's width. */}
+          <span className="flex-1" />
+          {canPin && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onTogglePin?.();
+              }}
+              aria-label={pinned ? "Unpin post" : "Pin post"}
+              title={pinned ? "Unpin post" : "Pin post"}
+              className="can-hover:opacity-0 can-hover:group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity shrink-0 cursor-pointer"
+            >
+              {pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+            </button>
+          )}
           {canDelete && (
             <button
               onClick={(e) => {

@@ -502,6 +502,24 @@ pub(crate) struct PinRecord {
     pub(crate) thread_id: Option<String>,
 }
 
+/// A forum post pinned to a forum channel. `_id` is the post's id, so a post
+/// can only ever be pinned once. The forum's own analogue of `PinRecord`:
+/// written by whoever set the forum up (or a moderator) and read by everyone,
+/// so it is a row beside the post rather a field on it — the post's author
+/// cannot move it and every viewer has to see the same pin.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct ForumPinRecord {
+    #[serde(rename = "_id")]
+    pub(crate) post_id: String,
+    pub(crate) room_id: String,
+    /// The forum channel the post lives in; empty for a room that is a forum
+    /// itself with no forum channels.
+    #[serde(default)]
+    pub(crate) channel_id: String,
+    pub(crate) pinned_by: String,
+    pub(crate) pinned_at: i64,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct DmRoomRecord {
     #[serde(rename = "_id")]
