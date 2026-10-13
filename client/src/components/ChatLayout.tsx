@@ -136,6 +136,10 @@ function MobileHeader({
   );
 }
 
+/** How long a newly selected room has to load its channels before the layout
+ *  takes it to have none and puts the call controls in the bottom bar. */
+const CHANNELS_SETTLE_MS = 1500;
+
 export function ChatLayout() {
   const { state, dispatch, loadRooms, loadFriends, loadRoomGroups, loadUnreads, loadNotificationSettings, loadContinuity, selectRoom, selectChannel, openThread, closeThread } = useAppContext();
   const isMobile = useIsMobile();
@@ -559,8 +563,22 @@ export function ChatLayout() {
   // column folded away. Off the call's room it also covers rooms with no
   // channels of their own; on it, a channel-less room (a DM) has its own bar.
   const [channelPanelCollapsed, setChannelPanelCollapsed] = useState(false);
+  // Selecting a room empties `channels` until the new room's arrive, and for
+  // that moment there is no column — so the bar flashed up on every switch.
+  // A room is given a moment to load its channels before it is taken to have
+  // none. DMs never have any, so they need not wait.
+  const [channelsSettledRoom, setChannelsSettledRoom] = useState<string | null>(null);
+  useEffect(() => {
+    const roomId = state.currentRoomId;
+    if (!roomId) return;
+    const t = setTimeout(() => setChannelsSettledRoom(roomId), CHANNELS_SETTLE_MS);
+    return () => clearTimeout(t);
+  }, [state.currentRoomId]);
+  const channelsLoading =
+    !!state.currentRoomId && !isDmRoom && state.channels.length === 0 &&
+    channelsSettledRoom !== state.currentRoomId;
   const channelColumnHasVoice =
-    !isMobile && showChannelColumn && !channelPanelCollapsed &&
+    !isMobile && (showChannelColumn || channelsLoading) && !channelPanelCollapsed &&
     !state.adminDashboardOpen && !!state.currentRoomId;
   const showDesktopVoiceBar =
     state.inVoiceChannel && !channelColumnHasVoice && (!isOnVoiceRoom || showChannelColumn);
