@@ -102,6 +102,18 @@ pub(crate) struct MessagesQuery {
     pub(crate) showcase_pane: Option<String>, // "featured" | "community" for showcase channels
 }
 
+/// One page of a thread's replies. Paged by keyset from the newest end, like a
+/// channel: an active thread is read from the bottom, and sending all of it to
+/// show the last screenful is what made opening one slow.
+#[derive(Deserialize)]
+pub(crate) struct ThreadMessagesQuery {
+    pub(crate) limit: Option<i64>,
+    /// Everything strictly older than this cursor — the oldest reply the
+    /// client holds. The pair, because timestamps are milliseconds and collide.
+    pub(crate) before_ts: Option<i64>,
+    pub(crate) before_event_id: Option<String>,
+}
+
 /// Whether deleting a message should take the files it carried with it.
 #[derive(Deserialize)]
 pub(crate) struct RedactQuery {

@@ -2,7 +2,7 @@ use super::super::{
     audit,
     dto::{
         EditMessageRequest, MessagesQuery, RedactQuery, SearchQuery, SendMessageRequest,
-        SetThreadNameRequest, ThreadListQuery,
+        SetThreadNameRequest, ThreadListQuery, ThreadMessagesQuery,
     },
     helpers::{
         broadcast_to_room, can_manage_messages, channel_permissions, effective_permissions,
@@ -1302,6 +1302,7 @@ pub(crate) async fn get_thread_messages(
     State(state): State<Arc<AppState>>,
     Path((room_id, thread_event_id)): Path<(String, String)>,
     headers: HeaderMap,
+    Query(query): Query<ThreadMessagesQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let token = extract_token(&headers)
         .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Missing token"))?;
@@ -1353,22 +1354,63 @@ pub(crate) async fn get_thread_messages(
 
     let mut root_doc = root_doc;
     root_doc.remove("_id");
-    let root_msg = serde_json::to_value(&root_doc).unwrap_or(serde_json::Value::Null);
+    let mut root_msg = serde_json::to_value(&root_doc).unwrap_or(serde_json::Value::Null);
 
-    // Fetch thread replies
-    let mut cursor = msg_coll
-        .find(doc! { "room_id": &room_id, "thread_id": &thread_event_id, "redacted": { "$ne": true } })
-        .sort(doc! { "origin_server_ts": 1 })
-        .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "DB query failed"))?;
+    // One page from the newest end, like a channel. The whole thread used to
+    // come back at once, oldest first, only for the panel to scroll past all
+    // of it to the bottom.
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    let replies =
+        doc! { "room_id": &room_id, "thread_id": &thread_event_id, "redacted": { "$ne": true } };
+    let cursor_filter = match (query.before_ts, query.before_event_id.as_deref()) {
+        (Some(ts), Some(event_id)) if !event_id.is_empty() => doc! { "$or": [
+            { "origin_server_ts": { "$lt": ts } },
+            { "origin_server_ts": ts, "event_id": { "$lt": event_id } },
+        ]},
+        (Some(ts), _) => doc! { "origin_server_ts": { "$lt": ts } },
+        _ => doc! {},
+    };
+    let first_page = cursor_filter.is_empty();
+    let page = fetch_page(
+        &msg_coll,
+        and_filter(&replies, cursor_filter),
+        doc! { "origin_server_ts": -1, "event_id": -1 },
+        limit + 1,
+    )
+    .await?;
+    let has_more = page.len() as i64 > limit;
+    // Read newest-first so the cursor works, rendered oldest-first.
+    let mut messages: Vec<Value> = page.into_iter().take(limit as usize).rev().collect();
 
-    let mut messages: Vec<Value> = Vec::new();
-    while let Ok(Some(doc)) = cursor.try_next().await {
-        let mut doc = doc;
-        doc.remove("_id");
-        if let Ok(val) = serde_json::to_value(&doc) {
-            messages.push(val);
+    // What the panel used to count off the replies it held, which is now only
+    // a page of them: the reply count, and who has posted. Only the first
+    // page carries them — a scroll back changes neither.
+    let mut posters: Option<Vec<String>> = None;
+    if first_page {
+        let counts =
+            get_thread_counts_for_events(&state, std::slice::from_ref(&thread_event_id)).await;
+        let count = counts.get(&thread_event_id).copied().unwrap_or(0);
+        if let Some(obj) = root_msg.as_object_mut() {
+            obj.insert("thread_reply_count".to_string(), json!(count));
         }
+        posters = msg_coll
+            .distinct(
+                "sender",
+                doc! {
+                    "room_id": &room_id,
+                    "thread_id": &thread_event_id,
+                    "redacted": { "$ne": true },
+                    "content.msgtype": { "$ne": "m.system" },
+                },
+            )
+            .await
+            .ok()
+            .map(|senders| {
+                senders
+                    .into_iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect()
+            });
     }
 
     // Attach reactions to thread messages
@@ -1392,10 +1434,15 @@ pub(crate) async fn get_thread_messages(
 
     attach_media_dimensions(&state, &mut messages).await;
 
-    Ok(Json(json!({
+    let mut body = json!({
         "root": root_msg,
-        "messages": messages
-    })))
+        "messages": messages,
+        "has_more": has_more,
+    });
+    if let Some(posters) = posters {
+        body["posters"] = json!(posters);
+    }
+    Ok(Json(body))
 }
 
 pub(crate) async fn send_thread_message(

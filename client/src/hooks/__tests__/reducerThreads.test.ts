@@ -72,6 +72,8 @@ describe("leaving a thread", () => {
         eventId: "$newroot",
         root: message("$newroot"),
         messages: [message("$newreply")],
+        hasMore: false,
+        posters: [],
       },
     });
 
@@ -156,9 +158,52 @@ describe("a thread's pins", () => {
     const pinned = reducer(inAThread(), { type: "ADD_THREAD_PIN", payload: pin("$reply") });
     const next = reducer(pinned, {
       type: "OPEN_THREAD",
-      payload: { eventId: "$newroot", root: message("$newroot"), messages: [] },
+      payload: { eventId: "$newroot", root: message("$newroot"), messages: [], hasMore: false, posters: [] },
     });
 
     expect(next.threadPins).toEqual([]);
+  });
+});
+
+describe("paging a thread", () => {
+  it("prepends an older page above what is held, once", () => {
+    const state = { ...inAThread(), threadHasMore: true, threadLoadingOlder: true };
+    const next = reducer(state, {
+      type: "PREPEND_THREAD_MESSAGES",
+      // "$reply" is already held: a page that overlaps must not draw it twice.
+      payload: { threadId: "$root", messages: [message("$older"), message("$reply")], hasMore: false },
+    });
+
+    expect(next.threadMessages.map((m) => m.event_id)).toEqual(["$older", "$reply"]);
+    expect(next.threadHasMore).toBe(false);
+    expect(next.threadLoadingOlder).toBe(false);
+  });
+
+  it("drops a page that arrives for a thread no longer open", () => {
+    const next = reducer(inAThread(), {
+      type: "PREPEND_THREAD_MESSAGES",
+      payload: { threadId: "$elsewhere", messages: [message("$older")], hasMore: false },
+    });
+
+    expect(next.threadMessages.map((m) => m.event_id)).toEqual(["$reply"]);
+  });
+
+  it("counts replies off the root, which a live count reaches", () => {
+    // The panel holds only the pages loaded, so its header reads the count
+    // the server keeps rather than the length of what it holds.
+    const next = reducer(inAThread(), {
+      type: "UPDATE_THREAD_REPLY_COUNT",
+      payload: { eventId: "$root", count: 240 },
+    });
+
+    expect(next.threadRootMessage?.thread_reply_count).toBe(240);
+  });
+
+  it("adds a new poster as their reply arrives", () => {
+    const state = { ...inAThread(), threadPosters: ["@someone:localhost"] };
+    const reply = { ...message("$new"), sender: "@newcomer:localhost", thread_id: "$root" };
+    const next = reducer(state, { type: "ADD_THREAD_MESSAGE", payload: reply });
+
+    expect(next.threadPosters).toEqual(["@someone:localhost", "@newcomer:localhost"]);
   });
 });

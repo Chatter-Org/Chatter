@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { ArrowLeft, Pencil, Check, X, Paperclip, Trash2, Smile, Pin, ChevronDown, ChevronRight, Reply } from "lucide-react";
 import { useAppContext } from "@/lib/store";
 import { apiSendThreadMessage } from "@/lib/api";
@@ -36,7 +36,7 @@ import { scrollBehavior } from "@/lib/theme/display";
 
 export function ThreadPanel() {
   const confirm = useConfirm();
-  const { state, dispatch, closeThread, setThreadName, deleteThread, unpinMessage } = useAppContext();
+  const { state, dispatch, closeThread, setThreadName, deleteThread, unpinMessage, loadOlderThreadMessages, revealThreadMessage } = useAppContext();
   const [body, setBody] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -56,6 +56,7 @@ export function ThreadPanel() {
   const nameInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const { threadRootMessage, threadMessages, threadReplyingTo, threadPins, userPresence, currentRoomId, roomInfoMap } = state;
 
@@ -72,9 +73,74 @@ export function ThreadPanel() {
   const roomCustomEmojis = currentRoomId ? (roomInfoMap[currentRoomId]?.custom_emojis ?? []) : [];
   const emojiAliases = currentRoomId ? (roomInfoMap[currentRoomId]?.emoji_aliases ?? {}) : {};
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: scrollBehavior() });
-  }, [threadMessages.length]);
+  // A thread opens on its newest page, at the bottom, and older pages are
+  // prepended as the reader scrolls up — the way a channel reads. What the
+  // effect below has to tell apart is *where* the replies changed: a new
+  // thread, a page prepended above, or a reply arriving below.
+  const seenRef = useRef<{ threadId: string | null; first?: string; last?: string }>({ threadId: null });
+  /** The oldest loaded reply and how far it sat below the top of the panel,
+   *  so a prepended page can be slid in above it without moving it. Kept on
+   *  every scroll rather than at the moment a load starts: the reader can
+   *  keep scrolling while the page is in flight. */
+  const anchorRef = useRef<{ id: string; offset: number } | null>(null);
+
+  const recordAnchor = useCallback(() => {
+    const el = scrollRef.current;
+    const first = state.threadMessages[0]?.event_id;
+    if (!el || !first) return;
+    const node = el.querySelector(`[data-event-id="${first}"]`);
+    if (!node) return;
+    anchorRef.current = {
+      id: first,
+      offset: node.getBoundingClientRect().top - el.getBoundingClientRect().top,
+    };
+  }, [state.threadMessages]);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const seen = seenRef.current;
+    const first = threadMessages[0]?.event_id;
+    const last = threadMessages[threadMessages.length - 1]?.event_id;
+    const threadId = state.activeThreadEventId;
+
+    if (seen.threadId !== threadId) {
+      el.scrollTop = el.scrollHeight;
+    } else if (first !== seen.first && last === seen.last) {
+      // A page went in above. Put the reply that was on top back where it
+      // was, rather than leaving the scroll offset to jump the view.
+      const anchor = anchorRef.current;
+      const node = anchor && el.querySelector(`[data-event-id="${anchor.id}"]`);
+      if (anchor && node) {
+        const now = node.getBoundingClientRect().top - el.getBoundingClientRect().top;
+        el.scrollTop += now - anchor.offset;
+      }
+    } else if (last !== seen.last) {
+      // A new reply follows the conversation only for someone already at it,
+      // or for its author — not for someone reading back through older pages.
+      const newest = threadMessages[threadMessages.length - 1];
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+      if (nearBottom || newest?.sender === state.userId) {
+        messagesEndRef.current?.scrollIntoView({ behavior: scrollBehavior() });
+      }
+    }
+    seenRef.current = { threadId, first, last };
+    recordAnchor();
+
+    // A first page too short to scroll can never be scrolled up from.
+    if (state.threadHasMore && !state.threadLoadingOlder && el.scrollHeight <= el.clientHeight) {
+      void loadOlderThreadMessages();
+    }
+  }, [threadMessages, state.activeThreadEventId, state.userId, state.threadHasMore, state.threadLoadingOlder, loadOlderThreadMessages, recordAnchor]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    recordAnchor();
+    if (state.threadHasMore && !state.threadLoadingOlder && el.scrollTop < el.clientHeight) {
+      void loadOlderThreadMessages();
+    }
+  }, [recordAnchor, state.threadHasMore, state.threadLoadingOlder, loadOlderThreadMessages]);
 
   // Starting a reply is aiming the composer, so put the cursor there.
   useEffect(() => {
@@ -345,11 +411,17 @@ export function ThreadPanel() {
     } catch {}
   };
 
-  const replyCount = threadMessages.length;
+  // From the server, not the replies held: those are only the pages loaded.
+  const replyCount = threadRootMessage?.thread_reply_count ?? threadMessages.length;
   const mayUnpin = canManageMessages(state);
 
   /** Bring a pinned reply into view in the thread, the way a reply quote does. */
-  const jumpToPin = (eventId: string) => {
+  const jumpToPin = async (eventId: string) => {
+    // A pin can be older than the pages loaded so far.
+    if (!threadMessages.some((m) => m.event_id === eventId)) {
+      if (!(await revealThreadMessage(eventId))) return;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
     const el = document.querySelector(`[data-thread-panel] [data-event-id="${eventId}"]`);
     if (!el) return;
     el.scrollIntoView({ behavior: scrollBehavior(), block: "center" });
@@ -494,7 +566,7 @@ export function ThreadPanel() {
                   <div key={pin.event_id} className="group/pin flex items-start gap-2 px-3 py-1 hover:bg-accent/50">
                     <button
                       type="button"
-                      onClick={() => jumpToPin(pin.event_id)}
+                      onClick={() => void jumpToPin(pin.event_id)}
                       className="min-w-0 flex-1 text-left"
                       title="Jump to message"
                     >
@@ -524,7 +596,7 @@ export function ThreadPanel() {
       )}
 
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto min-h-0" data-thread-panel>
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto min-h-0" data-thread-panel>
         {/* Root message */}
         <div className="px-3 pt-3 pb-2 border-b border-border/50" data-event-id={threadRootMessage.event_id}>
           <div className="flex items-start gap-2">
@@ -568,6 +640,9 @@ export function ThreadPanel() {
 
         {/* Thread messages */}
         <div className="pb-2">
+          {state.threadLoadingOlder && (
+            <p className="text-center text-xs text-muted-foreground py-2">Loading older replies...</p>
+          )}
           {threadMessages.map((msg, i) => {
             const prevMsg = threadMessages[i - 1];
             const grouped =

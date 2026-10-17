@@ -1483,7 +1483,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const data = await apiGetThreadMessages(roomId, eventId);
     dispatch({
       type: "OPEN_THREAD",
-      payload: { eventId, root: data.root, messages: data.messages },
+      payload: {
+        eventId,
+        root: data.root,
+        messages: data.messages,
+        hasMore: data.has_more,
+        posters: data.posters ?? [],
+      },
     });
     // Opening a thread is reading it, so its unread mention badge is dismissed
     // on the server too — the reducer drops it for this session, the marker is
@@ -1500,6 +1506,67 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch {
       // Nothing to show.
     }
+  }, []);
+
+  /** Prepend the page of replies before the oldest one held, as scrolling a
+   *  channel does. */
+  const loadOlderThreadMessages = useCallback(async () => {
+    const cur = stateRef.current;
+    const roomId = cur.currentRoomId;
+    const threadId = cur.activeThreadEventId;
+    if (!roomId || !threadId || cur.threadLoadingOlder || !cur.threadHasMore) return;
+    const oldest = cur.threadMessages[0];
+    if (!oldest) return;
+    dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: true } });
+    try {
+      const data = await apiGetThreadMessages(roomId, threadId, {
+        ts: oldest.origin_server_ts,
+        eventId: oldest.event_id,
+      });
+      dispatch({
+        type: "PREPEND_THREAD_MESSAGES",
+        payload: { threadId, messages: data.messages, hasMore: data.has_more },
+      });
+    } catch {
+      dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: false } });
+    }
+  }, []);
+
+  /** Page back through the open thread until `eventId` is loaded, so a pin or
+   *  a quoted reply older than what is on screen can still be reached.
+   *  Answers whether it was found. Keeps its own cursor rather than rereading
+   *  `stateRef`, which only catches up after a render. */
+  const revealThreadMessage = useCallback(async (eventId: string) => {
+    const cur = stateRef.current;
+    const roomId = cur.currentRoomId;
+    const threadId = cur.activeThreadEventId;
+    if (!roomId || !threadId) return false;
+    if (cur.threadMessages.some((m) => m.event_id === eventId)) return true;
+    let oldest = cur.threadMessages[0];
+    let hasMore = cur.threadHasMore;
+    while (hasMore && oldest) {
+      dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: true } });
+      let data;
+      try {
+        data = await apiGetThreadMessages(
+          roomId,
+          threadId,
+          { ts: oldest.origin_server_ts, eventId: oldest.event_id },
+          100,
+        );
+      } catch {
+        dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: false } });
+        return false;
+      }
+      dispatch({
+        type: "PREPEND_THREAD_MESSAGES",
+        payload: { threadId, messages: data.messages, hasMore: data.has_more },
+      });
+      if (data.messages.some((m) => m.event_id === eventId)) return true;
+      hasMore = data.has_more;
+      oldest = data.messages[0];
+    }
+    return false;
   }, []);
 
   const closeThread = useCallback(() => {
@@ -1986,6 +2053,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       sendMessage,
       openThread,
       openMessage,
+      loadOlderThreadMessages,
+      revealThreadMessage,
       closeThread,
       sendThreadMessage,
       setThreadName,
@@ -2059,7 +2128,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       blockUser,
       unblockUser,
     }),
-    [login, register, logout, deleteAccount, loadRooms, selectRoom, loadOlderMessages, loadMessagesAround, sendMessage, openThread, openMessage, closeThread, sendThreadMessage, setThreadName, deleteThread, deleteMessage, hardDeleteNotification, editMessage, addReaction, loadPins, loadEvents, createEvent, updateEvent, deleteEvent, createPoll, votePoll, closePoll, loadPoll, setRsvp, loadMorePins, loadMoreSearchResults, pinMessage, unpinMessage, createRoom, joinRoom, leaveRoom, loadVoiceMembers, sendTyping, getAllRooms, openDM, addToGroupDM, updateTopic, updateRoomSettings, setCustomStatus, setManualStatus, updateProfile, kickMember, banMember, unbanMember, setMemberRole, setNameColors, selectChannel, createChannel, updateChannel, deleteChannel, loadRoles, createRole, updateRole, deleteRole, assignMemberRoles, loadRoomGroups, createRoomGroup, deleteRoomGroup, renameRoomGroup, setGroupRooms, toggleGroupCollapsed, setSidebarOrder, loadFriends, loadUnreads, markChannelRead, loadNotificationSettings, loadContinuity, loadActiveThreads, saveDraft, saveResumePoint, setNotificationLevel, moderateVoice, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, blockUser, unblockUser],
+    [login, register, logout, deleteAccount, loadRooms, selectRoom, loadOlderMessages, loadMessagesAround, sendMessage, openThread, openMessage, loadOlderThreadMessages, revealThreadMessage, closeThread, sendThreadMessage, setThreadName, deleteThread, deleteMessage, hardDeleteNotification, editMessage, addReaction, loadPins, loadEvents, createEvent, updateEvent, deleteEvent, createPoll, votePoll, closePoll, loadPoll, setRsvp, loadMorePins, loadMoreSearchResults, pinMessage, unpinMessage, createRoom, joinRoom, leaveRoom, loadVoiceMembers, sendTyping, getAllRooms, openDM, addToGroupDM, updateTopic, updateRoomSettings, setCustomStatus, setManualStatus, updateProfile, kickMember, banMember, unbanMember, setMemberRole, setNameColors, selectChannel, createChannel, updateChannel, deleteChannel, loadRoles, createRole, updateRole, deleteRole, assignMemberRoles, loadRoomGroups, createRoomGroup, deleteRoomGroup, renameRoomGroup, setGroupRooms, toggleGroupCollapsed, setSidebarOrder, loadFriends, loadUnreads, markChannelRead, loadNotificationSettings, loadContinuity, loadActiveThreads, saveDraft, saveResumePoint, setNotificationLevel, moderateVoice, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, blockUser, unblockUser],
   );
 
   return (

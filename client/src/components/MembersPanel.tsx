@@ -34,15 +34,12 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
   // With a thread open the list is the thread's: whoever has posted in it —
   // the root's author and everyone who replied. Not `thread_participants`,
   // which also holds people who were only named or answered. The replies are
-  // loaded whole and kept live, so this follows the thread as it grows.
+  // loaded a page at a time, so the server names every poster on opening and
+  // `ADD_THREAD_MESSAGE` keeps that live as the thread grows.
   const threadPosters = useMemo(() => {
     if (!state.activeThreadEventId || !state.threadRootMessage) return null;
-    const ids = new Set<string>([state.threadRootMessage.sender]);
-    for (const m of state.threadMessages) {
-      if (m.content?.msgtype !== "m.system") ids.add(m.sender);
-    }
-    return ids;
-  }, [state.activeThreadEventId, state.threadRootMessage, state.threadMessages]);
+    return new Set<string>([state.threadRootMessage.sender, ...state.threadPosters]);
+  }, [state.activeThreadEventId, state.threadRootMessage, state.threadPosters]);
 
   const grouped = useMemo(() => {
     const currentChannel = state.channels.find((c) => c.channel_id === state.currentChannelId);

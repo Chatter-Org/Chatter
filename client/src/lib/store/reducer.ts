@@ -560,6 +560,9 @@ export function reducer(state: AppState, action: Action): AppState {
         activeThreadEventId: action.payload.eventId,
         threadRootMessage: action.payload.root,
         threadMessages: action.payload.messages,
+        threadHasMore: action.payload.hasMore,
+        threadLoadingOlder: false,
+        threadPosters: action.payload.posters,
         threadReplyingTo: null,
         // Filled by the pin fetch that follows; a previous thread's pins must
         // not show under this one while it is in flight.
@@ -569,6 +572,22 @@ export function reducer(state: AppState, action: Action): AppState {
         // keeps the badge gone after a reload rather than only in this session.
         threadMentions: { ...state.threadMentions, [action.payload.eventId]: 0 },
       };
+    // Both guarded by thread: a page asked for under one thread can land after
+    // another has been opened, and must not be spliced into it.
+    case "PREPEND_THREAD_MESSAGES": {
+      if (state.activeThreadEventId !== action.payload.threadId) return state;
+      const held = new Set(state.threadMessages.map((m) => m.event_id));
+      const older = action.payload.messages.filter((m) => !held.has(m.event_id));
+      return {
+        ...state,
+        threadMessages: [...older, ...state.threadMessages],
+        threadHasMore: action.payload.hasMore,
+        threadLoadingOlder: false,
+      };
+    }
+    case "SET_THREAD_LOADING_OLDER":
+      if (state.activeThreadEventId !== action.payload.threadId) return state;
+      return { ...state, threadLoadingOlder: action.payload.loading };
     case "SET_THREAD_PINS":
       if (state.activeThreadEventId !== action.payload.threadId) return state;
       return { ...state, threadPins: action.payload.pins };
@@ -582,13 +601,23 @@ export function reducer(state: AppState, action: Action): AppState {
         activeThreadEventId: null,
         threadRootMessage: null,
         threadMessages: [],
+        threadHasMore: false,
+        threadLoadingOlder: false,
+        threadPosters: [],
         threadReplyingTo: null,
         threadPins: [],
       };
     case "ADD_THREAD_MESSAGE":
       if (state.activeThreadEventId !== action.payload.thread_id) return state;
       if (state.threadMessages.some((m) => m.event_id === action.payload.event_id)) return state;
-      return { ...state, threadMessages: [...state.threadMessages, action.payload] };
+      return {
+        ...state,
+        threadMessages: [...state.threadMessages, action.payload],
+        threadPosters:
+          action.payload.content?.msgtype === "m.system" || state.threadPosters.includes(action.payload.sender)
+            ? state.threadPosters
+            : [...state.threadPosters, action.payload.sender],
+      };
     case "UPDATE_THREAD_REPLY_COUNT": {
       // The count is shown in two places — the badge on the root message and
       // the channel list's preview row — and only the first was kept up. The
@@ -609,6 +638,12 @@ export function reducer(state: AppState, action: Action): AppState {
         messages: state.messages.map((m) =>
           m.event_id === eventId ? { ...m, thread_reply_count: count } : m
         ),
+        // The open thread's header counts off its root too, since the replies
+        // it holds are only the pages scrolled through.
+        threadRootMessage:
+          state.threadRootMessage?.event_id === eventId
+            ? { ...state.threadRootMessage, thread_reply_count: count }
+            : state.threadRootMessage,
         channelThreads: previews,
       };
     }

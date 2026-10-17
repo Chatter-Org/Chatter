@@ -68,7 +68,7 @@ describe("the badge on a thread's row in the channel list", () => {
   it("is dismissed by opening that thread, and only that thread", () => {
     const next = reducer(withBadge(), {
       type: "OPEN_THREAD",
-      payload: { eventId: "$root", root: root(), messages: [] },
+      payload: { eventId: "$root", root: root(), messages: [], hasMore: false, posters: [] },
     });
     // Zero is the absence of a badge, the same way a channel's unread count is
     // zeroed rather than dropped.

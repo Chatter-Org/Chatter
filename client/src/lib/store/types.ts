@@ -176,7 +176,15 @@ export interface AppState {
   // Threads
   activeThreadEventId: string | null;
   threadRootMessage: MatrixMessage | null;
+  /** The loaded replies of the open thread, oldest first. A page from the
+   *  newest end at first; scrolling up prepends older ones. */
   threadMessages: MatrixMessage[];
+  /** Whether replies older than `threadMessages[0]` remain on the server. */
+  threadHasMore: boolean;
+  threadLoadingOlder: boolean;
+  /** Everyone who has posted in the open thread, including in replies not
+   *  loaded yet — the members list cannot work that out from a page. */
+  threadPosters: string[];
   /** The message the thread composer is answering — separate from
    *  `replyingTo`, which belongs to the channel composer. */
   threadReplyingTo: MatrixMessage | null;
@@ -315,7 +323,9 @@ export type Action =
   | { type: "ADD_PINNED_MESSAGE"; payload: PinnedMessage }
   | { type: "REMOVE_PINNED_MESSAGE"; payload: string }
   | { type: "APPEND_SEARCH_RESULTS"; payload: { results: MatrixMessage[]; hasMore: boolean; nextOffset: number } }
-  | { type: "OPEN_THREAD"; payload: { eventId: string; root: MatrixMessage; messages: MatrixMessage[] } }
+  | { type: "OPEN_THREAD"; payload: { eventId: string; root: MatrixMessage; messages: MatrixMessage[]; hasMore: boolean; posters: string[] } }
+  | { type: "PREPEND_THREAD_MESSAGES"; payload: { threadId: string; messages: MatrixMessage[]; hasMore: boolean } }
+  | { type: "SET_THREAD_LOADING_OLDER"; payload: { threadId: string; loading: boolean } }
   | { type: "CLOSE_THREAD" }
   | { type: "SET_THREAD_REPLYING_TO"; payload: MatrixMessage | null }
   | { type: "SET_THREAD_PINS"; payload: { threadId: string; pins: PinnedMessage[] } }
@@ -470,6 +480,9 @@ export const initialState: AppState = {
   activeThreadEventId: null,
   threadRootMessage: null,
   threadMessages: [],
+  threadHasMore: false,
+  threadLoadingOlder: false,
+  threadPosters: [],
   threadReplyingTo: null,
   threadPins: [],
   typingUsers: [],
@@ -510,6 +523,10 @@ export interface AppContextValue {
    *  stand for a message — the activity page, cross-room search — where
    *  selecting the room alone lands on whatever is newest instead. */
   openMessage: (target: MessageTarget) => Promise<void>;
+  /** Prepend the page of the open thread's replies before the oldest held. */
+  loadOlderThreadMessages: () => Promise<void>;
+  /** Load older pages of the open thread until `eventId` is among them. */
+  revealThreadMessage: (eventId: string) => Promise<boolean>;
   closeThread: () => void;
   sendThreadMessage: (body: string) => Promise<void>;
   setThreadName: (name: string) => Promise<void>;

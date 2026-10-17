@@ -1011,7 +1011,7 @@ function ActionRow({
 
 function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone, disableReactions, hidePinControls }: MessageItemProps) {
   const confirm = useConfirm();
-  const { state, dispatch, deleteMessage, hardDeleteNotification, editMessage, addReaction, openThread, pinMessage, unpinMessage } = useAppContext();
+  const { state, dispatch, deleteMessage, hardDeleteNotification, editMessage, addReaction, openThread, pinMessage, unpinMessage, revealThreadMessage } = useAppContext();
   const isMobile = useIsMobile();
   // Whether the message actions have to be *asked* for rather than hovered to.
   //
@@ -1410,8 +1410,15 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
     });
   };
 
-  const scrollToParent = () => {
-    if (!message.content.in_reply_to) return;
+  const scrollToParent = async () => {
+    const parentId = message.content.in_reply_to;
+    if (!parentId) return;
+    // A thread loads a page at a time, so the reply being answered can be
+    // older than what is on screen. (The root is always drawn.)
+    if (inThread && parentId !== state.threadRootMessage?.event_id) {
+      if (!(await revealThreadMessage(parentId))) return;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
     // Look in the view this message is drawn in: with a thread open, the
     // channel's copy of a message can be in the document too, hidden.
     const scope = (inThread && document.querySelector("[data-thread-panel]")) || document;
@@ -1460,7 +1467,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
           {message.content.in_reply_to && replySender && (
             <button
               className="flex items-center gap-1.5 mb-1 pl-2 border-l-2 border-primary/50 text-xs text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
-              onClick={scrollToParent}
+              onClick={() => void scrollToParent()}
             >
               <span className="font-semibold">{replySender}</span>
               <span className="truncate max-w-xs inline-flex items-center gap-0.5">

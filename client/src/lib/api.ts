@@ -749,10 +749,28 @@ export async function apiUnpinMessage(roomId: string, eventId: string) {
 
 // ─── Threads ─────────────────────────────────────────────────────────────────
 
-export async function apiGetThreadMessages(roomId: string, threadEventId: string) {
-  const res = await authenticatedFetch(`/api/rooms/${roomId}/threads/${threadEventId}`);
+/** One page of a thread's replies, newest page first like a channel. `before`
+ *  is the oldest reply already held; without it this is the newest page, which
+ *  also carries the reply count (on `root`) and `posters`. */
+export async function apiGetThreadMessages(
+  roomId: string,
+  threadEventId: string,
+  before?: { ts: number; eventId: string },
+  limit = 50,
+) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (before) {
+    params.set("before_ts", String(before.ts));
+    params.set("before_event_id", before.eventId);
+  }
+  const res = await authenticatedFetch(`/api/rooms/${roomId}/threads/${threadEventId}?${params}`);
   if (!res.ok) throw new Error("Failed to load thread messages");
-  return res.json() as Promise<{ root: MatrixMessage; messages: MatrixMessage[] }>;
+  return res.json() as Promise<{
+    root: MatrixMessage;
+    messages: MatrixMessage[];
+    has_more: boolean;
+    posters?: string[];
+  }>;
 }
 
 export async function apiGetRoomThreads(
