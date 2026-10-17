@@ -140,7 +140,7 @@ interface ChatAreaProps {
 }
 
 export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
-  const { state, dispatch, sendTyping, updateTopic, updateRoomSettings, loadOlderMessages, loadMessagesAround, selectChannel, markChannelRead, saveDraft } = useAppContext();
+  const { state, dispatch, sendTyping, updateTopic, updateRoomSettings, loadOlderMessages, loadMessagesAround, selectChannel, markChannelRead, saveDraft, openThread } = useAppContext();
   const isMobile = useIsMobile();
   // A DM's call is keyed by the room, so being in it is a room comparison.
   const inThisDmCall =
@@ -1337,6 +1337,12 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
   const jumpToMessage = async (msg: MatrixMessage) => {
     const roomId = state.currentRoomId;
     if (!roomId) return;
+    // A thread reply is not in any channel's timeline — it carries no
+    // channel_id — so the only place it can be shown is its thread.
+    if (msg.thread_id) {
+      await openThread(msg.thread_id);
+      return;
+    }
     const msgChannelId = msg.channel_id;
     if (msgChannelId && msgChannelId !== state.currentChannelId) {
       await selectChannel(msgChannelId);

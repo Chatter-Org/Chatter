@@ -477,6 +477,7 @@ pub(crate) async fn send_message(
                 mentions_only: false,
                 mention_text: None,
                 post_id: None,
+                thread_id: None,
                 suppress_role_mentions: event
                     .get("content")
                     .and_then(|c| c.get("suppress_role_mentions"))
@@ -1726,6 +1727,7 @@ pub(crate) async fn send_thread_message(
             mentions_only: false,
             mention_text: None,
             post_id: None,
+            thread_id: Some(thread_event_id.clone()),
             // Nobody holds mention_everyone inside a thread reply.
             suppress_role_mentions: true,
         },

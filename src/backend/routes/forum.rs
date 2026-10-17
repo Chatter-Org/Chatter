@@ -229,6 +229,7 @@ async fn push_forum_mentions(
             mentions_only: true,
             mention_text,
             post_id: Some(post.post_id.clone()),
+            thread_id: None,
             suppress_role_mentions,
         },
     );

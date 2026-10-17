@@ -271,6 +271,7 @@ export function ChatLayout() {
     const channelId = params.get("channel");
     const panel = params.get("panel");
     const postId = params.get("post");
+    const threadId = params.get("thread");
     if (!roomId) return;
 
     window.history.replaceState({}, "", window.location.pathname);
@@ -278,13 +279,14 @@ export function ChatLayout() {
     void (async () => {
       await selectRoom(roomId);
       if (channelId) await selectChannel(channelId);
+      if (threadId) await openThread(threadId);
       // Same destination as the in-page path: a reminder opened from a cold
       // start should still land on the event it was about.
       if (panel === "events") {
         dispatch({ type: "SET_COMPANION_PANEL", payload: "events" });
       }
     })();
-  }, [state.roomInfoMap, selectRoom, selectChannel, dispatch]);
+  }, [state.roomInfoMap, selectRoom, selectChannel, openThread, dispatch]);
 
   // Repair this browser's push subscription if it was enrolled and the
   // endpoint has since rotated or been dropped.

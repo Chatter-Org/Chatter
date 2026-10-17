@@ -452,6 +452,7 @@ pub(crate) async fn execute_webhook(
             mentions_only: false,
             mention_text: None,
             post_id: None,
+            thread_id: None,
             suppress_role_mentions: true,
         },
     );

@@ -299,6 +299,10 @@ pub(crate) struct MessageNotification {
     pub(crate) mention_text: Option<String>,
     /// The forum post to open when the notification is clicked.
     pub(crate) post_id: Option<String>,
+    /// The thread a reply was made in, so clicking the notification opens the
+    /// thread rather than the channel it hangs off — a reply is not in the
+    /// channel's timeline, so landing there shows nothing it said.
+    pub(crate) thread_id: Option<String>,
 }
 
 /// Queue push delivery for a message without making the sender wait on it.
@@ -387,13 +391,17 @@ async fn deliver_message(state: &Arc<AppState>, n: &MessageNotification) {
             "title": title,
             "body": notification_body(&n.body),
             "icon": n.icon,
-            // One notification per channel — a burst collapses instead of stacking,
-            // matching the client's tag.
-            "tag": format!("{}|{}", n.room_id, n.channel_id),
+            // One notification per channel (or thread) — a burst collapses
+            // instead of stacking, matching the client's tag.
+            "tag": match &n.thread_id {
+                Some(thread_id) => format!("{}|thread|{}", n.room_id, thread_id),
+                None => format!("{}|{}", n.room_id, n.channel_id),
+            },
             "room_id": n.room_id,
             "channel_id": n.channel_id,
             "event_id": n.event_id,
             "post_id": n.post_id,
+            "thread_id": n.thread_id,
         })
         .to_string()
     };

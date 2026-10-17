@@ -66,6 +66,8 @@ self.addEventListener("push", (event) => {
           panel: payload.panel,
           // A forum mention opens the post it was made in.
           postId: payload.post_id,
+          // A thread reply opens the thread, not the channel it hangs off.
+          threadId: payload.thread_id,
         },
       });
     })(),
@@ -74,7 +76,7 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const { roomId, channelId, panel, postId } = event.notification.data || {};
+  const { roomId, channelId, panel, postId, threadId } = event.notification.data || {};
 
   event.waitUntil(
     (async () => {
@@ -89,7 +91,14 @@ self.addEventListener("notificationclick", (event) => {
       for (const client of clients) {
         if (new URL(client.url).origin !== self.location.origin) continue;
         await client.focus();
-        client.postMessage({ type: "notification-navigate", roomId, channelId, panel, postId });
+        client.postMessage({
+          type: "notification-navigate",
+          roomId,
+          channelId,
+          panel,
+          postId,
+          threadId,
+        });
         return;
       }
 
@@ -99,6 +108,7 @@ self.addEventListener("notificationclick", (event) => {
       if (channelId) params.set("channel", channelId);
       if (panel) params.set("panel", panel);
       if (postId) params.set("post", postId);
+      if (threadId) params.set("thread", threadId);
       const query = params.toString();
       await self.clients.openWindow(query ? `/?${query}` : "/");
     })(),
