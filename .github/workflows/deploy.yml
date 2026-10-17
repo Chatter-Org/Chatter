@@ -63,7 +63,7 @@ jobs:
             rm -rf Chatter
 
             # Clone the repository
-            git clone https://github.com/Sphyrna-029/Chatter
+            git clone https://github.com/Chatter-Org/Chatter
 
             cd Chatter
 

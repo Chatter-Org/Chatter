@@ -55,7 +55,7 @@ Chatter is deployed via Docker Compose. The stack includes three services: the C
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Sphyrna-029/Chatter.git
+git clone https://github.com/Chatter-Org/Chatter.git
 cd Chatter
 ```
 
