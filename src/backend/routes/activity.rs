@@ -8,6 +8,7 @@
 use super::super::{
     helpers::{
         error_response, extract_token, get_allowed_channel_ids, get_user_from_token, now_millis,
+        visible_message_arms, visible_thread_ids,
     },
     state::AppState,
 };
@@ -37,9 +38,10 @@ fn doc_ts(d: &Document, key: &str) -> i64 {
         .unwrap_or(0)
 }
 
-/// Every room the caller is in, paired with the channels they may read.
-/// A `None` channel list means unrestricted, matching `get_allowed_channel_ids`.
-async fn visible_scope(state: &AppState, user_id: &str) -> Vec<(String, Option<Vec<String>>)> {
+/// Every room the caller is in, paired with the `$or` arms of what they may
+/// read there (`visible_message_arms`). `None` means unrestricted, matching
+/// `get_allowed_channel_ids`.
+async fn visible_scope(state: &AppState, user_id: &str) -> Vec<(String, Option<Vec<Document>>)> {
     let joined: Vec<String> = {
         let rm = state.room_members.read().await;
         rm.iter()
@@ -50,8 +52,14 @@ async fn visible_scope(state: &AppState, user_id: &str) -> Vec<(String, Option<V
 
     let mut scope = Vec::with_capacity(joined.len());
     for room_id in joined {
-        let allowed = get_allowed_channel_ids(state, &room_id, user_id).await;
-        scope.push((room_id, allowed));
+        let arms = match get_allowed_channel_ids(state, &room_id, user_id).await {
+            Some(channels) => {
+                let threads = visible_thread_ids(state, &room_id, &channels).await;
+                Some(visible_message_arms(&channels, &threads))
+            }
+            None => None,
+        };
+        scope.push((room_id, arms));
     }
     scope
 }
@@ -60,22 +68,14 @@ async fn visible_scope(state: &AppState, user_id: &str) -> Vec<(String, Option<V
 ///
 /// `None` when they are in no rooms at all: an empty `$or` is a Mongo error,
 /// and the callers answer with an empty result instead.
-fn scope_filter(scope: &[(String, Option<Vec<String>>)]) -> Option<Document> {
+fn scope_filter(scope: &[(String, Option<Vec<Document>>)]) -> Option<Document> {
     if scope.is_empty() {
         return None;
     }
     let clauses: Vec<Document> = scope
         .iter()
-        .map(|(room_id, allowed)| match allowed {
-            // Even a restricted member sees the messages that carry no channel
-            // at all — DMs, and rooms that predate channels.
-            Some(ids) => doc! {
-                "room_id": room_id,
-                "$or": [
-                    { "channel_id": { "$in": ids } },
-                    { "channel_id": { "$exists": false } },
-                ],
-            },
+        .map(|(room_id, arms)| match arms {
+            Some(arms) => doc! { "room_id": room_id, "$or": arms },
             None => doc! { "room_id": room_id },
         })
         .collect();
@@ -327,22 +327,15 @@ mod tests {
     }
 
     #[test]
-    fn restricted_rooms_keep_channelless_messages() {
-        // DMs and pre-channel rooms carry no channel_id; a restricted member
-        // must still see those rather than losing them to the $in.
-        let scope = vec![("!room:h".to_string(), Some(vec!["#a".to_string()]))];
+    fn restricted_rooms_match_within_their_arms() {
+        let arms = visible_message_arms(&["#a".to_string()], &[]);
+        let scope = vec![("!room:h".to_string(), Some(arms))];
         let filter = scope_filter(&scope).expect("one room");
         let clause = filter.get_array("$or").unwrap()[0]
             .as_document()
             .expect("document");
-        let inner = clause.get_array("$or").expect("channel clause");
-        assert_eq!(inner.len(), 2);
-        assert!(inner[1]
-            .as_document()
-            .unwrap()
-            .get_document("channel_id")
-            .unwrap()
-            .contains_key("$exists"));
+        assert_eq!(clause.get_str("room_id").unwrap(), "!room:h");
+        assert_eq!(clause.get_array("$or").expect("visibility arms").len(), 3);
     }
 
     #[test]

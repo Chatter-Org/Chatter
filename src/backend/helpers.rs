@@ -939,6 +939,64 @@ pub(crate) async fn public_channel_ids(
     public
 }
 
+/// The `$or` arms matching the messages of one room that a member restricted
+/// to `channels` may read: those in an allowed channel, those that carry no
+/// channel at all (DMs, rooms that predate channels), and thread replies in
+/// `threads`.
+///
+/// A thread reply carries no `channel_id` — it lives in its thread, not a
+/// channel's timeline — so "no channel" alone let every reply through,
+/// including replies in channels the member cannot see. A reply is as private
+/// as its thread's root, which is what `visible_thread_ids` answers.
+pub(crate) fn visible_message_arms(
+    channels: &[String],
+    threads: &[String],
+) -> Vec<mongodb::bson::Document> {
+    use mongodb::bson::doc;
+    vec![
+        doc! { "channel_id": { "$in": channels } },
+        doc! { "channel_id": { "$exists": false }, "thread_id": { "$exists": false } },
+        doc! { "channel_id": { "$exists": false }, "thread_id": { "$in": threads } },
+    ]
+}
+
+/// The threads of `room_id` whose root sits in one of `channels`, or in no
+/// channel. Pairs with `visible_message_arms`: a thread with no record is
+/// left out, which hides its replies rather than showing them to anyone.
+pub(crate) async fn visible_thread_ids(
+    state: &AppState,
+    room_id: &str,
+    channels: &[String],
+) -> Vec<String> {
+    use futures_util::TryStreamExt;
+    use mongodb::bson::{doc, Document};
+
+    let mut in_channels: Vec<&str> = channels.iter().map(String::as_str).collect();
+    in_channels.push("");
+    let filter = doc! {
+        "room_id": room_id,
+        "$or": [
+            { "channel_id": { "$in": in_channels } },
+            { "channel_id": { "$exists": false } },
+        ],
+    };
+    let mut ids = Vec::new();
+    if let Ok(mut cursor) = state
+        .db
+        .collection::<Document>("threads")
+        .find(filter)
+        .projection(doc! { "_id": 1 })
+        .await
+    {
+        while let Ok(Some(d)) = cursor.try_next().await {
+            if let Ok(id) = d.get_str("_id") {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    ids
+}
+
 pub(crate) async fn get_allowed_channel_ids(
     state: &AppState,
     room_id: &str,
@@ -1471,6 +1529,30 @@ pub(crate) async fn get_media_dimensions_for_urls(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_thread_reply_is_visible_only_through_its_thread() {
+        let channels = vec!["#a".to_string()];
+        let threads = vec!["$root".to_string()];
+        let arms = visible_message_arms(&channels, &threads);
+        assert_eq!(arms.len(), 3);
+        // A message with no channel is only let through bare when it is not a
+        // thread reply — that arm is what used to admit every reply.
+        let bare = &arms[1];
+        assert!(bare
+            .get_document("thread_id")
+            .unwrap()
+            .contains_key("$exists"));
+        // A reply is admitted by its thread alone.
+        let reply = &arms[2];
+        let ids = reply
+            .get_document("thread_id")
+            .unwrap()
+            .get_array("$in")
+            .unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].as_str(), Some("$root"));
+    }
 
     #[test]
     fn media_urls_reads_links_out_of_a_body() {

@@ -10,7 +10,7 @@ use super::super::{
         get_media_dimensions_for_urls, get_reactions_for_events, get_thread_counts_for_events,
         get_user_custom_role_ids, get_user_from_token, get_user_role, is_blocked_between,
         is_moderator_or_owner, media_urls_in_body, now_millis, rate_limited, regex_escape,
-        send_to_user,
+        send_to_user, visible_message_arms, visible_thread_ids,
     },
     push::{spawn_message_push, MessageNotification},
     ratelimit,
@@ -2150,19 +2150,14 @@ pub(crate) async fn search_messages(
         }
     };
 
-    // Restrict search results to channels the user is allowed to see.
+    // Restrict search results to channels the user is allowed to see — and
+    // to threads hanging off them, since a reply carries no channel of its own.
     let mongo_filter =
         if let Some(allowed) = get_allowed_channel_ids(&state, &room_id, &user_id).await {
-            let bson_ids: Vec<mongodb::bson::Bson> = allowed
-                .iter()
-                .map(|s| mongodb::bson::Bson::String(s.clone()))
-                .collect();
+            let threads = visible_thread_ids(&state, &room_id, &allowed).await;
             doc! { "$and": [
                 mongo_filter,
-                { "$or": [
-                    { "channel_id": { "$in": bson_ids } },
-                    { "channel_id": { "$exists": false } }
-                ]}
+                { "$or": visible_message_arms(&allowed, &threads) }
             ]}
         } else {
             mongo_filter

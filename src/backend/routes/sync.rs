@@ -2,7 +2,7 @@ use super::super::{
     dto::SyncQuery,
     helpers::{
         error_response, extract_token, get_allowed_channel_ids, get_reactions_for_events,
-        get_user_from_token, room_member_entries,
+        get_user_from_token, room_member_entries, visible_message_arms, visible_thread_ids,
     },
     state::{AppState, ChannelRecord, DmRoomRecord, DmStreakRecord, RoomRecord, UserRecord},
 };
@@ -104,14 +104,8 @@ async fn build_joined_room(
 
     // Build message filter restricted to visible channels
     let msg_filter = if let Some(ref ids) = allowed_channel_ids {
-        let bson_ids: Vec<mongodb::bson::Bson> = ids
-            .iter()
-            .map(|s| mongodb::bson::Bson::String(s.clone()))
-            .collect();
-        doc! { "room_id": room_id, "$or": [
-            { "channel_id": { "$in": bson_ids } },
-            { "channel_id": { "$exists": false } }
-        ]}
+        let threads = visible_thread_ids(state, room_id, ids).await;
+        doc! { "room_id": room_id, "$or": visible_message_arms(ids, &threads) }
     } else {
         doc! { "room_id": room_id }
     };
