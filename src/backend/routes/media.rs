@@ -332,12 +332,15 @@ async fn has_video(path: &str) -> bool {
 /// frame of it. The same goes for MJPEG, the Windows Media codecs, and the
 /// other things that pre-date H.264 and still turn up in old files.
 ///
-/// H.265 is the entry worth arguing about: Safari plays it, Chrome and Edge
-/// play it where the hardware does, Firefox largely does not. It stays on the
-/// list because re-encoding it would mean re-encoding every video an iPhone
-/// has ever produced — a real cost, paid by everyone, to fix a case that
-/// mostly works — where the codecs above it play for nobody at all.
-const WEB_PLAYABLE_VIDEO_CODECS: [&str; 4] = ["h264", "hevc", "av1", "vp9"];
+/// H.265 is not on it. It was, on the reasoning that re-encoding it means
+/// re-encoding every video an iPhone produces to fix a case that mostly works.
+/// It does not mostly work: Safari plays it, Chrome and Edge only where the
+/// hardware decodes it, and on Linux — Chromium, Firefox, and the Electron
+/// desktop app — almost nowhere. HEVC is also what most MKV rips carry, so an
+/// MKV converted cleanly, kept its audio, drew its thumbnail (ffmpeg decodes
+/// HEVC fine) and played as sound over a blank rectangle. A re-encode is paid
+/// once on the server; an undrawable picture is paid by every viewer.
+const WEB_PLAYABLE_VIDEO_CODECS: [&str; 3] = ["h264", "av1", "vp9"];
 
 /// The codec of a file's first video stream, as ffprobe names it.
 async fn video_codec(path: &str) -> Option<String> {
@@ -370,12 +373,12 @@ async fn video_codec(path: &str) -> Option<String> {
 /// range request — a video being scrubbed produces dozens. The answer cannot
 /// change without the file being rewritten, so it is worth writing down.
 ///
-/// Named `.web-playable` rather than the `.playable` it used to be: that
-/// marker was written by a check that looked only at the codec name, so it
-/// vouches for 10-bit and 4:4:4 H.264 that no browser draws. A new name makes
-/// every file be asked again under the check as it is now.
+/// Renamed whenever the check behind it tightens, so every file is asked
+/// again under the check as it is now. `.playable` came from a check that
+/// looked only at the codec name (and so vouched for 10-bit H.264);
+/// `.web-playable` from one that still accepted HEVC.
 fn playable_marker(mp4: &str) -> String {
-    format!("{mp4}.web-playable")
+    format!("{mp4}.browser-playable")
 }
 
 async fn mark_video_playable(mp4: &str) {
@@ -433,9 +436,7 @@ async fn video_pix_fmt(path: &str) -> Option<String> {
 /// support stops at 8-bit 4:2:0, and so does every hardware decoder Safari
 /// and Firefox lean on. 10-bit H.264 is what most anime rips are, and 4:4:4 is
 /// what a screen recorder set to "lossless" writes — both copied straight into
-/// an MP4 and then never played. HEVC is held to 4:2:0 for the same reason
-/// (the range-extension profiles decode nowhere) but keeps 10-bit, since that
-/// is what an iPhone records HDR in. VP9 and AV1 are decoded in software where
+/// an MP4 and then never played. VP9 and AV1 are decoded in software where
 /// they are decoded at all, and take what they are given.
 ///
 /// A pixel format ffprobe cannot name is treated as playable, like a codec it
@@ -449,7 +450,6 @@ fn picture_is_web_playable(codec: &str, pix_fmt: Option<&str>) -> bool {
     };
     match codec {
         "h264" => matches!(pix_fmt, "yuv420p" | "yuvj420p" | "nv12"),
-        "hevc" => pix_fmt.contains("420") || pix_fmt.starts_with("nv12") || pix_fmt == "p010le",
         _ => true,
     }
 }
@@ -3260,6 +3260,7 @@ async fn remove_upload_record(state: &Arc<AppState>, record: &UploadRecord) {
             ".faststarted",
             ".playable",
             ".web-playable",
+            ".browser-playable",
         ] {
             let _ = tokio::fs::remove_file(format!("{}{suffix}", record.disk_path)).await;
         }
@@ -4543,14 +4544,16 @@ mod tests {
     fn the_codec_name_alone_does_not_make_a_picture_playable() {
         // What phones and ordinary encoders write.
         assert!(picture_is_web_playable("h264", Some("yuv420p")));
-        assert!(picture_is_web_playable("hevc", Some("yuv420p10le")));
         assert!(picture_is_web_playable("vp9", Some("yuv420p10le")));
         // Called h264, decoded by no browser: anime rips, and screen
         // recorders set to lossless.
         assert!(!picture_is_web_playable("h264", Some("yuv420p10le")));
         assert!(!picture_is_web_playable("h264", Some("yuv422p")));
         assert!(!picture_is_web_playable("h264", Some("yuv444p")));
-        assert!(!picture_is_web_playable("hevc", Some("yuv422p10le")));
+        // Drawn by Safari and by hardware that happens to decode it — not by
+        // Chromium, Firefox or the desktop app on Linux.
+        assert!(!picture_is_web_playable("hevc", Some("yuv420p")));
+        assert!(!picture_is_web_playable("hevc", Some("yuv420p10le")));
         // Not knowing is not a reason to re-encode.
         assert!(picture_is_web_playable("h264", None));
         assert!(!picture_is_web_playable("mpeg4", None));
@@ -4565,7 +4568,7 @@ mod tests {
             "",
             ".cc.tmp",
             ".faststarted",
-            ".web-playable",
+            ".browser-playable",
             "@subs.json",
             ".thumb.jpg",
         ] {
@@ -4609,6 +4612,22 @@ mod tests {
 
         let tmp = remux_with_subs(&mkv).await.expect("the re-encode rung");
         assert_eq!(video_pix_fmt(&tmp).await.as_deref(), Some("yuv420p"));
+        assert!(has_audio(&tmp).await, "audio lost");
+
+        let _ = tokio::fs::remove_file(&tmp).await;
+        let _ = tokio::fs::remove_file(&mkv).await;
+    }
+
+    #[tokio::test]
+    async fn an_hevc_mkv_is_re_encoded_rather_than_copied() {
+        // What most MKV rips carry. Copied through, it converted cleanly, kept
+        // its audio and its thumbnail, and played as sound over a blank box
+        // in every Linux browser.
+        let mkv = build_video_fixture("x265.mkv", "libx265", "yuv420p").await;
+        assert_eq!(video_codec(&mkv).await.as_deref(), Some("hevc"));
+
+        let tmp = remux_with_subs(&mkv).await.expect("the re-encode rung");
+        assert_eq!(video_codec(&tmp).await.as_deref(), Some("h264"));
         assert!(has_audio(&tmp).await, "audio lost");
 
         let _ = tokio::fs::remove_file(&tmp).await;
@@ -4660,14 +4679,14 @@ mod tests {
 
         repair_unplayable_in_place(&mp4).await;
         assert_eq!(video_pix_fmt(&mp4).await.as_deref(), Some("yuv420p"));
-        assert!(tokio::fs::metadata(format!("{mp4}.web-playable"))
+        assert!(tokio::fs::metadata(format!("{mp4}.browser-playable"))
             .await
             .is_ok());
         assert!(tokio::fs::metadata(format!("{mp4}.faststarted"))
             .await
             .is_ok());
 
-        for suffix in ["", ".web-playable", ".faststarted"] {
+        for suffix in ["", ".browser-playable", ".faststarted"] {
             let _ = tokio::fs::remove_file(format!("{mp4}{suffix}")).await;
         }
     }
