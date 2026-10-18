@@ -11,6 +11,8 @@ import { serverImage } from "@/ui/media";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { ImageViewer } from "./ImageViewer";
+import { GifActions } from "./GifPickerSheet";
+import { isGifUrl } from "@chatter/core/gifs";
 import { useDevicePrefs } from "@/state/devicePrefs";
 import { ForumLinkCard, LinkPreviewCard, MessageLinkCard } from "./LinkCards";
 import { saveServerFile } from "@/platform/files";
@@ -38,6 +40,8 @@ function fileName(url: string): string {
 export const MessageMedia = memo(function MessageMedia({ media, spoiler }: { media: BodyMedia; spoiler?: boolean }) {
   const { linkPreviews } = useDevicePrefs();
   const [viewing, setViewing] = useState<number | null>(null);
+  // A GIF held: favourite it or file it (the web's star on a GIF).
+  const [holding, setHolding] = useState<string | null>(null);
   const hasAny =
     media.images.length +
       media.videos.length +
@@ -53,7 +57,7 @@ export const MessageMedia = memo(function MessageMedia({ media, spoiler }: { med
   return (
     <View className="mt-2 gap-2">
       {media.images.length > 0 && (
-        <ImageGrid urls={media.images} onOpen={setViewing} blurred={spoiler} />
+        <ImageGrid urls={media.images} onOpen={setViewing} onHold={(url) => isGifUrl(url) && setHolding(url)} blurred={spoiler} />
       )}
       {media.videos.map((url) => (
         <InlineVideo key={url} url={url} />
@@ -76,11 +80,12 @@ export const MessageMedia = memo(function MessageMedia({ media, spoiler }: { med
       {/* One page preview, for the first link, as on the web. */}
       {media.links.length > 0 && linkPreviews ? <LinkPreviewCard url={media.links[0]} /> : null}
       <ImageViewer urls={media.images} index={viewing} onClose={() => setViewing(null)} />
+      <GifActions url={holding} onClose={() => setHolding(null)} />
     </View>
   );
 });
 
-function ImageGrid({ urls, onOpen, blurred }: { urls: string[]; onOpen(i: number): void; blurred?: boolean }) {
+function ImageGrid({ urls, onOpen, onHold, blurred }: { urls: string[]; onOpen(i: number): void; onHold(url: string): void; blurred?: boolean }) {
   const [revealed, setRevealed] = useState(!blurred);
   // The picture's own shape, as the web draws it: as wide as the message
   // allows, no taller than max-h-80 (352px).
@@ -91,7 +96,7 @@ function ImageGrid({ urls, onOpen, blurred }: { urls: string[]; onOpen(i: number
     const width = room ? Math.min(room, 352 * aspect) : 0;
     return (
       <View onLayout={(e) => setRoom(e.nativeEvent.layout.width)}>
-        <Pressable onPress={() => (revealed ? onOpen(0) : setRevealed(true))} accessibilityRole="imagebutton" accessibilityLabel="Image, tap to open">
+        <Pressable onPress={() => (revealed ? onOpen(0) : setRevealed(true))} onLongPress={() => onHold(urls[0])} accessibilityRole="imagebutton" accessibilityLabel="Image, tap to open">
         <Image
           source={serverImage(urls[0])}
           onLoad={(e) => e.source.width && e.source.height && setAspect(e.source.width / e.source.height)}
@@ -109,7 +114,7 @@ function ImageGrid({ urls, onOpen, blurred }: { urls: string[]; onOpen(i: number
   return (
     <View className="flex-row flex-wrap gap-1" style={{ maxWidth: 324 }}>
       {urls.map((url, i) => (
-        <Pressable key={url} onPress={() => (revealed ? onOpen(i) : setRevealed(true))} accessibilityLabel={`Image ${i + 1} of ${urls.length}`}>
+        <Pressable key={url} onPress={() => (revealed ? onOpen(i) : setRevealed(true))} onLongPress={() => onHold(url)} accessibilityLabel={`Image ${i + 1} of ${urls.length}`}>
           <Image
             source={serverImage(url)}
             style={{ width: 160, height: 160, borderRadius: 13.4 }}

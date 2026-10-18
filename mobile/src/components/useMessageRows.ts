@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import type { MatrixMessage } from "@chatter/core/api";
-import { senderNameColor, type FormatOptions } from "@chatter/core/messageFormat";
+import { externalSender, senderNameColor, type FormatOptions } from "@chatter/core/messageFormat";
 import { mentionRoleColors } from "@chatter/core/mentions";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
@@ -8,7 +8,7 @@ import type { MessageRowProps } from "./MessageRow";
 
 type RowData = Pick<
   MessageRowProps,
-  "senderName" | "senderColor" | "avatarUrl" | "replySenderName" | "reactions" | "myUserId" | "mentionsMe" | "formatOptions" | "onReact"
+  "senderName" | "senderColor" | "avatarUrl" | "senderBadge" | "replySenderName" | "reactions" | "myUserId" | "mentionsMe" | "formatOptions" | "onReact"
 >;
 
 /**
@@ -41,10 +41,13 @@ export function useMessageRows() {
   const rowData = useCallback(
     (m: MatrixMessage): RowData => {
       const body = m.content.body ?? "";
+      // A bot or webhook names itself and brings its own picture.
+      const external = externalSender(m);
       return {
-        senderName: nameOf(m.sender),
-        senderColor: senderNameColor(state, roomInfo, m.sender),
-        avatarUrl: state.userPresence[m.sender]?.avatarUrl,
+        senderName: external ? external.name : nameOf(m.sender),
+        senderColor: external ? undefined : senderNameColor(state, roomInfo, m.sender),
+        avatarUrl: external ? external.avatarUrl : state.userPresence[m.sender]?.avatarUrl,
+        senderBadge: external?.badge,
         replySenderName: m.content.reply_to_sender ? nameOf(m.content.reply_to_sender) : undefined,
         reactions: state.messageReactions[m.event_id],
         myUserId: state.userId,

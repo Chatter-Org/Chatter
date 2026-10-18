@@ -1,6 +1,6 @@
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
-import { BarChart3, Camera, File, Images } from "lucide-react-native";
+import { BarChart3, Camera, File, ImagePlay, Images } from "lucide-react-native";
 import { router } from "expo-router";
 import type { PickedFile } from "@/platform/uploads";
 import { showToast } from "@/platform/toast";
@@ -28,6 +28,7 @@ export function AttachSheet({
   onPicked,
   room,
   poll,
+  onGifs,
 }: {
   open: boolean;
   onClose(): void;
@@ -36,6 +37,8 @@ export function AttachSheet({
   room: number;
   /** Offer a poll too (the web's "Create a poll", in a channel, not a thread). */
   poll?: boolean;
+  /** Offer GIFs — the web's GIF button, which a phone's input has no room for. */
+  onGifs?(): void;
 }) {
   const pick = async (from: "library" | "camera" | "files") => {
     onClose();
@@ -73,10 +76,20 @@ export function AttachSheet({
 
   return (
     // The web's attach menu, as sheet rows.
-    <Sheet open={open} onClose={onClose} title={poll ? "Add" : "Attach"}>
+    <Sheet open={open} onClose={onClose} title={poll || onGifs ? "Add" : "Attach"}>
       <SheetRow icon={Images} label="Photos and videos" onPress={() => void pick("library")} />
       <SheetRow icon={Camera} label="Take a photo or video" onPress={() => void pick("camera")} />
       <SheetRow icon={File} label="Files" onPress={() => void pick("files")} />
+      {onGifs ? (
+        <SheetRow
+          icon={ImagePlay}
+          label="GIFs"
+          onPress={() => {
+            onClose();
+            onGifs();
+          }}
+        />
+      ) : null}
       {poll ? (
         <SheetRow
           icon={BarChart3}

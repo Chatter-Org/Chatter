@@ -19,6 +19,7 @@ import { clearMessagePreviews } from "@chatter/core/messageLinks";
 import { accessTokenExpired, readAccessToken } from "@chatter/core/session";
 import { createStoreActions, type StoreActions } from "@chatter/core/store/actions";
 import { reducer } from "@chatter/core/store/reducer";
+import { loadGifFavorites, resetGifFavorites } from "@chatter/core/gifFavorites";
 import { initialState, type AppState } from "@chatter/core/store/types";
 import { createWsMessageHandler } from "@chatter/core/store/wsHandler";
 import { decideResumeAction } from "@chatter/core/wsResume";
@@ -322,6 +323,21 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
     // `shared` and the socket helpers live for the provider's lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.accessToken]);
+
+  // Favourite GIFs, held by the account (core/gifFavorites): fetched on
+  // signing in and on coming back to the app, whose socket may have missed a
+  // change; a different account starts empty. Live changes arrive as a
+  // `gif_favorites` socket message (host.adoptGifFavorites).
+  const signedIn = !!state.accessToken;
+  useEffect(() => {
+    resetGifFavorites();
+    if (!signedIn || !state.userId) return;
+    void loadGifFavorites();
+    const sub = RNAppState.addEventListener("change", (next) => {
+      if (next === "active") void loadGifFavorites();
+    });
+    return () => sub.remove();
+  }, [state.userId, signedIn]);
 
   // Foreground and background. Put away, the socket is let go after a grace
   // period; brought back, the shared rule decides between nothing, a resync

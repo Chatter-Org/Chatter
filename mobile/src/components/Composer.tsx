@@ -10,6 +10,7 @@ import { useOutgoingUploads } from "@/state/outgoing";
 import { nativeUploadSource, type PickedFile } from "@/platform/uploads";
 import { showToast } from "@/platform/toast";
 import { can } from "@chatter/core/permissions";
+import { GifPickerSheet } from "./GifPickerSheet";
 import { AttachSheet, MAX_ATTACHMENTS } from "./AttachSheet";
 import { EmojiPickerSheet } from "./EmojiPickerSheet";
 import { isCustomEmojiUrl } from "@chatter/core/emojiCatalog";
@@ -52,6 +53,7 @@ export function Composer({
   const [text, setText] = useState(() => (threadEventId ? "" : (state.drafts[draftKey] ?? "")));
   const [staged, setStaged] = useState<PickedFile[]>([]);
   const [attaching, setAttaching] = useState(false);
+  const [pickingGif, setPickingGif] = useState(false);
   const [pickingEmoji, setPickingEmoji] = useState(false);
   const [sending, setSending] = useState(false);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -268,6 +270,12 @@ export function Composer({
         </Pressable>
       </View>
 
+      <GifPickerSheet
+        open={pickingGif}
+        onClose={() => setPickingGif(false)}
+        // Into the message, as on the web, to send as it is or with words.
+        onPick={(url) => onChange(text ? `${text} ${url}` : url)}
+      />
       <EmojiPickerSheet
         open={pickingEmoji}
         onClose={() => setPickingEmoji(false)}
@@ -281,6 +289,7 @@ export function Composer({
         onClose={() => setAttaching(false)}
         room={MAX_ATTACHMENTS - staged.length}
         poll={!threadEventId && can(state, "send_messages")}
+        onGifs={() => setPickingGif(true)}
         onPicked={(files) => setStaged((s) => [...s, ...files].slice(0, MAX_ATTACHMENTS))}
       />
     </View>

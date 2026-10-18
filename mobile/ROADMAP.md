@@ -39,7 +39,7 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Composer above the keyboard; drafts synced; typing indicator
 - [x] Message images open full screen (pinch, swipe to dismiss); video/audio/file cards
 - [x] Link previews and embeds (message/forum link cards, page previews, YouTube); jumping to a linked message
-- [ ] Bot rich embeds
+- [x] Bot rich embeds: author, title link, description, fields, thumbnail, image, footer, BOT/HOOK tag; buttons and select menus answer the bot over the socket
 - [x] Emoji picker (standard + room custom emoji), reaction picker
 - [x] Mention autocomplete (@user, @role) and :emoji: shortcodes in the composer (`composerTokens` in core)
 - [x] Threads (open, reply, previews under channels)
@@ -78,7 +78,7 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Drawer (rail + channel list), header, messages, composer, members, call bar, sheets, settings, sign-in rebuilt from the web components
 - [x] Header tool row: notifications, pins, mentions, search
 - [ ] Events in the tool row (with polls/events)
-- [ ] GIF picker and the composer's GIF button
+- [x] GIF picker (from the composer's + sheet): search, trending first; favourites and categories synced with the account; hold a GIF anywhere to favourite or file it
 
 ### Adaptive layout
 - [x] Side-by-side panels on wide windows

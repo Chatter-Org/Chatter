@@ -5,6 +5,8 @@ import { currentServer } from "./server";
 import { showToast } from "./toast";
 import { deferArrivalSound, dropDeferredArrivalSound } from "@chatter/core/soundRules";
 import { playDeferredArrivalSound, playSound, playSoundUrl } from "./sounds";
+import { adoptGifFavorites } from "@chatter/core/gifFavorites";
+import type { GifFavoritesPayload } from "@chatter/core/api";
 
 /**
  * The phone's side of the shared core's host contract
@@ -27,4 +29,5 @@ export const nativeHost: Partial<Host> = {
   playDeferredArrivalSound,
   dropDeferredArrivalSound,
   prewarmSounds: () => {},
+  adoptGifFavorites: (payload) => adoptGifFavorites(payload as GifFavoritesPayload),
 };

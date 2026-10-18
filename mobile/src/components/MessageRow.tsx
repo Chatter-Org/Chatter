@@ -11,6 +11,7 @@ import type { FormatOptions } from "@chatter/core/messageFormat";
 import { extractMedia, isDeletedMessage } from "@chatter/core/messageFormat";
 import { Tap } from "./Tap";
 import { PollCard, PollResultsCard } from "./PollCard";
+import { EmbedCard } from "./EmbedCard";
 import { useShowProfile } from "./ProfileSheet";
 import { Avatar } from "./Avatar";
 import { BODY_TEXT, MessageBody } from "./MessageBody";
@@ -32,6 +33,8 @@ export interface MessageRowProps {
   senderName: string;
   senderColor?: string;
   avatarUrl?: string;
+  /** BOT or HOOK: the sender is not a member, and has no profile to open. */
+  senderBadge?: "BOT" | "HOOK";
   status?: string;
   replySenderName?: string;
   reactions?: Record<string, string[]>;
@@ -140,6 +143,7 @@ function RowContent({
   senderName,
   senderColor,
   avatarUrl,
+  senderBadge,
   status,
   replySenderName,
   reactions,
@@ -178,9 +182,13 @@ function RowContent({
       {/* h-7: the web's avatar below 768px; grouped rows keep its width. */}
       <View className="mt-0.5" style={{ width: AVATAR }}>
         {!grouped && (
-          <Tap onPress={() => showProfile(message.sender)} label={`${senderName}'s profile`} className="rounded-full">
-            <Avatar userId={message.sender} name={senderName} url={avatarUrl} size={AVATAR} textClassName="text-3xs" />
-          </Tap>
+          senderBadge ? (
+            <Avatar name={senderName} url={avatarUrl} size={AVATAR} textClassName="text-3xs" />
+          ) : (
+            <Tap onPress={() => showProfile(message.sender)} label={`${senderName}'s profile`} className="rounded-full">
+              <Avatar userId={message.sender} name={senderName} url={avatarUrl} size={AVATAR} textClassName="text-3xs" />
+            </Tap>
+          )
         )}
       </View>
       <View className="min-w-0 flex-1">
@@ -194,11 +202,23 @@ function RowContent({
         ) : null}
         {!grouped && (
           <View className="flex-row items-baseline gap-2">
-            <Tap onPress={() => showProfile(message.sender)} label={`${senderName}'s profile`} className="shrink rounded">
-              <T className="text-sm font-semibold" style={senderColor ? { color: senderColor } : undefined} numberOfLines={1}>
-                {senderName}
-              </T>
-            </Tap>
+            {senderBadge ? (
+              <>
+                <T className="shrink text-sm font-semibold" numberOfLines={1}>
+                  {senderName}
+                </T>
+                {/* MessageItem's BOT / HOOK tag. */}
+                <View className="rounded bg-indigo-500/20 px-1 py-0.5">
+                  <T className="text-3xs font-semibold text-indigo-400">{senderBadge}</T>
+                </View>
+              </>
+            ) : (
+              <Tap onPress={() => showProfile(message.sender)} label={`${senderName}'s profile`} className="shrink rounded">
+                <T className="text-sm font-semibold" style={senderColor ? { color: senderColor } : undefined} numberOfLines={1}>
+                  {senderName}
+                </T>
+              </Tap>
+            )}
             <T className="text-xs text-muted-foreground">{time}</T>
           </View>
         )}
@@ -215,6 +235,7 @@ function RowContent({
           <>
             <MessageBody body={body} options={formatOptions} edited={message.edited} />
             <MessageMedia media={media} />
+            {message.content.embeds?.map((embed, i) => <EmbedCard key={i} embed={embed} eventId={message.event_id} />)}
           </>
         )}
         {onOpenThread && (message.thread_reply_count ?? 0) > 0 ? (
