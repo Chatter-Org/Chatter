@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { apiSearchGifs } from "@/lib/api";
+import { gifFullUrl, gifPage, gifThumbUrl, type GifItem } from "@chatter/core/gifs";
 import { Folder, Loader2, MoreHorizontal, Plus, Star } from "lucide-react";
 import { useFavoriteGifs, loadGifFavorites, MAX_CATEGORY_NAME } from "@/hooks/useFavoriteGifs";
 import { cn } from "@/lib/utils";
@@ -15,16 +16,6 @@ import {
 
 interface GifPickerProps {
   onSelect: (gifUrl: string) => void;
-}
-
-interface GifItem {
-  title?: string;
-  file?: {
-    xs?: { gif?: { url?: string } };
-    sm?: { gif?: { url?: string } };
-    md?: { gif?: { url?: string } };
-    gif?: { url?: string };
-  };
 }
 
 const PER_PAGE = 12;
@@ -153,9 +144,7 @@ export function GifPicker({ onSelect }: GifPickerProps) {
   const fetchGifs = useCallback(async (q: string, p: number, append: boolean) => {
     setLoading(true);
     try {
-      const resp = await apiSearchGifs(q, p, PER_PAGE);
-      const items: GifItem[] = resp?.data?.data || [];
-      const hasNext: boolean = resp?.data?.has_next ?? false;
+      const { items, hasNext } = gifPage(await apiSearchGifs(q, p, PER_PAGE));
       if (append) {
         setGifs((prev) => [...prev, ...items]);
       } else {
@@ -209,13 +198,8 @@ export function GifPicker({ onSelect }: GifPickerProps) {
     }
   };
 
-  const getThumbUrl = (gif: GifItem): string | undefined => {
-    return gif.file?.sm?.gif?.url || gif.file?.xs?.gif?.url || gif.file?.gif?.url;
-  };
-
-  const getFullUrl = (gif: GifItem): string | undefined => {
-    return gif.file?.md?.gif?.url || gif.file?.gif?.url || getThumbUrl(gif);
-  };
+  const getThumbUrl = gifThumbUrl;
+  const getFullUrl = gifFullUrl;
 
   return (
     <div className="w-80 flex flex-col">

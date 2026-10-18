@@ -620,6 +620,8 @@ export interface AppContextValue {
   loadFriends: () => Promise<void>;
   /** Friends' presence, for those you share no room with. */
   loadFriendPresence: () => Promise<void>;
+  /** A press on a bot embed's button, or a choice in its select menu. */
+  embedInteraction: (eventId: string, componentId: string, componentType: "button" | "select", values?: string[]) => void;
   /** Pull server-computed unread + mention counts (survives a refresh). */
   loadUnreads: () => Promise<void>;
   /** Persist that this channel is read up to now; fire-and-forget. */

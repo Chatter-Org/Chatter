@@ -899,6 +899,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const loadFriends = shared.loadFriends;
   const loadFriendPresence = shared.loadFriendPresence;
+  const embedInteraction = shared.embedInteraction;
 
   const sendFriendRequest = shared.sendFriendRequest;
 
@@ -990,6 +991,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setSidebarOrder,
       loadFriends,
       loadFriendPresence,
+      embedInteraction,
       loadUnreads,
       markChannelRead,
       loadNotificationSettings,
@@ -1006,7 +1008,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       blockUser,
       unblockUser,
     }),
-    [login, register, logout, deleteAccount, loadRooms, selectRoom, loadOlderMessages, loadMessagesAround, sendMessage, openThread, openMessage, loadOlderThreadMessages, revealThreadMessage, closeThread, sendThreadMessage, setThreadName, deleteThread, deleteMessage, hardDeleteNotification, editMessage, addReaction, loadPins, loadEvents, createEvent, updateEvent, deleteEvent, createPoll, votePoll, closePoll, loadPoll, setRsvp, loadMorePins, loadMoreSearchResults, pinMessage, unpinMessage, createRoom, joinRoom, leaveRoom, loadVoiceMembers, sendTyping, getAllRooms, openDM, addToGroupDM, updateTopic, updateRoomSettings, setCustomStatus, setManualStatus, updateProfile, kickMember, banMember, unbanMember, setMemberRole, setNameColors, selectChannel, createChannel, updateChannel, deleteChannel, loadRoles, createRole, updateRole, deleteRole, assignMemberRoles, loadRoomGroups, createRoomGroup, deleteRoomGroup, renameRoomGroup, setGroupRooms, toggleGroupCollapsed, setSidebarOrder, loadFriends, loadFriendPresence, loadUnreads, markChannelRead, loadNotificationSettings, loadContinuity, loadActiveThreads, saveDraft, saveResumePoint, setNotificationLevel, moderateVoice, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, blockUser, unblockUser],
+    [login, register, logout, deleteAccount, loadRooms, selectRoom, loadOlderMessages, loadMessagesAround, sendMessage, openThread, openMessage, loadOlderThreadMessages, revealThreadMessage, closeThread, sendThreadMessage, setThreadName, deleteThread, deleteMessage, hardDeleteNotification, editMessage, addReaction, loadPins, loadEvents, createEvent, updateEvent, deleteEvent, createPoll, votePoll, closePoll, loadPoll, setRsvp, loadMorePins, loadMoreSearchResults, pinMessage, unpinMessage, createRoom, joinRoom, leaveRoom, loadVoiceMembers, sendTyping, getAllRooms, openDM, addToGroupDM, updateTopic, updateRoomSettings, setCustomStatus, setManualStatus, updateProfile, kickMember, banMember, unbanMember, setMemberRole, setNameColors, selectChannel, createChannel, updateChannel, deleteChannel, loadRoles, createRole, updateRole, deleteRole, assignMemberRoles, loadRoomGroups, createRoomGroup, deleteRoomGroup, renameRoomGroup, setGroupRooms, toggleGroupCollapsed, setSidebarOrder, loadFriends, loadFriendPresence, embedInteraction, loadUnreads, markChannelRead, loadNotificationSettings, loadContinuity, loadActiveThreads, saveDraft, saveResumePoint, setNotificationLevel, moderateVoice, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, blockUser, unblockUser],
   );
 
   return (

@@ -330,6 +330,14 @@ export function createStoreActions(ctx: StoreContext) {
   };
 
 
+  /** A press on a bot embed's button, or a choice in its select menu. The bot
+   *  answers by editing the message or posting another. */
+  const embedInteraction = (eventId: string, componentId: string, componentType: "button" | "select", values: string[] = []) => {
+    const roomId = getState().currentRoomId;
+    if (!roomId) return;
+    send({ type: "embed_interaction", room_id: roomId, event_id: eventId, component_id: componentId, component_type: componentType, values });
+  };
+
   // ─── Events and polls ────────────────────────────────────────────────────
 
   const createEvent = async (draft: EventDraft) => {
@@ -1267,6 +1275,7 @@ export function createStoreActions(ctx: StoreContext) {
     addToGroupDM,
     loadFriends,
     loadFriendPresence,
+    embedInteraction,
     createEvent,
     updateEvent,
     deleteEvent,
