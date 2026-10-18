@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { Copy, Link2, Pencil, Reply, Trash2, type LucideProps } from "lucide-react-native";
+import { Copy, Link2, Pencil, Reply, SmilePlus, Trash2, type LucideProps } from "lucide-react-native";
 import type { ComponentType } from "react";
 import type { MatrixMessage } from "@chatter/core/api";
 import { messageLinkFor } from "@chatter/core/messageLinks";
@@ -13,6 +13,7 @@ import { showToast } from "@/platform/toast";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { Sheet } from "@/ui/Sheet";
+import { EmojiPickerSheet } from "./EmojiPickerSheet";
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
 
@@ -33,6 +34,8 @@ export function MessageActions({
   const state = useChatter();
   const actions = useChatterActions();
   const [editing, setEditing] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const room = state.currentRoomId ? state.roomInfoMap[state.currentRoomId] : undefined;
   const [draft, setDraft] = useState("");
 
   // A fresh sheet for each message held.
@@ -82,7 +85,7 @@ export function MessageActions({
           <>
             {!deleted && (
               <View className="flex-row justify-around px-3 pb-3">
-                {QUICK_REACTIONS.map((emoji) => (
+                {QUICK_REACTIONS.slice(0, 5).map((emoji) => (
                   <Pressable
                     key={emoji}
                     onPress={run(() => void actions.addReaction(message.event_id, emoji))}
@@ -92,6 +95,13 @@ export function MessageActions({
                     <T className="text-2xl">{emoji}</T>
                   </Pressable>
                 ))}
+                <Pressable
+                  onPress={() => setPicking(true)}
+                  accessibilityLabel="More reactions"
+                  className="h-12 w-12 items-center justify-center rounded-full bg-muted"
+                >
+                  <Icon as={SmilePlus} tone="foreground" size={22} />
+                </Pressable>
               </View>
             )}
             <View className="mx-3 overflow-hidden rounded-xl bg-card">
@@ -138,6 +148,16 @@ export function MessageActions({
           </>
         )}
       </View>
+      <EmojiPickerSheet
+        open={picking}
+        onClose={() => setPicking(false)}
+        roomCustomEmojis={room?.custom_emojis}
+        emojiAliases={room?.emoji_aliases}
+        onPick={(emoji) => {
+          if (message) void actions.addReaction(message.event_id, emoji);
+          onClose();
+        }}
+      />
     </Sheet>
   );
 }

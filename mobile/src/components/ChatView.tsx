@@ -12,6 +12,7 @@ import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { MessageRow } from "./MessageRow";
 import { MessageActions } from "./MessageActions";
+import { Composer } from "./Composer";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { useTheme } from "@/theme/ThemeProvider";
@@ -188,93 +189,5 @@ function TypingLine({ names }: { names: string[] }) {
     <T className="h-[18px] px-4 text-[11px] text-muted-foreground" numberOfLines={1}>
       {text}
     </T>
-  );
-}
-
-function Composer({
-  replyTo,
-  replyName,
-  onClearReply,
-  bottomInset,
-}: {
-  replyTo: MatrixMessage | null;
-  replyName?: string;
-  onClearReply(): void;
-  bottomInset: number;
-}) {
-  const state = useChatter();
-  const actions = useChatterActions();
-  const { colors } = useTheme();
-  const draftKey = `${state.currentRoomId}|${state.currentChannelId ?? ""}`;
-  const [text, setText] = useState(() => state.drafts[draftKey] ?? "");
-  const [sending, setSending] = useState(false);
-  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const channel = state.channels.find((c) => c.channel_id === state.currentChannelId);
-  const placeholder = channel ? `Message #${channel.name}` : "Message";
-
-  const onChange = (value: string) => {
-    setText(value);
-    if (value) actions.sendTyping();
-    // Drafts follow the person to their other devices, a beat after they stop.
-    if (draftTimer.current) clearTimeout(draftTimer.current);
-    const roomId = state.currentRoomId;
-    const channelId = state.currentChannelId ?? "";
-    if (roomId) draftTimer.current = setTimeout(() => void actions.saveDraft(roomId, channelId, value), 800);
-  };
-
-  const send = async () => {
-    const body = text.trim();
-    if (!body || sending) return;
-    setSending(true);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    try {
-      await actions.sendMessage(body, replyTo?.event_id);
-      setText("");
-      onClearReply();
-      if (draftTimer.current) clearTimeout(draftTimer.current);
-      if (state.currentRoomId) void actions.saveDraft(state.currentRoomId, state.currentChannelId ?? "", "");
-    } catch (e) {
-      // The text stays, so nothing typed is lost.
-      showToast({ message: e instanceof Error ? e.message : "Message not sent", tone: "error" });
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <View className="bg-background px-3 pt-1" style={{ paddingBottom: Math.max(8, bottomInset) }}>
-      {replyTo ? (
-        <View className="mb-1.5 flex-row items-center gap-2 rounded-lg bg-muted px-3 py-1.5">
-          <T className="flex-1 text-xs text-muted-foreground" numberOfLines={1}>
-            Replying to <T className="font-mono-bold text-xs text-foreground">{replyName}</T>
-          </T>
-          <Pressable onPress={onClearReply} hitSlop={10} accessibilityLabel="Cancel reply">
-            <Icon as={X} size={14} />
-          </Pressable>
-        </View>
-      ) : null}
-      <View className="flex-row items-end gap-2">
-        <View className="flex-1 rounded-2xl border border-input bg-card px-3.5">
-          <TextInput
-            value={text}
-            onChangeText={onChange}
-            placeholder={placeholder}
-            placeholderTextColor={colors["muted-foreground"]}
-            multiline
-            className="max-h-36 py-2.5 font-mono text-[15px] text-foreground"
-            accessibilityLabel={placeholder}
-          />
-        </View>
-        <Pressable
-          onPress={send}
-          disabled={!text.trim() || sending}
-          accessibilityRole="button"
-          accessibilityLabel="Send"
-          className={cn("h-11 w-11 items-center justify-center rounded-full", text.trim() ? "bg-primary" : "bg-muted")}
-        >
-          <Icon as={SendHorizontal} size={18} tone={text.trim() ? "primary-foreground" : "muted-foreground"} />
-        </Pressable>
-      </View>
-    </View>
   );
 }

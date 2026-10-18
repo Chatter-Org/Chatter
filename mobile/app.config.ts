@@ -59,6 +59,29 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         },
       },
     ],
+    [
+      "expo-image-picker",
+      {
+        photosPermission: "Chatter needs your photos to send them in a conversation.",
+        cameraPermission: "Chatter uses the camera to take photos and videos to send.",
+        microphonePermission: "Chatter uses the microphone when you record a video to send.",
+      },
+    ],
+    ["expo-video", { supportsPictureInPicture: true, supportsBackgroundPlayback: true }],
+    "expo-audio",
+    [
+      "expo-notifications",
+      {
+        color: "#0a0a0a",
+      },
+    ],
+    [
+      "@config-plugins/react-native-webrtc",
+      {
+        cameraPermission: "Chatter uses the camera for video in calls.",
+        microphonePermission: "Chatter uses the microphone for voice chat.",
+      },
+    ],
     "./plugins/withLongPathCmake",
   ],
   experiments: {

@@ -11,6 +11,8 @@ import type { FormatOptions } from "@chatter/core/messageFormat";
 import { extractMedia, isDeletedMessage } from "@chatter/core/messageFormat";
 import { Avatar } from "./Avatar";
 import { MessageBody } from "./MessageBody";
+import { MessageMedia } from "./MessageMedia";
+import { EmojiGlyph } from "./EmojiPickerSheet";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { serverImage } from "@/ui/media";
@@ -178,9 +180,7 @@ function RowContent({
         ) : (
           <>
             <MessageBody body={body} options={formatOptions} edited={message.edited} />
-            {media.images.map((url) => (
-              <Picture key={url} url={url} />
-            ))}
+            <MessageMedia media={media} />
           </>
         )}
         {reactions && Object.keys(reactions).length > 0 ? (
@@ -195,7 +195,7 @@ function RowContent({
                   accessibilityLabel={`${emoji} ${users.length}${mine ? ", you reacted" : ""}`}
                   className={cn("flex-row items-center gap-1 rounded-full border px-2 py-0.5", mine ? "border-primary bg-primary/15" : "border-border bg-muted")}
                 >
-                  <T className="text-sm">{emoji}</T>
+                  <EmojiGlyph emoji={emoji} size={18} />
                   <T className="text-xs text-muted-foreground">{users.length}</T>
                 </Pressable>
               );
@@ -220,19 +220,4 @@ function SpoilerBody({ body, options, edited }: { body: string; options: FormatO
 function useReveal(): [boolean, () => void] {
   const [shown, setShown] = useState(false);
   return [shown, () => setShown(true)];
-}
-
-function Picture({ url }: { url: string }) {
-  const source = serverImage(url);
-  if (!source) return null;
-  return (
-    <Image
-      source={source}
-      style={{ width: "100%", maxWidth: 320, aspectRatio: 4 / 3, borderRadius: 10, marginTop: 6 }}
-      contentFit="cover"
-      transition={150}
-      recyclingKey={url}
-      accessibilityLabel="Image"
-    />
-  );
 }
