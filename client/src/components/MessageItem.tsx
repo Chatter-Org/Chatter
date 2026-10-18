@@ -1,4 +1,5 @@
 import { memo, useMemo, useState, useEffect, useRef, useCallback } from "react";
+import { externalSender } from "@chatter/core/messageFormat";
 import { DEFAULT_EMBED_COLOR, embedActionRows, embedSelectRows } from "@chatter/core/embeds";
 import { EyeOff, Star, Play, Copy, Check, Cast, Subtitles, Link2, Pin, PinOff, Reply, MessagesSquare, SmilePlus, Pencil, Trash2, X, MoreHorizontal } from "lucide-react";
 import { useAppContext } from "@/lib/store";
@@ -1073,14 +1074,9 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
       : message.content.msgtype === "m.poll_results"
         ? "results"
         : null;
-  const isWebhook = message.content.webhook === true;
-  const isBot = message.content.bot === true;
-  const isExternal = isWebhook || isBot;
-  const senderUsername = isWebhook
-    ? (message.content.webhook_name || "Webhook")
-    : isBot
-    ? (message.content.bot_name || "Bot")
-    : displayUserId(message.sender);
+  const external = externalSender(message);
+  const isExternal = !!external;
+  const senderUsername = external ? external.name : displayUserId(message.sender);
   const sender = isExternal
     ? senderUsername
     : (state.userPresence[message.sender]?.displayName || senderUsername);
@@ -1089,11 +1085,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
     hour: "2-digit",
     minute: "2-digit",
   });
-  const avatarUrl = isWebhook
-    ? (message.content.webhook_avatar_url || undefined)
-    : isBot
-    ? (message.content.bot_avatar_url || undefined)
-    : state.userPresence[message.sender]?.avatarUrl;
+  const avatarUrl = external ? external.avatarUrl : state.userPresence[message.sender]?.avatarUrl;
   const isDeleted = message.redacted || message.content.body === "[deleted]";
   const isOwn = message.sender === state.userId;
   const myUsername = state.userId ? displayUserId(state.userId) : null;
@@ -1466,7 +1458,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
                 {sender}
               </span>
               {isExternal && (
-                <span className="text-3xs font-semibold px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-400 leading-none">{isBot ? "BOT" : "HOOK"}</span>
+                <span className="text-3xs font-semibold px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-400 leading-none">{external?.badge}</span>
               )}
               <span className="text-xs text-muted-foreground">{time}</span>
             </div>

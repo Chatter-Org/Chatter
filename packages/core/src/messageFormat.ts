@@ -263,3 +263,18 @@ export function senderNameColor(
   }
   return undefined;
 }
+
+/**
+ * Who a message is from when it is not a member: a bot or a webhook names
+ * itself and brings its own picture, and is marked BOT or HOOK beside the
+ * name (MessageItem). Null for an ordinary member.
+ */
+export function externalSender(m: MatrixMessage): { badge: "BOT" | "HOOK"; name: string; avatarUrl?: string } | null {
+  if (m.content.webhook === true) {
+    return { badge: "HOOK", name: m.content.webhook_name || "Webhook", avatarUrl: m.content.webhook_avatar_url || undefined };
+  }
+  if (m.content.bot === true) {
+    return { badge: "BOT", name: m.content.bot_name || "Bot", avatarUrl: m.content.bot_avatar_url || undefined };
+  }
+  return null;
+}
