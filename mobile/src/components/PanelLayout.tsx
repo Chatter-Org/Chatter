@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useChatter } from "@/state/ChatterProvider";
 import { BackHandler, Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
 import { GestureDetector, usePanGesture } from "react-native-gesture-handler";
 import Animated, {
@@ -86,6 +87,16 @@ export function PanelLayout({ left, right, children }: { left: ReactNode; right:
     offset.value = 0;
     setOpen(null);
   }, [leftDocked, offset]);
+
+  // Another conversation (a DM opened from a profile, say) is a new list of
+  // members; the old one, left open over it, would be someone else's.
+  const roomId = useChatter().currentRoomId;
+  useEffect(() => {
+    setOpen((side) => {
+      if (side === "right") offset.value = withSpring(0, SPRING);
+      return side === "right" ? null : side;
+    });
+  }, [roomId, offset]);
 
   // Back closes an open panel before it leaves the screen.
   useEffect(() => {

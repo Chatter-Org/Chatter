@@ -10,6 +10,7 @@ import { ChatterProvider, useChatter } from "@/state/ChatterProvider";
 import { ThemeProvider, useTheme } from "@/theme/ThemeProvider";
 import { ToastHost } from "@/components/ToastHost";
 import { SessionGate } from "@/components/SessionGate";
+import { ProfileProvider } from "@/components/ProfileSheet";
 
 export default function RootLayout() {
   return (
@@ -35,17 +36,22 @@ function Root() {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar style={mode === "light" ? "dark" : "light"} />
       <SessionGate>
+        <ProfileProvider>
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background }, animation: "default" }}>
           <Stack.Protected guard={signedIn}>
             <Stack.Screen name="index" />
             <Stack.Screen name="settings" options={{ animation: "slide_from_right" }} />
             <Stack.Screen name="thread" options={{ animation: "slide_from_right" }} />
             <Stack.Screen name="panel" options={{ animation: "slide_from_right" }} />
+            <Stack.Screen name="profile" options={{ animation: "slide_from_right" }} />
+            <Stack.Screen name="friends" options={{ animation: "slide_from_right" }} />
+            <Stack.Screen name="people" options={{ animation: "slide_from_bottom" }} />
           </Stack.Protected>
           <Stack.Protected guard={!signedIn}>
             <Stack.Screen name="sign-in" />
           </Stack.Protected>
         </Stack>
+        </ProfileProvider>
       </SessionGate>
       <ToastHost />
     </View>

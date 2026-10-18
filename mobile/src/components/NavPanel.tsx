@@ -20,7 +20,10 @@ import {
   MicOff,
   Move3d,
   PenTool,
+  Plus,
   Sparkles,
+  UserRound,
+  Users,
   Volume2,
   type LucideProps,
 } from "lucide-react-native";
@@ -495,19 +498,51 @@ function DmList({ rooms }: { rooms: RoomInfo[] }) {
   const { selectRoom } = useChatterActions();
   const { close } = usePanels();
   const me = state.userId;
+  const requests = state.incomingFriendRequests.length;
   return (
     <View className="flex-1">
-      <View className="border-b border-border px-3 py-2">
-        <T className="text-sm font-semibold">Direct Messages</T>
+      <View className="flex-row items-center border-b border-border py-1 pl-3 pr-1">
+        <T className="flex-1 text-sm font-semibold">Direct Messages</T>
+        <Pressable
+          onPress={() => {
+            close();
+            router.push("/people");
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="New message"
+          hitSlop={4}
+          className="size-9 items-center justify-center rounded-md active:bg-sidebar-accent"
+        >
+          <Icon as={Plus} size={18} />
+        </Pressable>
       </View>
       <ScrollView className="flex-1" contentContainerClassName="gap-px px-2 py-2">
+        {/* Friends, as Discord's phone app puts them: first in the list. */}
+        <RoomRow
+          name="Friends"
+          active={false}
+          unread={0}
+          mentions={requests}
+          icon={
+            <View className="h-[31px] w-[31px] items-center justify-center rounded-md bg-sidebar-accent">
+              <Icon as={UserRound} size={17} tone="sidebar-foreground" />
+            </View>
+          }
+          onPress={() => {
+            close();
+            router.push("/friends");
+          }}
+        />
+        <View className="mx-2 my-1 h-px bg-border" />
         {rooms.length === 0 ? (
-          <T className="px-3 py-3 text-xs text-muted-foreground">No conversations yet. Start one from someone's profile.</T>
+          <T className="px-3 py-3 text-xs text-muted-foreground">No conversations yet. Start one with the + above.</T>
         ) : null}
         {rooms.map((room) => {
-          const peer = room.dm_user_ids?.find((id) => id !== me) ?? room.dm_user_ids?.[0];
+          // Self is filtered out server-side, and again here (AppSidebar).
+          const others = (room.dm_user_ids ?? []).filter((id) => id !== me);
+          const peer = others.length === 1 ? others[0] : null;
           const name = (peer && state.userPresence[peer]?.displayName) || room.name.replace(/^DM with /, "");
-          const avatar = (peer && state.userPresence[peer]?.avatarUrl) || (peer && room.dm_avatars?.[peer]) || null;
+          const avatar = (peer && (state.userPresence[peer]?.avatarUrl || room.dm_avatars?.[peer])) || null;
           return (
             <RoomRow
               key={room.room_id}
@@ -515,7 +550,16 @@ function DmList({ rooms }: { rooms: RoomInfo[] }) {
               active={state.currentRoomId === room.room_id}
               unread={state.roomLooseUnreads[room.room_id] ?? 0}
               mentions={state.roomMentions[room.room_id] ?? 0}
-              icon={avatar ? <Avatar userId={peer} name={name} url={avatar} size={31} /> : undefined}
+              icon={
+                peer ? (
+                  <Avatar userId={peer} name={name} url={avatar} size={31} status={state.userPresence[peer]?.status} ring="sidebar" />
+                ) : (
+                  // A group has no single face to show.
+                  <View className="h-[31px] w-[31px] items-center justify-center rounded-full bg-sidebar-accent">
+                    <Icon as={Users} size={16} tone="sidebar-foreground" />
+                  </View>
+                )
+              }
               onPress={() => {
                 tick();
                 if (state.currentRoomId !== room.room_id) void selectRoom(room.room_id).catch(() => {});

@@ -46,8 +46,9 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Pins, search, mentions inbox (the web's MessagePanel as a screen); per-channel notification level from the header
 - [ ] Polls (vote, results) and events (RSVP)
 - [x] Unread marker line and "jump to unread" (the web's "New" line and unread bar)
-- [ ] Profiles: open a member, DM them, roles, profile themes and name fonts
-- [ ] Friends and DMs: start a DM, group DMs, friend requests
+- [x] Profiles: a sheet from any avatar, name or member (banner, status, about, Steam game, mutual friends, roles, profile colour); Message, friend and block from it
+- [ ] Name fonts (people's own fonts on their names)
+- [x] Friends and DMs: new message / group DM picker, adding people to a DM, Friends screen (requests, pending, add by username, blocked)
 
 ### Uploads
 - [x] Attach from gallery, camera, files; progress; chunked resumable upload (`uploadResume` in core)
@@ -87,7 +88,8 @@ FCM push notifications are deliberately **last**: everything else first.
 - [ ] Custom themes (sync from web; editor)
 - [ ] Notifications per server/channel (same levels as the web)
 - [ ] Voice: input/output, push-to-talk, noise suppression
-- [ ] Account: profile, avatar, status, sessions, 2FA status
+- [x] Profile: name, status, about, avatar and banner, availability
+- [ ] Account: sessions, 2FA status, password
 - [ ] Data: media autoplay, image quality, cache
 
 ### Notifications

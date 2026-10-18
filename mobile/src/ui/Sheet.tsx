@@ -14,8 +14,23 @@ import { cn } from "./cn";
  *
  * Slides up over a dimmed backdrop; a tap on the backdrop, a swipe down on the
  * sheet, or Back closes it. Sized to its content.
+ *
+ * `bare` gives the content the sheet's whole face, top edge included, with
+ * the grabber floating over it — for a sheet that opens on a picture.
  */
-export function Sheet({ open, onClose, title, children }: { open: boolean; onClose(): void; title?: string; children: ReactNode }) {
+export function Sheet({
+  open,
+  onClose,
+  title,
+  bare,
+  children,
+}: {
+  open: boolean;
+  onClose(): void;
+  title?: string;
+  bare?: boolean;
+  children: ReactNode;
+}) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   // Kept mounted while the closing animation plays.
@@ -71,13 +86,14 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
             style={[
               styles.sheet,
               { backgroundColor: colors.background, borderColor: colors.border, paddingBottom: insets.bottom + 16 },
+              bare && styles.bare,
               sheetStyle,
             ]}
             accessibilityViewIsModal
           >
             {/* The grabber, as on the web's call sheet: the way out as well as the sign of one. */}
-            <View style={[styles.handle, { backgroundColor: colors["muted-foreground"] }]} />
-            {title ? <T className="px-4 pb-1 text-sm font-semibold">{title}</T> : null}
+            <View style={[styles.handle, bare && styles.floating, { backgroundColor: bare ? "#fff" : colors["muted-foreground"] }]} />
+            {title && !bare ? <T className="px-4 pb-1 text-sm font-semibold">{title}</T> : null}
             {children}
           </Animated.View>
         </GestureDetector>
@@ -99,6 +115,9 @@ const styles = StyleSheet.create({
     paddingTop: 13,
   },
   handle: { alignSelf: "center", width: 44, height: 4.4, borderRadius: 2.2, opacity: 0.4, marginBottom: 13 },
+  bare: { paddingTop: 0, overflow: "hidden" },
+  // Over a banner, whatever its colours: white, a little stronger.
+  floating: { position: "absolute", top: 8, zIndex: 1, opacity: 0.7 },
 });
 
 /** A choice in a sheet — the web's sheet rows: an icon, then what it does. */

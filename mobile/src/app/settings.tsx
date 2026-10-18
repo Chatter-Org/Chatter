@@ -1,7 +1,7 @@
 import { Alert, Pressable, ScrollView, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ChevronLeft, LogOut } from "lucide-react-native";
+import { ChevronLeft, ChevronRight, LogOut } from "lucide-react-native";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { currentServer } from "@/platform/server";
@@ -42,8 +42,13 @@ export default function Settings() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 24 }} contentContainerClassName="gap-6 p-4">
-        {/* The sidebar's account card. */}
-        <View className="flex-row items-center gap-3 rounded-lg border border-border bg-sidebar p-4">
+        {/* The sidebar's account card; your profile is behind it. */}
+        <Pressable
+          onPress={() => router.push("/profile")}
+          accessibilityRole="button"
+          accessibilityHint="Edit your profile"
+          className="flex-row items-center gap-3 rounded-lg border border-border bg-sidebar p-4 active:bg-sidebar-accent"
+        >
           <Avatar
             userId={state.userId ?? undefined}
             name={name}
@@ -62,7 +67,8 @@ export default function Settings() {
               {currentServer().replace(/^https?:\/\//, "")}
             </T>
           </View>
-        </View>
+          <Icon as={ChevronRight} size={18} />
+        </Pressable>
 
         <View className="gap-3">
           <T className={UI_HEADING}>Theme</T>

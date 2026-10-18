@@ -8,7 +8,7 @@ import { Sheet, SheetRow } from "@/ui/Sheet";
 /** What a message can carry at most, as on the web (usePendingFiles). */
 export const MAX_ATTACHMENTS = 10;
 
-function fromImagePicker(assets: ImagePicker.ImagePickerAsset[]): PickedFile[] {
+export function fromImagePicker(assets: ImagePicker.ImagePickerAsset[]): PickedFile[] {
   return assets.map((a, i) => {
     const ext = a.mimeType?.split("/")[1]?.replace("jpeg", "jpg") ?? (a.type === "video" ? "mp4" : "jpg");
     return {

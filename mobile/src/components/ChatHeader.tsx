@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AtSign, Bell, BellOff, Menu, Pin, Search, Users, WifiOff, type LucideProps } from "lucide-react-native";
+import { AtSign, Bell, BellOff, Menu, Pin, Search, UserPlus, Users, WifiOff, type LucideProps } from "lucide-react-native";
 import { resolveNotificationLevel } from "@chatter/core/notifications";
 import { NotificationSheet } from "./NotificationSheet";
 import type { ComponentType } from "react";
@@ -19,7 +19,8 @@ import { UI_META } from "@/ui/roles";
  * it), the members. Below it, while the socket is down, the web's
  * "Connection lost" bar.
  *
- * Under it, the web's second row: notifications, pins, mentions, search.
+ * Under it, the web's second row: notifications, pins, mentions, search, and
+ * in a DM, adding people.
  * (Events join it when they arrive here.)
  */
 export function ChatHeader() {
@@ -32,9 +33,10 @@ export function ChatHeader() {
   let title = room?.name ?? "Chatter";
   let subtitle = channel ? `#${channel.name}` : "";
   if (room?.is_direct) {
-    const peer = room.dm_user_ids?.find((id) => id !== state.userId);
+    const others = (room.dm_user_ids ?? []).filter((id) => id !== state.userId);
+    const peer = others.length === 1 ? others[0] : null;
     title = (peer && (state.userPresence[peer]?.displayName || displayUserId(peer))) || room.name.replace(/^DM with /, "");
-    subtitle = (peer && state.userPresence[peer]?.customStatus) || "";
+    subtitle = peer ? state.userPresence[peer]?.customStatus || "" : `${others.length + 1} members`;
   }
 
   return (
@@ -104,6 +106,7 @@ function ToolRow() {
       <Tool icon={Pin} label="Pinned messages" dot={state.pinnedMessages.length > 0} onPress={() => router.push({ pathname: "/panel", params: { mode: "pins" } })} />
       {!isDm ? <Tool icon={AtSign} label="Mentions" onPress={() => router.push({ pathname: "/panel", params: { mode: "mentions" } })} /> : null}
       <Tool icon={Search} label="Search" onPress={() => router.push({ pathname: "/panel", params: { mode: "search" } })} />
+      {isDm ? <Tool icon={UserPlus} label="Add people" onPress={() => router.push({ pathname: "/people", params: { mode: "add" } })} /> : null}
       <NotificationSheet open={bell} onClose={() => setBell(false)} channelId={channelId} />
     </View>
   );

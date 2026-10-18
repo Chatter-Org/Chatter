@@ -9,6 +9,7 @@ import { EyeOff, MessagesSquare, MoreHorizontal, Reply } from "lucide-react-nati
 import type { MatrixMessage } from "@chatter/core/api";
 import type { FormatOptions } from "@chatter/core/messageFormat";
 import { extractMedia, isDeletedMessage } from "@chatter/core/messageFormat";
+import { useShowProfile } from "./ProfileSheet";
 import { Avatar } from "./Avatar";
 import { BODY_TEXT, MessageBody } from "./MessageBody";
 import { MessageMedia } from "./MessageMedia";
@@ -146,6 +147,7 @@ function RowContent({
   onLongPress,
   onOpenThread,
 }: MessageRowProps) {
+  const showProfile = useShowProfile();
   const deleted = isDeletedMessage(message);
   const body = message.content.body ?? "";
   const media = extractMedia(body);
@@ -173,7 +175,11 @@ function RowContent({
     <View className="flex-row items-start gap-1.5">
       {/* h-7: the web's avatar below 768px; grouped rows keep its width. */}
       <View className="mt-0.5" style={{ width: AVATAR }}>
-        {!grouped && <Avatar userId={message.sender} name={senderName} url={avatarUrl} size={AVATAR} textClassName="text-3xs" />}
+        {!grouped && (
+          <Tap onPress={() => showProfile(message.sender)} label={`${senderName}'s profile`} className="rounded-full">
+            <Avatar userId={message.sender} name={senderName} url={avatarUrl} size={AVATAR} textClassName="text-3xs" />
+          </Tap>
+        )}
       </View>
       <View className="min-w-0 flex-1">
         {message.content.in_reply_to && replySenderName ? (
@@ -186,9 +192,11 @@ function RowContent({
         ) : null}
         {!grouped && (
           <View className="flex-row items-baseline gap-2">
-            <T className="shrink text-sm font-semibold" style={senderColor ? { color: senderColor } : undefined} numberOfLines={1}>
-              {senderName}
-            </T>
+            <Tap onPress={() => showProfile(message.sender)} label={`${senderName}'s profile`} className="shrink rounded">
+              <T className="text-sm font-semibold" style={senderColor ? { color: senderColor } : undefined} numberOfLines={1}>
+                {senderName}
+              </T>
+            </Tap>
             <T className="text-xs text-muted-foreground">{time}</T>
           </View>
         )}

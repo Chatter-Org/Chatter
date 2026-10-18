@@ -1,10 +1,11 @@
 import { useMemo } from "react";
-import { SectionList, View } from "react-native";
+import { Pressable, SectionList, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Crown, Shield, Smartphone } from "lucide-react-native";
 import { senderNameColor } from "@chatter/core/messageFormat";
 import { useChatter } from "@/state/ChatterProvider";
 import { Avatar } from "./Avatar";
+import { useShowProfile } from "./ProfileSheet";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { UI_HEADING } from "@/ui/roles";
@@ -17,6 +18,7 @@ import { UI_HEADING } from "@/ui/roles";
 export function MembersPanel() {
   const state = useChatter();
   const insets = useSafeAreaInsets();
+  const showProfile = useShowProfile();
   const roomInfo = state.currentRoomId ? state.roomInfoMap[state.currentRoomId] : undefined;
 
   const sections = useMemo(() => {
@@ -56,7 +58,11 @@ export function MembersPanel() {
             const offline = section.offline;
             const color = senderNameColor(state, roomInfo, item.userId);
             return (
-              <View className={cn("flex-row items-center gap-2 rounded-md px-2 py-1.5", offline && "opacity-50")}>
+              <Pressable
+                onPress={() => showProfile(item.userId)}
+                accessibilityRole="button"
+                className={cn("flex-row items-center gap-2 rounded-md px-2 py-1.5 active:bg-sidebar-accent/50", offline && "opacity-50")}
+              >
                 <Avatar
                   userId={item.userId}
                   name={p?.displayName || item.displayName}
@@ -83,7 +89,7 @@ export function MembersPanel() {
                     </T>
                   ) : null}
                 </View>
-              </View>
+              </Pressable>
             );
           }}
         />

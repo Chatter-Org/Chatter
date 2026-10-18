@@ -309,6 +309,7 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
     void shared.loadUnreads();
     void shared.loadNotificationSettings();
     void shared.loadContinuity();
+    void shared.loadFriends();
     void connect();
     return () => closeSocket("signed out");
     // `shared` and the socket helpers live for the provider's lifetime.
