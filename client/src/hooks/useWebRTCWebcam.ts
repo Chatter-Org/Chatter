@@ -5,7 +5,9 @@ import {
   SCREEN_SUBSCRIBE_RETRY_MS,
   VOICE_SUB_STUCK_NEW_MS,
   VOICE_SUB_STUCK_CONNECTING_MS,
+  VOICE_CONNECT_TIMEOUT_MS,
   canSignal,
+  candidatesAfterOffer,
   getWebcamPublishProfile,
 } from "@/lib/webrtc";
 import type { WebcamPublishProfile } from "@/lib/webrtc";
@@ -193,6 +195,10 @@ export function useWebRTCWebcam() {
       wsRef.current.send(JSON.stringify(msg));
     }
   }, [state.currentRoomId, state.userId, state.voiceChannelId, dispatch, wsRef]);
+  // For callbacks that outlive the render they were made in, like the
+  // publisher's connection watch.
+  const stopWebcamRef = useRef(stopWebcam);
+  stopWebcamRef.current = stopWebcam;
 
   // WS message handler
   useEffect(() => {
@@ -352,15 +358,36 @@ export function useWebRTCWebcam() {
       const videoSender = pc.addTrack(videoTrack, stream);
       await tuneWebcamVideoSender(videoSender, profile);
 
-      pc.onicecandidate = (ev) => {
-        if (!ev.candidate || !canSignal(wsRef)) return;
+      // None before the offer; see `candidatesAfterOffer`.
+      const trickle = candidatesAfterOffer<RTCIceCandidate>((c) => {
+        if (!canSignal(wsRef)) return;
         wsRef.current!.send(JSON.stringify({
           type: "webcam_webrtc_publish_candidate",
           room_id: state.currentRoomId,
           channel_id: state.voiceChannelId || undefined,
-          candidate: ev.candidate.toJSON(),
+          candidate: c.toJSON(),
         }));
+      });
+      pc.onicecandidate = (ev) => {
+        if (ev.candidate) trickle.add(ev.candidate);
       };
+      // The sharer's own preview looks fine whether or not anyone receives
+      // it, so a camera that fails, or never connects, is turned off and
+      // they are told.
+      const giveUp = (message: string) => {
+        if (webcamPubPcRef.current !== pc) return;
+        console.warn(`[webcam] ${message} (connection ${pc.connectionState})`);
+        toast.error(message);
+        void stopWebcamRef.current();
+      };
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "failed") giveUp("Your camera lost its connection. Try turning it on again.");
+      };
+      setTimeout(() => {
+        if (pc.connectionState === "new" || pc.connectionState === "connecting") {
+          giveUp("Your camera couldn't connect. Try turning it on again.");
+        }
+      }, VOICE_CONNECT_TIMEOUT_MS);
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -373,6 +400,7 @@ export function useWebRTCWebcam() {
           channel_id: state.voiceChannelId || undefined,
           sdp: offer.sdp,
         }));
+        trickle.offerSent();
       }
     } catch (err: unknown) {
       dispatch({ type: "SET_VOICE_STATE", payload: { isWebcamActive: false } });
