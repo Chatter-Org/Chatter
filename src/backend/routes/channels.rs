@@ -117,6 +117,119 @@ pub(crate) async fn list_channels(
     ))
 }
 
+/// The text channels the caller could post an attachment into right now — the
+/// destinations offered when saving a clip.
+///
+/// Every check here is one `send_message` makes, so the list never offers a
+/// channel that would then refuse the post: room-level `send_messages` and
+/// `attach_files`, the room's and the channel's `read_only` (owners and
+/// moderators exempt), and the channel's overwrites for `view_channel`,
+/// `send_messages` and `attach_files`. A DM has no channels; it answers
+/// `is_dm` and an empty list, and the conversation itself is the destination.
+pub(crate) async fn list_postable_channels(
+    State(state): State<Arc<AppState>>,
+    Path(room_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    use super::super::helpers::channel_permissions;
+
+    let token = extract_token(&headers)
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Missing token"))?;
+    let user_id = get_user_from_token(&state, &token)
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Invalid token"))?;
+
+    {
+        let rm = state.room_members.read().await;
+        if !rm
+            .get(&room_id)
+            .map(|m| m.contains(&user_id))
+            .unwrap_or(false)
+        {
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                "Not a member of this room",
+            ));
+        }
+    }
+
+    let room = state
+        .db
+        .collection::<RoomRecord>("rooms")
+        .find_one(doc! { "_id": &room_id })
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Room not found"))?;
+
+    let role = get_user_role(&state, &room_id, &user_id).await;
+    let is_privileged = role == "owner" || role == "moderator";
+    let perms = effective_permissions(&state, &room_id, &user_id).await;
+    let room_allows =
+        perms.send_messages && perms.attach_files && (!room.read_only || is_privileged);
+
+    if room.is_dm || !room_allows {
+        return Ok(Json(json!({
+            "is_dm": room.is_dm,
+            "can_post": room.is_dm && room_allows,
+            "channels": [],
+        })));
+    }
+
+    // Categories first so the list reads in the order the sidebar draws it.
+    let mut category_order: Vec<(String, String)> = Vec::new();
+    let mut cat_cursor = state
+        .db
+        .collection::<ChannelCategoryRecord>("channel_categories")
+        .find(doc! { "room_id": &room_id })
+        .sort(doc! { "position": 1, "created_at": 1 })
+        .await
+        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "DB query failed"))?;
+    while let Ok(Some(cat)) = cat_cursor.try_next().await {
+        category_order.push((cat.category_id, cat.name));
+    }
+
+    let mut cursor = state
+        .db
+        .collection::<ChannelRecord>("channels")
+        .find(doc! { "room_id": &room_id, "channel_type": "text" })
+        .sort(doc! { "position": 1, "created_at": 1 })
+        .await
+        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "DB query failed"))?;
+
+    let mut postable: Vec<(usize, Value)> = Vec::new();
+    while let Ok(Some(ch)) = cursor.try_next().await {
+        if ch.read_only && !is_privileged {
+            continue;
+        }
+        let ch_perms = channel_permissions(&state, &room_id, &ch.channel_id, &user_id).await;
+        if !(ch_perms.view_channel && ch_perms.send_messages && ch_perms.attach_files) {
+            continue;
+        }
+        // Uncategorised channels lead, as they do in the channel list.
+        let (rank, category_name) = category_order
+            .iter()
+            .position(|(id, _)| *id == ch.category_id)
+            .map(|i| (i + 1, category_order[i].1.clone()))
+            .unwrap_or((0, String::new()));
+        postable.push((
+            rank,
+            json!({
+                "channel_id": ch.channel_id,
+                "name": ch.name,
+                "category_name": category_name,
+            }),
+        ));
+    }
+    // Stable, so the position order within a category survives.
+    postable.sort_by_key(|(rank, _)| *rank);
+
+    Ok(Json(json!({
+        "is_dm": false,
+        "can_post": !postable.is_empty(),
+        "channels": postable.into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
+    })))
+}
+
 /// Reject unknown permission names and target kinds rather than storing rules
 /// that would silently never apply.
 fn validate_overwrites(

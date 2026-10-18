@@ -10,7 +10,6 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { Scissors, Loader2 } from "lucide-react";
-import { apiUploadFile } from "@/lib/api";
 import { toast } from "sonner";
 import { clipBufferSupported, useClipBuffer } from "@/hooks/useClipBuffer";
 import {
@@ -18,22 +17,29 @@ import {
   useClipSettings,
   type ClipLength,
 } from "@/hooks/useClipSettings";
+import { ClipChannelDialog, type TakenClip } from "./ClipChannelDialog";
 
 /**
  * Arm a rolling buffer over the focused screen share and save the last stretch
- * of it into the channel.
+ * of it into a channel the user picks.
  *
  * Off unless the user's profile says otherwise: it runs a second video encoder
  * for as long as it is armed, which is a real cost to pay for a button nobody
  * may press.
  */
 export function ClipControls() {
-  const { state, wsRef, sendMessage } = useAppContext();
+  const { state, wsRef } = useAppContext();
   const { settings, updateSettings } = useClipSettings();
   const lengthSecs = settings.lengthSecs;
   const [enabled, setEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const [pendingClip, setPendingClip] = useState<TakenClip | null>(null);
+  // The share being watched belongs to the call's room, which need not be the
+  // room on screen; the clip is offered to that room's channels.
+  const clipRoomId = state.voiceRoomId || state.currentRoomId;
+  const defaultChannelId =
+    state.currentRoomId === clipRoomId ? state.currentChannelId : null;
 
   // screenStreamsMap is a plain module-level Map, so a track arriving in it
   // triggers no render on its own. ScreenShareViewer subscribes to this event
@@ -145,25 +151,35 @@ export function ClipControls() {
         .replace(/:/g, "-");
       const ext = clip.blob.type.includes("mp4") ? "mp4" : "webm";
       const file = new File([clip.blob], `clip-${stamp}.${ext}`, { type: clip.blob.type });
-      const { url } = await apiUploadFile(file);
-      await sendMessage(url);
-      // Say the real length: before the buffer has filled it is shorter than
-      // the setting, and silently posting a stub would look like a bug.
-      toast.success(`Clip posted (${Math.round(clip.seconds)}s)`);
+      // A fullscreen viewer would hide the picker, which renders over the page.
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+      setPendingClip({ file, seconds: clip.seconds });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save the clip");
     } finally {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [takeClip, sendMessage, error]);
+  }, [takeClip, error]);
+
+  // Rendered whether or not the share is still up: a clip taken just before
+  // it ended is still the user's to post.
+  const picker = (
+    <ClipChannelDialog
+      clip={pendingClip}
+      roomId={clipRoomId}
+      defaultChannelId={defaultChannelId}
+      onClose={() => setPendingClip(null)}
+    />
+  );
 
   // Nothing to clip without a share on screen, and nothing to offer on a
   // browser that cannot record.
-  if (!sharerId || !stream || !supported) return null;
+  if (!sharerId || !stream || !supported) return picker;
 
   return (
     <div className="flex items-center gap-1">
+      {picker}
       {armed && (
         <Button
           size="sm"
@@ -174,7 +190,7 @@ export function ClipControls() {
           title={
             bufferedSecs < lengthSecs
               ? `Buffering — ${Math.floor(bufferedSecs)}s of ${lengthSecs}s so far`
-              : `Save the last ${lengthSecs} seconds to this channel`
+              : `Save the last ${lengthSecs} seconds to a channel`
           }
         >
           {saving ? (

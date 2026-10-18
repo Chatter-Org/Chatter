@@ -1244,6 +1244,22 @@ export async function apiGetChannels(roomId: string) {
   return res.json() as Promise<{ channels: Channel[]; categories: ChannelCategory[] }>;
 }
 
+export interface PostableChannel {
+  channel_id: string;
+  name: string;
+  /** Empty for a channel outside any category. */
+  category_name: string;
+}
+
+/** The text channels the caller may post an attachment into, judged by the
+ *  server with the same checks a send makes. A DM answers `is_dm` and no
+ *  channels: the conversation itself is the destination. */
+export async function apiGetPostableChannels(roomId: string) {
+  const res = await authenticatedFetch(`/api/rooms/${roomId}/postable-channels`);
+  if (!res.ok) throw new Error("Failed to load channels");
+  return res.json() as Promise<{ is_dm: boolean; can_post: boolean; channels: PostableChannel[] }>;
+}
+
 export async function apiCreateChannel(roomId: string, data: { name: string; channel_type: string; topic?: string; category_id?: string; bot_id?: string }) {
   const res = await authenticatedFetch(`/api/rooms/${roomId}/channels`, {
     method: "POST",

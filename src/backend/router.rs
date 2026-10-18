@@ -17,7 +17,7 @@ use super::{
         bots::{create_bot, delete_bot, list_bots, regenerate_bot_token},
         channels::{
             create_category, create_channel, delete_category, delete_channel, list_channels,
-            update_category, update_channel,
+            list_postable_channels, update_category, update_channel,
         },
         continuity::{get_continuity, set_draft, set_resume_point},
         events::{create_event, delete_event, list_events, list_rsvps, set_rsvp, update_event},
@@ -296,6 +296,10 @@ pub(crate) fn build_router() -> Router<Arc<AppState>> {
         .route(
             "/api/rooms/{room_id}/channels/{channel_id}",
             put(update_channel).delete(delete_channel),
+        )
+        .route(
+            "/api/rooms/{room_id}/postable-channels",
+            get(list_postable_channels),
         )
         // Custom Roles
         .route(
