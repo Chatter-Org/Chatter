@@ -618,6 +618,8 @@ export interface AppContextValue {
   setSidebarOrder: (order: string[]) => Promise<void>;
   // Friends
   loadFriends: () => Promise<void>;
+  /** Friends' presence, for those you share no room with. */
+  loadFriendPresence: () => Promise<void>;
   /** Pull server-computed unread + mention counts (survives a refresh). */
   loadUnreads: () => Promise<void>;
   /** Persist that this channel is read up to now; fire-and-forget. */

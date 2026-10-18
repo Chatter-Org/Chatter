@@ -54,6 +54,7 @@ import {
   apiRemoveFriend,
   apiBlockUser,
   apiUnblockUser,
+  apiGetFriendsPresence,
   PAGE_SIZE,
   type MatrixMessage,
   type RoomInfo,
@@ -996,6 +997,37 @@ export function createStoreActions(ctx: StoreContext) {
     await selectRoom(data.room_id);
   };
 
+
+  /** Friends' avatars, names and status. Presence otherwise arrives per room,
+   *  and a friend you share no room with would be a bare initial. Merged, so
+   *  what the socket has already delivered for anyone else stays. */
+  const loadFriendPresence = async () => {
+    try {
+      const { presence } = await apiGetFriendsPresence();
+      const mapped: AppState["userPresence"] = {};
+      for (const [userId, raw] of Object.entries(presence)) {
+        const p = raw as Record<string, unknown>;
+        mapped[userId] = {
+          status: String(p.status ?? "offline"),
+          customStatus: (p.custom_status as string) || undefined,
+          avatarUrl: (p.avatar_url as string) || undefined,
+          about: (p.about as string) || undefined,
+          bannerUrl: (p.banner_url as string) || undefined,
+          displayName: (p.display_name as string) || undefined,
+          nameFontUrl: (p.name_font_url as string) || undefined,
+          profileTheme: p.profile_theme || undefined,
+          isMobile: Boolean(p.is_mobile),
+          steamGame: (p.steam_game as string) || undefined,
+          steamAppId: (p.steam_appid as string) || undefined,
+          gameSessionStart: (p.game_session_start as number) || undefined,
+        };
+      }
+      dispatch({ type: "SET_PRESENCE", payload: { ...getState().userPresence, ...mapped } });
+    } catch {
+      // The list still renders, with initials.
+    }
+  };
+
   const addToGroupDM = async (roomId: string, userId: string) => {
     await apiAddToDM(roomId, userId);
   };
@@ -1122,6 +1154,7 @@ export function createStoreActions(ctx: StoreContext) {
     openDM,
     addToGroupDM,
     loadFriends,
+    loadFriendPresence,
     sendFriendRequest,
     acceptFriendRequest,
     rejectFriendRequest,
