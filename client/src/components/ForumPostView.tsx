@@ -28,6 +28,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ForumReactions } from "@/components/ForumReactions";
+import {
+  FORUM_EVENTS,
+  applyForumThreadEvent,
+  type ForumEventDetail,
+  type ForumThreadState,
+} from "@chatter/core/forum";
 import { ForumTagList, ForumTagPicker } from "@/components/ForumTags";
 import { ForumMarkdown } from "@/components/ForumMarkdown";
 import { MentionMenu } from "@/components/MentionMenu";
@@ -163,89 +169,29 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
     loadPost();
   }, [loadPost]);
 
-  // Listen for real-time events
+  // Listen for real-time events; how each changes the post is the shared
+  // core's (forum.ts).
+  const threadRef = useRef<ForumThreadState>({ post, comments });
+  threadRef.current = { post, comments };
   useEffect(() => {
-    const onCommentCreated = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail.post_id === postId) {
-        setComments((prev) => [...prev, detail.comment]);
-        setPost((prev) =>
-          prev ? { ...prev, comment_count: prev.comment_count + 1 } : prev
-        );
-      }
-    };
-    const onCommentDeleted = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail.post_id === postId) {
-        setComments((prev) => {
-          // The same rule the server applies on the next load: a comment with
-          // replies under it leaves a tombstone, because dropping it outright
-          // would cut its replies out of the thread in front of the reader.
-          // Whether the tombstone should then go too, once its last living
-          // reply is deleted, is left to that next load.
-          const holdsReplies = prev.some((c) => c.parent_id === detail.comment_id);
-          if (!holdsReplies) {
-            return prev.filter((c) => c.comment_id !== detail.comment_id);
-          }
-          return prev.map((c) =>
-            c.comment_id === detail.comment_id
-              ? { ...c, deleted: true, author: "", body: "", image_url: "", image_urls: [], video_urls: [], file_urls: [] }
-              : c,
-          );
-        });
-        setPost((prev) =>
-          prev ? { ...prev, comment_count: Math.max(0, prev.comment_count - 1) } : prev
-        );
-      }
-    };
-    const onPostDeleted = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail.post_id === postId) {
-        onBack();
-      }
-    };
-    const onPostEdited = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail.post_id === postId) {
-        setPost((prev) =>
-          prev
-            ? {
-                ...prev,
-                title: detail.title ?? prev.title,
-                body: detail.body ?? prev.body,
-                tags: detail.tags ?? prev.tags,
-                // A curator's retag is not the author's edit, and says so.
-                edited: detail.edited ?? true,
-                edited_at: detail.edited_at ?? prev.edited_at,
-              }
-            : prev
-        );
-      }
-    };
-    const onCommentEdited = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail.post_id === postId) {
-        setComments((prev) =>
-          prev.map((c) =>
-            c.comment_id === detail.comment_id
-              ? { ...c, body: detail.body, edited: true, edited_at: detail.edited_at }
-              : c
-          )
-        );
-      }
-    };
-
-    window.addEventListener("forum.comment.created", onCommentCreated);
-    window.addEventListener("forum.comment.deleted", onCommentDeleted);
-    window.addEventListener("forum.post.deleted", onPostDeleted);
-    window.addEventListener("forum.post.edited", onPostEdited);
-    window.addEventListener("forum.comment.edited", onCommentEdited);
+    const listeners = FORUM_EVENTS.map((type) => {
+      const listener = (e: Event) => {
+        const detail = (e as CustomEvent).detail as ForumEventDetail;
+        const next = applyForumThreadEvent(threadRef.current, type, detail, postId);
+        if (next.gone) {
+          onBack();
+          return;
+        }
+        if (next === threadRef.current) return;
+        threadRef.current = next;
+        setPost(next.post);
+        setComments(next.comments);
+      };
+      window.addEventListener(type, listener);
+      return [type, listener] as const;
+    });
     return () => {
-      window.removeEventListener("forum.comment.created", onCommentCreated);
-      window.removeEventListener("forum.comment.deleted", onCommentDeleted);
-      window.removeEventListener("forum.post.deleted", onPostDeleted);
-      window.removeEventListener("forum.post.edited", onPostEdited);
-      window.removeEventListener("forum.comment.edited", onCommentEdited);
+      for (const [type, listener] of listeners) window.removeEventListener(type, listener);
     };
   }, [postId, onBack]);
 
