@@ -249,3 +249,48 @@ export function applyForumThreadEvent(
       return thread;
   }
 }
+
+/**
+ * A forum body — Markdown, as the web renders it — in the chat's own format,
+ * for a client that draws bodies with the message renderer (the phone).
+ *
+ * The chat format has bold, italic, code blocks, links and mentions, so the
+ * rest of Markdown is carried over as the nearest of those: a heading is a
+ * bold line, a list item a bullet, a quote a bar, a `[link](url)` its text and
+ * then the address. Code blocks pass through untouched.
+ */
+export function forumMarkdownToChat(md: string): string {
+  return md
+    .split(/(```[\s\S]*?```)/g)
+    .map((part, i) => (i % 2 === 1 ? part : markdownProse(part)))
+    .join("");
+}
+
+function markdownProse(text: string): string {
+  return (
+    text
+      // Images first: the address alone, drawn as media where media is drawn.
+      .replace(/!\[[^\]]*\]\(([^)\s]+)[^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, (_m, label: string, url: string) => (label === url ? url : `${label} (${url})`))
+      .replace(/^#{1,6}\s+(.+?)\s*#*$/gm, "**$1**")
+      .replace(/^(\s*)[-*+]\s+(?=\S)/gm, "$1• ")
+      .replace(/^>\s?/gm, "▎ ")
+      .replace(/^(\s*)[-*_]{3,}\s*$/gm, "────────")
+      // __bold__ is bold; a lone *italic* (not part of **) is italic.
+      .replace(/__(.+?)__/g, "**$1**")
+      .replace(/(?<![*\w])\*(?!\*)([^*\n]+?)\*(?!\*)/g, "_$1_")
+      // Inline code has no form of its own; the text reads well without ticks.
+      .replace(/`([^`\n]+)`/g, "$1")
+      .replace(/~~(.+?)~~/g, "$1")
+  );
+}
+
+/** A forum body as plain words, for a two-line excerpt. */
+export function forumPlainText(md: string): string {
+  return forumMarkdownToChat(md)
+    .replace(/```(?:\w+\n|\n?)([\s\S]*?)```/g, "$1")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/(?<![a-zA-Z0-9])_(.+?)_(?![a-zA-Z0-9])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}

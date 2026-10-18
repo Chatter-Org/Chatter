@@ -734,11 +734,14 @@ export function createStoreActions(ctx: StoreContext) {
     await apiEditMessage(roomId, eventId, newBody);
   };
 
-  const addReaction = async (eventId: string, emoji: string) => {
+  /** `known` is what a target the store has not seen arrived carrying (a
+   *  forum post or reply), so the toggle starts from it rather than wiping
+   *  the others. */
+  const addReaction = async (eventId: string, emoji: string, known?: Record<string, string[]>) => {
     const cur = getState();
     if (!cur.currentRoomId || !cur.userId) return;
     // Optimistic update: toggle locally before the server round-trip
-    const current = cur.messageReactions[eventId] ?? {};
+    const current = cur.messageReactions[eventId] ?? known ?? {};
     const users = current[emoji] ?? [];
     const userId = cur.userId;
     let optimistic: Record<string, string[]>;

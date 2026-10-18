@@ -5,7 +5,9 @@ import {
   appendForumPage,
   applyForumListEvent,
   applyForumThreadEvent,
+  forumMarkdownToChat,
   forumPageCursor,
+  forumPlainText,
   orderForumPosts,
   pinnedPostToFetch,
   type ForumListView,
@@ -105,5 +107,21 @@ describe("applyForumThreadEvent", () => {
   it("closes when the post goes, and ignores other posts", () => {
     expect(applyForumThreadEvent(thread, "forum.post.deleted", { post_id: "p1" }, "p1").gone).toBe(true);
     expect(applyForumThreadEvent(thread, "forum.post.deleted", { post_id: "p9" }, "p1")).toBe(thread);
+  });
+});
+
+describe("forumMarkdownToChat", () => {
+  it("carries Markdown over to the chat format", () => {
+    const md = "# Title\nSome *soft* and __loud__ text with `code`.\n- one\n- two\n> quoted\n[docs](https://x.test/a)";
+    expect(forumMarkdownToChat(md)).toBe(
+      "**Title**\nSome _soft_ and **loud** text with code.\n• one\n• two\n▎ quoted\ndocs (https://x.test/a)",
+    );
+  });
+  it("leaves bold, snake_case and code blocks alone", () => {
+    expect(forumMarkdownToChat("**bold** snake_case_name")).toBe("**bold** snake_case_name");
+    expect(forumMarkdownToChat("```\n*not italic*\n```")).toBe("```\n*not italic*\n```");
+  });
+  it("reads as plain words for an excerpt", () => {
+    expect(forumPlainText("I can see **General**\n\nIs there a *join* button?")).toBe("I can see General Is there a join button?");
   });
 });

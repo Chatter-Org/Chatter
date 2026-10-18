@@ -546,7 +546,7 @@ export interface AppContextValue {
    *  server deletes them. */
   deleteMessage: (eventId: string, deleteFiles?: boolean) => Promise<void>;
   editMessage: (eventId: string, newBody: string) => Promise<void>;
-  addReaction: (eventId: string, emoji: string) => Promise<void>;
+  addReaction: (eventId: string, emoji: string, known?: Record<string, string[]>) => Promise<void>;
   /** Refresh the pin list for the room/channel currently open (first page). */
   loadPins: () => Promise<void>;
   /** Refresh the current room's events. Pass a room id to load for a room the

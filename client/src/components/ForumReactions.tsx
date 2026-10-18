@@ -36,7 +36,7 @@ export function ForumReactions({
    *  where a button on every one of them would be clutter. */
   revealAdd?: boolean;
 }) {
-  const { state, dispatch, addReaction } = useAppContext();
+  const { state, addReaction } = useAppContext();
   const [pickerOpen, setPickerOpen] = useState(false);
   const live = state.messageReactions[targetId];
   const reactions = live ?? initial ?? {};
@@ -44,14 +44,9 @@ export function ForumReactions({
 
   const roomInfo = state.currentRoomId ? state.roomInfoMap[state.currentRoomId] : null;
 
-  const toggle = (emoji: string) => {
-    // The optimistic toggle starts from the store's entry; seed it with what
-    // the post arrived carrying, or the first click would wipe the others.
-    if (!live) {
-      dispatch({ type: "SET_REACTIONS", payload: { eventId: targetId, reactions } });
-    }
-    addReaction(targetId, emoji);
-  };
+  // The optimistic toggle starts from the store's entry, or from what the
+  // post arrived carrying, or the first click would wipe the others.
+  const toggle = (emoji: string) => addReaction(targetId, emoji, reactions);
 
   return (
     // A card is one big button; nothing in here should open the post.
