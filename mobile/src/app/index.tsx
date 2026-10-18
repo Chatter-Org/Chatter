@@ -6,6 +6,7 @@ import { NavPanel, type RailSelection } from "@/components/NavPanel";
 import { MembersPanel } from "@/components/MembersPanel";
 import { ChatHeader } from "@/components/ChatHeader";
 import { ChatView } from "@/components/ChatView";
+import { ForumView } from "@/components/forum/ForumView";
 
 /** The signed-in shell: panels around the open conversation. */
 export default function Home() {
@@ -45,10 +46,16 @@ export default function Home() {
 
 function Conversation() {
   const { leftDocked } = usePanels();
+  const state = useChatter();
+  // A forum channel, or a room that is a forum itself, has posts rather than
+  // a timeline.
+  const channel = state.channels.find((c) => c.channel_id === state.currentChannelId);
+  const room = state.currentRoomId ? state.roomInfoMap[state.currentRoomId] : undefined;
+  const forum = channel?.channel_type === "forum" || (!channel && room?.room_type === "forum");
   return (
     <View className="flex-1 bg-background" style={leftDocked ? { borderLeftWidth: 0 } : undefined}>
       <ChatHeader />
-      <ChatView />
+      {forum ? <ForumView key={`${state.currentRoomId}|${channel?.channel_id ?? ""}`} /> : <ChatView />}
     </View>
   );
 }

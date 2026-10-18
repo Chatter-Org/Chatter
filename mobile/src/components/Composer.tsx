@@ -287,8 +287,9 @@ export function Composer({
   );
 }
 
-/** A staged or sending file: its picture, or its name, with progress. */
-function Tile({
+/** A staged or sending file: its picture, or its name, with progress. Also
+ *  the forum's staged attachments. */
+export function Tile({
   name,
   previewUri,
   status,

@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import { openForumPost } from "./forum/ForumView";
 import { Linking, Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { Hash, Link2Off, MessageSquareQuote, MessagesSquare, Paperclip } from "lucide-react-native";
@@ -157,11 +158,11 @@ export const ForumLinkCard = memo(function ForumLinkCard({ url }: { url: string 
   const name = preview.author_display_name || displayUserId(preview.author);
   return (
     <Pressable
-      // Forums open on the phone with their own screen; until then, the
-      // forum's channel is where the post lives.
+      // The post's forum comes up behind it, so Back lands there.
       onPress={async () => {
         await selectRoom(preview.room_id).catch(() => {});
         if (preview.channel_id) await selectChannel(preview.channel_id).catch(() => {});
+        openForumPost(preview.room_id, preview.post_id, preview.channel_id);
       }}
       accessibilityRole="button"
       className="mt-1 gap-1 rounded-md border border-border bg-secondary/40 p-2.5 active:bg-secondary/70"

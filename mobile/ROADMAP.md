@@ -57,7 +57,8 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Save/share received files
 
 ### Forums
-- [ ] Forum channels: post list, tags, open a post, comment, create a post with images
+- [x] Forum channels: post list (search, sort, tag filters, pins first, pull to refresh, live), open a post (Markdown, media, reactions, threaded replies with folding), comment and reply with attachments, edit and delete, create and edit a post with tags and up to ten attachments; forum links open the post
+- [ ] Forum tag set-up (the web's Manage tags dialog)
 
 ### Voice and video
 - [x] Shared `VoiceEngine` in core (`packages/core/src/voice/engine.ts`), ported from `useWebRTCVoice`, on a `react-native-webrtc` backend (`src/voice/nativeBackend.ts`)
