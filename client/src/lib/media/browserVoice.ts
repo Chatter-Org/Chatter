@@ -263,6 +263,12 @@ class BrowserVoiceBackend implements VoiceMediaBackend {
     const resume = () => {
       if (this.ctx !== ctx || ctx.state === "closed") return;
       void ctx.resume().catch(() => {});
+      // The slot elements are refused autoplay the same way (volume 0 is not
+      // muted), and Web Audio hears nothing until they play — so a resumed
+      // context alone was still a silent call.
+      this.slotAudio.forEach((el) => {
+        if (el.paused) el.play().catch(() => {});
+      });
     };
     const onGesture = () => {
       armed = false;
@@ -305,7 +311,13 @@ class BrowserVoiceBackend implements VoiceMediaBackend {
       audioEl.autoplay = true;
       this.slotAudio.set(slot, audioEl);
     }
-    const stream = (event.streams[0] as MediaStream | undefined) || new MediaStream([event.track as MediaStreamTrack]);
+    // This slot's own track, never `event.streams[0]`: the SFU puts every slot
+    // in one stream (`chatter-sfu-{listener}`), so that stream holds all of
+    // them and its first track is slot 0's. Built from it, every slot played
+    // slot 0 — anyone the server placed in another slot was inaudible, which
+    // depended on slot order and so came and went with joins and rejoins.
+    const track = event.track as MediaStreamTrack;
+    const stream = new MediaStream([track]);
     audioEl.srcObject = stream;
 
     // Route through a GainNode so per-user volume can exceed 100%, then a
@@ -320,9 +332,9 @@ class BrowserVoiceBackend implements VoiceMediaBackend {
       // source on the same track silence, so the call was inaudible; the
       // element still has to play the original for Web Audio to receive
       // anything at all.
-      const clone = stream.getAudioTracks()[0]?.clone();
-      if (clone) this.slotClones.set(slot, clone);
-      const source = ctx.createMediaStreamSource(clone ? new MediaStream([clone]) : stream);
+      const clone = track.clone();
+      this.slotClones.set(slot, clone);
+      const source = ctx.createMediaStreamSource(new MediaStream([clone]));
       const gain = ctx.createGain();
       gain.gain.value = 0;
       const panner = ctx.createPanner();
