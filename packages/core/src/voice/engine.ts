@@ -2,10 +2,10 @@
  * A voice call: the signalling, retries, slots and moderation of Chatter's
  * voice, without React and without a particular media stack.
  *
- * Ported from client/src/hooks/useWebRTCVoice.ts, whose comments explain the
- * choices and came with the code. The mobile app runs on this; the web hook
- * is to adopt it as a separate change (see mobile/ROADMAP.md), after which
- * the two share one implementation of everything here.
+ * Ported from what was client/src/hooks/useWebRTCVoice.ts (see its history
+ * for the longer comments that came with the code). The web client, the
+ * desktop app (which loads it) and the mobile app all run on this; the web
+ * hook is now only a React wrapper around it.
  *
  * What differs per platform comes in through `VoiceEngineDeps`: the media
  * backend (a browser's WebRTC, the desktop app's engine, react-native-webrtc),
@@ -56,6 +56,16 @@ export function micOptionsFrom(settings: VoiceSettings): MicOptions {
   };
 }
 
+function sameMicOptions(a: MicOptions, b: MicOptions): boolean {
+  return (
+    a.deviceId === b.deviceId &&
+    a.echoCancellation === b.echoCancellation &&
+    a.noiseSuppression === b.noiseSuppression &&
+    a.autoGainControl === b.autoGainControl &&
+    a.gain === b.gain
+  );
+}
+
 export interface VoiceEngineDeps {
   dispatch: Dispatch<Action>;
   getState(): AppState;
@@ -97,6 +107,11 @@ export class VoiceEngine {
     me: { x: 0.5, y: 0.5 },
     others: {},
   };
+  /** What `spatial` was last read from, to tell when to read it again. */
+  private spatialSource: { members: AppState["voiceChannelMembers"][string] | undefined; userId: string | null } = {
+    members: undefined,
+    userId: null,
+  };
   private userVolumes: Record<string, number> = {};
   private subscribeRetries = 0;
   private publishRetries = 0;
@@ -109,6 +124,10 @@ export class VoiceEngine {
   private answering = new WeakSet<VoicePeer>();
   /** Push-to-talk's current state, so a repeat press does nothing. */
   private transmitting = false;
+  /** What the call's mic and playout were last set to, so a settings change
+   *  touches only what it changed: an output level must not reopen the mic. */
+  private appliedMic: MicOptions | null = null;
+  private appliedOutput: { deviceId: string; volume: number } | null = null;
 
   // Mirrors of the store, kept here because some are set ahead of a render.
   private inVoice = false;
@@ -122,7 +141,9 @@ export class VoiceEngine {
 
   constructor(deps: VoiceEngineDeps) {
     this.deps = deps;
-    this.backend = deps.selectBackend();
+    // Nothing is chosen until a call starts: choosing can start a media stack
+    // (the desktop app's engine), which has no business running before then.
+    this.backend = deps.fallbackBackend ?? deps.selectBackend();
     this.sync();
   }
 
@@ -156,23 +177,22 @@ export class VoiceEngine {
       }
     }
 
+    // Re-applied whenever the member list is replaced, even with nobody
+    // moved: a reload after a join is what reaches a listener whose audio
+    // graph did not exist when the positions last came in.
+    const members = state.voiceChannelId ? state.voiceChannelMembers[state.voiceChannelId] : undefined;
+    const spatialOn = channel?.channel_type === "spatial";
+    if (members === this.spatialSource.members && spatialOn === this.spatial.on && state.userId === this.spatialSource.userId) return;
+    this.spatialSource = { members, userId: state.userId };
     const others: Record<string, { x: number; y: number }> = {};
     let me = this.spatial.me;
-    for (const member of (state.voiceChannelId && state.voiceChannelMembers[state.voiceChannelId]) || []) {
+    for (const member of members ?? []) {
       if (member.x === undefined || member.y === undefined) continue;
       if (member.userId === state.userId) me = { x: member.x, y: member.y };
       else others[member.userId] = { x: member.x, y: member.y };
     }
-    const spatialOn = channel?.channel_type === "spatial";
-    const changed =
-      spatialOn !== this.spatial.on ||
-      me.x !== this.spatial.me.x ||
-      me.y !== this.spatial.me.y ||
-      JSON.stringify(others) !== JSON.stringify(this.spatial.others);
-    if (changed) {
-      this.spatial = { on: !!spatialOn, me, others };
-      this.applyAllSlotPositions();
-    }
+    this.spatial = { on: spatialOn, me, others };
+    this.applyAllSlotPositions();
   }
 
   /** Settings changed: a different mic or processing reopens the capture
@@ -180,11 +200,23 @@ export class VoiceEngine {
   applySettings(): void {
     if (!this.inVoice) return;
     const settings = getVoiceSettings();
-    this.mic?.update(micOptionsFrom(settings)).catch((err) => {
-      console.warn("[voice] could not apply microphone settings", err);
-      this.deps.notices.error("Could not switch microphone. Check that it's connected.");
-    });
-    this.backend.setOutput({ deviceId: settings.outputDeviceId, volume: settings.outputVolume / 100 });
+    const micOptions = micOptionsFrom(settings);
+    if (this.mic && !(this.appliedMic && sameMicOptions(this.appliedMic, micOptions))) {
+      this.appliedMic = micOptions;
+      this.mic.update(micOptions).catch((err) => {
+        console.warn("[voice] could not apply microphone settings", err);
+        this.deps.notices.error("Could not switch microphone. Check that it's connected.");
+      });
+    }
+    this.setOutput(settings);
+  }
+
+  private setOutput(settings: VoiceSettings) {
+    const output = { deviceId: settings.outputDeviceId, volume: settings.outputVolume / 100 };
+    const applied = this.appliedOutput;
+    if (applied && applied.deviceId === output.deviceId && applied.volume === output.volume) return;
+    this.appliedOutput = output;
+    this.backend.setOutput(output);
   }
 
   // ─── Audio graph ───────────────────────────────────────────────────────────
@@ -592,7 +624,10 @@ export class VoiceEngine {
         mic = await this.backend.acquireMic(micOptions);
       }
       this.mic = mic;
-      this.backend.setOutput({ deviceId: settings.outputDeviceId, volume: settings.outputVolume / 100 });
+      this.appliedMic = micOptions;
+      // A new backend has heard nothing yet.
+      this.appliedOutput = null;
+      this.setOutput(settings);
       if (nextMuted || nextDeafened) mic.setEnabled(false);
       this.transmitting = false;
 

@@ -1,31 +1,26 @@
-import { useCallback, useRef, useEffect } from "react";
-import { useAppContext } from "@/lib/store";
-import { getVoiceSettings, micGain, updateVoiceSettings, useVoiceSettings, type VoiceSettings } from "@/hooks/useVoiceSettings";
-import {
-  dropDeferredArrivalSound,
-  playDeferredArrivalSound,
-  playSound,
-  type SoundPack,
-} from "@/lib/sounds";
-import { fetchIceServers, getWebRTCConfig, VOICE_SUBSCRIBE_RETRY_MS, VOICE_SUBSCRIBE_MAX_RETRIES, VOICE_SUBSCRIBE_MAX_BACKOFF_MS, VOICE_PUBLISH_INITIAL_RETRY_MS, VOICE_PUBLISH_MAX_BACKOFF_MS, VOICE_SLOT_COUNT, VOICE_BITRATE_DEFAULT_BPS, VOICE_CONNECT_TIMEOUT_MS, VOICE_DISCONNECTED_GRACE_MS, canSignal, candidatesAfterOffer, clampVoiceBitrate, mungeVoiceAudioSdp, applyVoiceSenderBitrate, holdCandidatesUntilAnswer, isAwaitingAnswer, addRemoteCandidate, releaseHeldCandidates } from "@/lib/webrtc";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { VoiceEngine } from "@chatter/core/voice/engine";
+import { useAppContext } from "@/lib/store";
+import { useVoiceSettings } from "@/hooks/useVoiceSettings";
 import { desktop, hasDesktopFeature } from "@/lib/desktop/bridge";
 import type { VoiceRestoreState } from "@/lib/voiceRejoin";
-import { toWorld } from "@/lib/spatialAudio";
-import { browserVoiceBackend, selectVoiceBackend, type LocalMic, type MicOptions, type VoiceIceCandidate, type VoiceMediaBackend, type VoicePeer } from "@/lib/media";
+import { browserVoiceBackend, selectVoiceBackend, type LocalMic, type VoicePeer } from "@/lib/media";
 
-const VOICE_PUBLISH_MAX_RETRIES = 5;
+// The call itself — signalling, retries, slots, moderation — is the shared
+// VoiceEngine (@chatter/core/voice/engine), which the mobile app runs too.
+// What stays here is the browser's part: the toasts, the session kept for a
+// refresh, the push-to-talk key and the leave announced as the tab closes.
+
 const RECONNECTING_TOAST = "voice-reconnecting";
-// A first retry is usually invisible; by the third someone has noticed.
-const RECONNECTING_TOAST_AFTER = 3;
 
-function micOptionsFrom(settings: VoiceSettings): MicOptions {
+/** A ref whose value is read from the engine, so the connection-stats and
+ *  speaking hooks keep taking refs while the engine owns the connections. */
+function liveRef<T>(read: () => T): { readonly current: T } {
   return {
-    deviceId: settings.inputDeviceId,
-    echoCancellation: settings.echoCancellation,
-    noiseSuppression: settings.noiseSuppressionMode,
-    autoGainControl: settings.autoGainControl,
-    gain: micGain(settings),
+    get current() {
+      return read();
+    },
   };
 }
 
@@ -37,638 +32,75 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
   const { state, dispatch, wsRef, loadVoiceMembers } = useAppContext();
   const { settings } = useVoiceSettings();
 
-  // Which media stack this call runs on: the browser's, or the desktop app's
-  // native engine. Chosen at join (lib/media) and kept for the whole call.
-  const backendRef = useRef<VoiceMediaBackend>(browserVoiceBackend);
-  const micRef = useRef<LocalMic | null>(null);
-  const voicePublisherPcRef = useRef<VoicePeer | null>(null);
-  // One connection for the whole call. The server writes whoever is currently
-  // loudest into a fixed set of slots on it, so this stays a single connection
-  // whether the call has three people in it or three hundred.
-  const voiceSubscriberPcRef = useRef<VoicePeer | null>(null);
-  // Everything below is keyed by slot index, not by user: a slot outlives the
-  // speakers that pass through it. The backend holds each slot's audio.
-  const voiceSlotsRef = useRef<Set<number>>(new Set());
-  const voiceSlotUsersRef = useRef<Map<number, string>>(new Map());
-  // Where everyone in the call is standing, and whether this channel has a
-  // floor at all. Refs because the audio graph is updated from callbacks that
-  // must not re-run on every render.
-  const spatialRef = useRef<{ on: boolean; me: { x: number; y: number }; others: Record<string, { x: number; y: number }> }>({
-    on: false,
-    me: { x: 0.5, y: 0.5 },
-    others: {},
-  });
-  const voiceUserVolumesRef = useRef<Record<string, number>>({});
-  const voiceSubscribeRetryCountRef = useRef(0);
-  const createVoiceSubscriptionRef = useRef<() => Promise<void>>(async () => {});
-  const voicePublishRetryCountRef = useRef(0);
-  const createVoicePublisherRef = useRef<() => Promise<void>>(async () => {});
-  // Set while a moderator has us muted, when the publisher is closed on purpose.
-  const forceMutedRef = useRef(false);
-  // Bitrate configured on the voice channel we're publishing into
-  const voiceBitrateRef = useRef(VOICE_BITRATE_DEFAULT_BPS);
-  // Set below; lets the moderation handlers call join/leave without adding them
-  // to the WS effect's dependencies.
-  const joinVoiceRef = useRef<(channelId?: string, restore?: VoiceRestoreState) => Promise<void>>(async () => {});
-  const leaveVoiceRef = useRef<() => Promise<void>>(async () => {});
-  const releaseVoiceRef = useRef<() => Promise<void>>(async () => {});
+  // The provider keeps a ref to the state too, but refreshes it in an effect
+  // of its own, which runs after this component's: reading it here would be a
+  // render behind.
+  const stateRef = useRef(state);
 
-  // Refs to avoid stale closures
-  const inVoiceRef = useRef(state.inVoiceChannel);
-  const currentRoomRef = useRef(state.currentRoomId);
-  const voiceRoomIdRef = useRef(state.voiceRoomId);
-  const voiceChannelIdRef = useRef(state.voiceChannelId);
-  // Mute and deafen are read from places that must not re-run when they change
-  // — the join path, and the gain node built for each new speaker.
-  const isMutedRef = useRef(state.isMuted);
-  const isDeafenedRef = useRef(state.isDeafened);
-  useEffect(() => { isMutedRef.current = state.isMuted; }, [state.isMuted]);
-  useEffect(() => { isDeafenedRef.current = state.isDeafened; }, [state.isDeafened]);
-  useEffect(() => { inVoiceRef.current = state.inVoiceChannel; }, [state.inVoiceChannel]);
-  useEffect(() => { currentRoomRef.current = state.currentRoomId; }, [state.currentRoomId]);
-  useEffect(() => { voiceRoomIdRef.current = state.voiceRoomId; }, [state.voiceRoomId]);
-  useEffect(() => { voiceChannelIdRef.current = state.voiceChannelId; }, [state.voiceChannelId]);
-
-  // Track the current voice channel's bitrate. A moderator changing it while
-  // we're connected re-caps the sender live — no renegotiation needed.
-  useEffect(() => {
-    const channel = state.channels.find((c) => c.channel_id === state.voiceChannelId);
-    if (!channel) return;
-    const bitrate = clampVoiceBitrate(channel.voice_bitrate);
-    if (bitrate === voiceBitrateRef.current) return;
-    voiceBitrateRef.current = bitrate;
-    if (voicePublisherPcRef.current) {
-      applyVoiceSenderBitrate(voicePublisherPcRef.current, bitrate);
-    }
-  }, [state.channels, state.voiceChannelId]);
-
-  // Settings changed in the Voice & Audio dialog apply to the call already
-  // running: a different mic or processing reopens the capture under the same
-  // sender, and levels only move a gain.
-  const { inputDeviceId, echoCancellation, noiseSuppressionMode, autoGainControl, inputVolume, inputGainDb } = settings;
-  useEffect(() => {
-    const mic = micRef.current;
-    if (!state.inVoiceChannel || !mic) return;
-    mic.update(micOptionsFrom(getVoiceSettings())).catch((err) => {
-      console.warn("[voice] could not apply microphone settings", err);
-      toast.error("Could not switch microphone. Check that it's connected.");
-    });
-  }, [state.inVoiceChannel, inputDeviceId, echoCancellation, noiseSuppressionMode, autoGainControl, inputVolume, inputGainDb]);
-
-  const { outputDeviceId, outputVolume } = settings;
-  useEffect(() => {
-    if (!state.inVoiceChannel) return;
-    backendRef.current.setOutput({ deviceId: outputDeviceId, volume: outputVolume / 100 });
-  }, [state.inVoiceChannel, outputDeviceId, outputVolume]);
-
-  // Drop every slot's audio and the graph they share.
-  const closeVoiceAudioGraph = () => {
-    backendRef.current.closeGraph();
-    voiceSlotsRef.current.clear();
-    voiceSlotUsersRef.current.clear();
-  };
-
-  // A slot plays at the volume set for whoever currently occupies it, and is
-  // silent while empty — an unassigned slot still carries whatever the previous
-  // speaker left in the pipeline.
-  const applySlotGain = (slot: number) => {
-    if (!voiceSlotsRef.current.has(slot)) return;
-    const userId = voiceSlotUsersRef.current.get(slot);
-    backendRef.current.setSlotGain(
-      slot,
-      isDeafenedRef.current || !userId ? 0 : (voiceUserVolumesRef.current[userId] ?? 1.0),
-    );
-  };
-
-  // Point a slot's panner at whoever is in it. An ordinary voice channel puts
-  // every speaker on top of the listener, which is a distance of zero and a
-  // centred pan — the graph is the same shape either way, so nothing has to be
-  // rewired when the person walks into a spatial channel.
-  const applySlotPosition = useCallback((slot: number) => {
-    if (!voiceSlotsRef.current.has(slot)) return;
-    const spatial = spatialRef.current;
-    const userId = voiceSlotUsersRef.current.get(slot);
-    const at = spatial.on && userId ? spatial.others[userId] : undefined;
-    // An unoccupied slot is silenced by its gain, so it is left where it was
-    // rather than swung to the middle — the swing would be audible on the next
-    // speaker to land in it.
-    if (spatial.on && !at && userId) return;
-    backendRef.current.setSlotPosition(slot, at ? toWorld(at.x, at.y) : { x: 0, y: 0, z: 0 });
-  }, []);
-
-  // The listener is the person at the keyboard. Moving them rather than
-  // offsetting every source keeps one definition of where anybody is.
-  const applyListenerPosition = useCallback(() => {
-    const spatial = spatialRef.current;
-    backendRef.current.setListenerPosition(
-      spatial.on ? toWorld(spatial.me.x, spatial.me.y) : { x: 0, y: 0, z: 0 },
-    );
-  }, []);
-
-  const applyAllSlotPositions = useCallback(() => {
-    applyListenerPosition();
-    voiceSlotsRef.current.forEach((slot) => applySlotPosition(slot));
-  }, [applyListenerPosition, applySlotPosition]);
-
-  // Where everyone in the call is standing, kept in a ref for the audio graph
-  // and re-applied whenever it changes. A position event is one small message,
-  // so this runs on every drag frame of every person in the room — which is
-  // why it only touches AudioParams and never rebuilds anything.
-  const voiceChannel = state.voiceChannelId
-    ? state.channels.find((c) => c.channel_id === state.voiceChannelId)
-    : undefined;
-  const isSpatialCall = voiceChannel?.channel_type === "spatial";
-  const voiceChannelMembers = state.voiceChannelId
-    ? state.voiceChannelMembers[state.voiceChannelId]
-    : undefined;
-  useEffect(() => {
-    const others: Record<string, { x: number; y: number }> = {};
-    let me = spatialRef.current.me;
-    for (const member of voiceChannelMembers ?? []) {
-      if (member.x === undefined || member.y === undefined) continue;
-      if (member.userId === state.userId) me = { x: member.x, y: member.y };
-      else others[member.userId] = { x: member.x, y: member.y };
-    }
-    spatialRef.current = { on: !!isSpatialCall, me, others };
-    applyAllSlotPositions();
-  }, [isSpatialCall, voiceChannelMembers, state.userId, applyAllSlotPositions]);
-
-  // Write down enough to put the call back after a refresh. Mute and deafen
-  // are included and kept current, because a refresh discards the state they
-  // otherwise live in — and coming back on an open mic is the one mistake here
-  // the person cannot see.
-  const persistVoiceSession = (over: {
-    roomId?: string | null;
-    channelId?: string | null;
-    muted?: boolean;
-    deafened?: boolean;
-  } = {}) => {
-    // The refs behind these are mirrored by effects, so a caller acting on a
-    // change it just made passes the new value rather than reading one a render
-    // behind.
-    const roomId = over.roomId ?? voiceRoomIdRef.current ?? currentRoomRef.current;
-    if (!roomId) return;
-    try {
-      sessionStorage.setItem("voiceSession", JSON.stringify({
-        roomId,
-        channelId: over.channelId !== undefined ? over.channelId : voiceChannelIdRef.current,
-        muted: over.muted ?? isMutedRef.current,
-        deafened: over.deafened ?? isDeafenedRef.current,
-        timestamp: Date.now(),
-      }));
-    } catch {
-      // Only costs the restore; the call itself is unaffected.
-    }
-  };
-
-  /** Send this peer's own candidates, none before its offer (see
-   *  `candidatesAfterOffer`). Returns the function to call once the offer is
-   *  on its way. An early candidate on a rejoin used to land on the
-   *  connection being replaced, whose refusal then tore down the new one. */
-  const trickleAfterOffer = (pc: VoicePeer, type: "voice_webrtc_publish_candidate" | "voice_webrtc_subscribe_candidate") => {
-    const trickle = candidatesAfterOffer<VoiceIceCandidate>((c) => {
-      if (!canSignal(wsRef)) return;
-      wsRef.current!.send(JSON.stringify({
-        type,
-        room_id: voiceRoomIdRef.current || currentRoomRef.current,
-        candidate: { candidate: c.candidate, sdpMid: c.sdpMid, sdpMLineIndex: c.sdpMLineIndex, usernameFragment: c.usernameFragment },
-      }));
-    });
-    pc.onicecandidate = (ev) => {
-      if (ev.candidate) trickle.add(ev.candidate);
-    };
-    return trickle.offerSent;
-  };
-
-  // ─── Connection recovery ──────────────────────────────────────────────────
-  // Both connections recover the same way. A connection that came up and then
-  // broke is retried for as long as the call lasts, backing off to a ceiling:
-  // giving up after a handful of tries, as this used to, left somebody sitting
-  // in a call nobody could hear, with nothing on screen saying so. One that
-  // never got an answer is different — the server refused or ignored the offer,
-  // and the same offer will not fare better — so that is capped.
-  const noteRecovered = () => toast.dismiss(RECONNECTING_TOAST);
-  const noteRetrying = (attempt: number, cap: number, capped: boolean) => {
-    if (capped && attempt > cap) {
-      toast.error("Couldn't connect to voice. Try leaving and rejoining the channel.", { id: RECONNECTING_TOAST });
-    } else if (attempt === RECONNECTING_TOAST_AFTER) {
-      toast.warning("Voice connection lost. Reconnecting…", { id: RECONNECTING_TOAST });
-    }
-  };
-
-  // Rebuild a connection that stalls: no answer or no connection within the
-  // timeout, or "disconnected" for longer than a blip.
-  const watchConnection = (pc: VoicePeer, current: () => VoicePeer | null, fail: (pc: VoicePeer, reason: string, capped: boolean) => void) => {
-    setTimeout(() => {
-      if (pc !== current() || pc.connectionState === "connected") return;
-      fail(pc, isAwaitingAnswer(pc) ? "got no answer" : `stuck ${pc.connectionState}`, isAwaitingAnswer(pc));
-    }, VOICE_CONNECT_TIMEOUT_MS);
-  };
-  const graceDisconnect = (pc: VoicePeer, current: () => VoicePeer | null, fail: (pc: VoicePeer, reason: string, capped: boolean) => void) => {
-    setTimeout(() => {
-      if (pc !== current()) return;
-      if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-        fail(pc, "stayed disconnected", false);
-      }
-    }, VOICE_DISCONNECTED_GRACE_MS);
-  };
-
-  // ─── Voice publisher ──────────────────────────────────────────────────────
-  const failPublisher = (pc: VoicePeer, reason: string, capped: boolean) => {
-    if (pc !== voicePublisherPcRef.current) return;
-    try { pc.close(); } catch {}
-    voicePublisherPcRef.current = null;
-    // A moderator's mute closes the publisher on purpose, and lifting it
-    // rebuilds it; retrying in between would only be refused.
-    if (!inVoiceRef.current || forceMutedRef.current) {
-      voicePublishRetryCountRef.current = 0;
-      return;
-    }
-    const attempt = voicePublishRetryCountRef.current + 1;
-    console.warn(`[voice] Publisher ${reason} (attempt ${attempt})`);
-    noteRetrying(attempt, VOICE_PUBLISH_MAX_RETRIES, capped);
-    if (capped && attempt > VOICE_PUBLISH_MAX_RETRIES) {
-      voicePublishRetryCountRef.current = 0;
-      return;
-    }
-    voicePublishRetryCountRef.current = attempt;
-    const delay = Math.min(VOICE_PUBLISH_INITIAL_RETRY_MS * 2 ** (attempt - 1), VOICE_PUBLISH_MAX_BACKOFF_MS);
-    setTimeout(async () => {
-      if (!inVoiceRef.current || voicePublisherPcRef.current) return;
-      await fetchIceServers();
-      await createVoicePublisherRef.current();
-    }, delay);
-  };
-
-  const createVoicePublisher = useCallback(async () => {
-    if (!micRef.current || !canSignal(wsRef)) return;
-    const pc = backendRef.current.createPeer(getWebRTCConfig());
-    voicePublisherPcRef.current = pc;
-    holdCandidatesUntilAnswer(pc);
-    micRef.current.attachTo(pc);
-    const current = () => voicePublisherPcRef.current;
-
-    const offerSent = trickleAfterOffer(pc, "voice_webrtc_publish_candidate");
-
-    pc.onconnectionstatechange = () => {
-      if (pc !== voicePublisherPcRef.current) return;
-      // Reported the moment it changes, so the UI and the entrance sound agree
-      // on when the call came up rather than the label trailing it by a poll.
-      dispatch({ type: "SET_VOICE_STATE", payload: { voicePublisherState: pc.connectionState } });
-      if (pc.connectionState === "connected") {
-        voicePublishRetryCountRef.current = 0;
-        noteRecovered();
-        // Audio is flowing now, so the arrival this call was announcing has
-        // actually happened. Held since the join was acknowledged; a retry
-        // simply releases it later, and leaving first drops it entirely.
-        playDeferredArrivalSound();
-      } else if (pc.connectionState === "disconnected") {
-        graceDisconnect(pc, current, failPublisher);
-      } else if (pc.connectionState === "failed") {
-        failPublisher(pc, "connection failed", false);
-      }
-    };
-
-    // A retry closes the failed connection and builds this one; without a
-    // report here the label would go on showing whatever the dead one last said.
-    dispatch({ type: "SET_VOICE_STATE", payload: { voicePublisherState: pc.connectionState } });
-
-    try {
-      const offer = await pc.createOffer();
-      if (pc !== voicePublisherPcRef.current) return;
-      await pc.setLocalDescription(offer);
-      await applyVoiceSenderBitrate(pc, voiceBitrateRef.current);
-      if (!canSignal(wsRef)) return;
-      wsRef.current!.send(JSON.stringify({
-        type: "voice_webrtc_publish_offer",
-        room_id: voiceRoomIdRef.current || currentRoomRef.current,
-        channel_id: voiceChannelIdRef.current || undefined,
-        sdp: offer.sdp,
-      }));
-      offerSent();
-      watchConnection(pc, current, failPublisher);
-    } catch (err) {
-      console.warn("[voice] could not create publisher offer", err);
-      failPublisher(pc, "could not make an offer", true);
-    }
-  }, []);
-  // Keep ref in sync so the publisher failure handler can re-invoke it
-  createVoicePublisherRef.current = createVoicePublisher;
-
-  // ─── Voice subscriber ─────────────────────────────────────────────────────
-  const failSubscriber = (pc: VoicePeer, reason: string, capped: boolean) => {
-    if (pc !== voiceSubscriberPcRef.current) return;
-    try { pc.close(); } catch {}
-    voiceSubscriberPcRef.current = null;
-    closeVoiceAudioGraph();
-    if (!inVoiceRef.current) {
-      voiceSubscribeRetryCountRef.current = 0;
-      return;
-    }
-    const attempt = voiceSubscribeRetryCountRef.current + 1;
-    console.warn(`[voice] Subscription ${reason} (attempt ${attempt})`);
-    noteRetrying(attempt, VOICE_SUBSCRIBE_MAX_RETRIES, capped);
-    if (capped && attempt > VOICE_SUBSCRIBE_MAX_RETRIES) {
-      voiceSubscribeRetryCountRef.current = 0;
-      return;
-    }
-    voiceSubscribeRetryCountRef.current = attempt;
-    const delay = Math.min(VOICE_SUBSCRIBE_RETRY_MS * 2 ** (attempt - 1), VOICE_SUBSCRIBE_MAX_BACKOFF_MS);
-    setTimeout(async () => {
-      if (!inVoiceRef.current || voiceSubscriberPcRef.current) return;
-      await fetchIceServers();
-      await createVoiceSubscriptionRef.current();
-    }, delay);
-  };
-
-  // One connection carries the entire call. It offers a fixed number of
-  // receive-only transceivers — slots — and the server decides which speaker
-  // occupies each one, announcing the mapping over the websocket. Nobody
-  // joining or leaving the call renegotiates anything, which is what lets the
-  // same connection serve a call of any size.
-  const createVoiceSubscription = useCallback(async () => {
-    if (!canSignal(wsRef) || voiceSubscriberPcRef.current) return;
-
-    const pc = backendRef.current.createPeer(getWebRTCConfig());
-    voiceSubscriberPcRef.current = pc;
-    holdCandidatesUntilAnswer(pc);
-    const current = () => voiceSubscriberPcRef.current;
-
-    const offerSent = trickleAfterOffer(pc, "voice_webrtc_subscribe_candidate");
-
-    pc.ontrack = (ev) => {
-      if (pc !== voiceSubscriberPcRef.current) return;
-      // Slot index is the transceiver's position, which the server matches by
-      // adding its slot tracks in the same order our offer listed them.
-      const slot = pc.getTransceivers().indexOf(ev.transceiver);
-      if (slot < 0) return;
-
-      // Each slot gets its own gain (per-user volume can exceed 100%) and
-      // position (spatial channels), silent until the slot map says who is in
-      // it.
-      backendRef.current.attachSlot(slot, ev);
-      voiceSlotsRef.current.add(slot);
-      applySlotGain(slot);
-      applySlotPosition(slot);
-    };
-
-    pc.onconnectionstatechange = () => {
-      if (pc !== voiceSubscriberPcRef.current) return;
-      if (pc.connectionState === "connected") {
-        voiceSubscribeRetryCountRef.current = 0;
-        noteRecovered();
-      } else if (pc.connectionState === "disconnected") {
-        // Usually a blip the browser recovers from by itself. An ICE restart
-        // would need a renegotiation the SFU does not take, so the fallback is
-        // a fresh subscription — the server replaces the old one on the offer.
-        graceDisconnect(pc, current, failSubscriber);
-      } else if (pc.connectionState === "failed") {
-        failSubscriber(pc, "connection failed", false);
-      }
-    };
-
-    for (let i = 0; i < VOICE_SLOT_COUNT; i++) {
-      pc.addTransceiver("audio", { direction: "recvonly" });
-    }
-
-    try {
-      const offer = await pc.createOffer();
-      // Guard: if this PC was replaced before the offer resolved, drop it
-      if (pc !== voiceSubscriberPcRef.current) return;
-      await pc.setLocalDescription(offer);
-      if (!canSignal(wsRef)) return;
-      wsRef.current!.send(JSON.stringify({
-        type: "voice_webrtc_subscribe_offer",
-        room_id: voiceRoomIdRef.current || currentRoomRef.current,
-        sdp: offer.sdp,
-      }));
-      offerSent();
-      watchConnection(pc, current, failSubscriber);
-    } catch (err) {
-      console.warn("[voice] could not create subscription offer", err);
-      failSubscriber(pc, "could not make an offer", true);
-    }
-  }, []);
-  createVoiceSubscriptionRef.current = createVoiceSubscription;
-
-  // Point each slot at the user the server says is in it. Only the mapping
-  // changes here — the tracks and gain nodes are already wired up.
-  const applySlotMap = (slots: { slot: number; user_id: string | null }[]) => {
-    const seen = new Set<number>();
-    for (const { slot, user_id } of slots) {
-      seen.add(slot);
-      if (user_id) voiceSlotUsersRef.current.set(slot, user_id);
-      else voiceSlotUsersRef.current.delete(slot);
-      applySlotGain(slot);
-      applySlotPosition(slot);
-    }
-    // Anything the server did not mention is empty.
-    for (const slot of [...voiceSlotUsersRef.current.keys()]) {
-      if (!seen.has(slot)) {
-        voiceSlotUsersRef.current.delete(slot);
-        applySlotGain(slot);
-      }
-    }
-  };
-
-  // ─── WS Message handler for Voice WebRTC signaling ─────────────────────────
-  useEffect(() => {
-    const handler = async (e: Event) => {
-      const msg = (e as CustomEvent).detail;
-      if (msg.type === "voice_webrtc_publish_answer" && voicePublisherPcRef.current) {
-        const pc = voicePublisherPcRef.current;
-        if (!isAwaitingAnswer(pc)) return;
-        try {
-          await pc.setRemoteDescription({
-            type: "answer",
-            sdp: mungeVoiceAudioSdp(msg.sdp, voiceBitrateRef.current),
-          });
-          await releaseHeldCandidates(pc);
-          await applyVoiceSenderBitrate(pc, voiceBitrateRef.current);
-        } catch (err) {
-          console.warn("[voice] could not apply publisher answer", err);
-          failPublisher(pc, "answer was rejected", true);
-        }
-      } else if (msg.type === "voice_webrtc_publish_candidate" && voicePublisherPcRef.current) {
-        if (msg.candidate) await addRemoteCandidate(voicePublisherPcRef.current, msg.candidate);
-      } else if (msg.type === "voice_webrtc_subscribe_answer") {
-        const pc = voiceSubscriberPcRef.current;
-        if (pc && msg.sdp && isAwaitingAnswer(pc)) {
-          try {
-            await pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
-            await releaseHeldCandidates(pc);
-          } catch (err) {
-            console.warn("[voice] could not apply subscription answer", err);
-            failSubscriber(pc, "answer was rejected", true);
-          }
-        }
-      } else if (msg.type === "voice_webrtc_subscribe_candidate") {
-        const pc = voiceSubscriberPcRef.current;
-        if (pc && msg.candidate) await addRemoteCandidate(pc, msg.candidate);
-      } else if (msg.type === "voice_slot_map") {
-        if (Array.isArray(msg.slots)) applySlotMap(msg.slots);
-      } else if (msg.type === "voice_force_muted") {
-        // A moderator muted or unmuted us. The SFU already refuses our audio
-        // while muted, so tearing the publisher down here just stops sending
-        // into a closed door; rebuilding it on release restores our voice.
-        forceMutedRef.current = !!msg.force_muted;
-        if (msg.force_muted) {
-          micRef.current?.setEnabled(false);
-          if (voicePublisherPcRef.current) {
-            try { voicePublisherPcRef.current.close(); } catch { /* already closed */ }
-            voicePublisherPcRef.current = null;
-          }
-          dispatch({ type: "SET_VOICE_STATE", payload: { isMuted: true } });
-        } else if (inVoiceRef.current && !voicePublisherPcRef.current) {
-          await createVoicePublisherRef.current();
-        }
-      } else if (msg.type === "voice_force_moved") {
-        // The server has already moved us in its own state; rebuild the peer
-        // connections for the new channel.
-        if (msg.channel_id) await joinVoiceRef.current(msg.channel_id);
-      } else if (msg.type === "voice_session_taken") {
-        // The same account joined this call from somewhere else. The server has
-        // already moved the session and torn our media down on its side; drop
-        // the local half quietly rather than announcing a leave, which would be
-        // this device answering for a call it no longer holds.
-        //
-        // The member list is left alone: the account is still in the call, on
-        // another device, so nothing about the room has changed.
-        if (inVoiceRef.current) {
-          await releaseVoiceRef.current();
-          toast.info("You joined this call from another device");
-        }
-      } else if (msg.type === "voice_force_disconnected") {
-        if (inVoiceRef.current) await leaveVoiceRef.current();
-      } else if (msg.type === "voice_webrtc_error") {
-        console.warn("[voice] WebRTC error:", msg.detail || msg);
-        if (msg.scope === "subscribe" && voiceSubscriberPcRef.current) {
-          // The subscription is the only way to hear anyone, so a refusal is
-          // rebuilt from scratch rather than left in place — on the backoff,
-          // since rebuilding at once into the same refusal is a tight loop.
-          failSubscriber(voiceSubscriberPcRef.current, "was refused", true);
-        } else if (msg.scope === "publish" && voicePublisherPcRef.current && isAwaitingAnswer(voicePublisherPcRef.current)) {
-          if (msg.code === "force_muted" || msg.code === "cannot_speak") {
-            // Not a fault, and no retry will change it: listen only. A
-            // moderator lifting the mute rebuilds the publisher.
-            forceMutedRef.current = msg.code === "force_muted";
-            const pc = voicePublisherPcRef.current;
-            voicePublisherPcRef.current = null;
-            try { pc.close(); } catch {}
-            micRef.current?.setEnabled(false);
-            dispatch({ type: "SET_VOICE_STATE", payload: { isMuted: true } });
-          } else {
-            // Refused before an answer: retried, but only a few times.
-            failPublisher(voicePublisherPcRef.current, "was refused", true);
-          }
-        }
-      }
-    };
-
-    window.addEventListener("ws-message", handler);
-    return () => window.removeEventListener("ws-message", handler);
-  }, [state.inVoiceChannel, state.userId, state.currentRoomId, dispatch]);
-
-  // ─── Join/Leave voice ─────────────────────────────────────────────────────
-  const joinVoice = useCallback(async (channelId?: string, restore?: VoiceRestoreState) => {
-    if (!state.currentRoomId) return;
-
-    // If already in a voice channel, tear down local state first.
-    // Do NOT send voice_leave — the server's voice_join handler already removes
-    // the user from any previous channel atomically, avoiding a race where a
-    // stale voice_leave could arrive after voice_join and destroy the new connection.
-    if (inVoiceRef.current) {
-      await cleanupScreenRef.current();
-
-      if (voicePublisherPcRef.current) {
-        voicePublisherPcRef.current.close();
-        voicePublisherPcRef.current = null;
-      }
-      if (voiceSubscriberPcRef.current) {
-        try { voiceSubscriberPcRef.current.close(); } catch {}
-        voiceSubscriberPcRef.current = null;
-      }
-      closeVoiceAudioGraph();
-      voicePublishRetryCountRef.current = 0;
-      voiceSubscribeRetryCountRef.current = 0;
-
-      micRef.current?.stop();
-      micRef.current = null;
-    }
-
-    // Joining while already in a call is either a channel switch or a rejoin
-    // after the socket dropped. Either way mute and deafen belong to the
-    // person, not to the channel: resetting them would put someone who has
-    // every reason to believe they are muted back on an open mic.
-    // A refresh loses the refs along with the rest of the page, so a caller
-    // restoring a persisted call hands back what it recorded. Without that the
-    // rejoin looks like a fresh one and puts a muted person on an open mic.
-    const rejoining = inVoiceRef.current;
-    // Push-to-talk starts every call silent; the key opens the mic. It used to
-    // carry over from the last call with the mic open until the first release.
-    const pushToTalk = getVoiceSettings().inputMode === "ptt";
-    const nextMuted = pushToTalk || (restore?.muted ?? (rejoining ? isMutedRef.current : false));
-    const nextDeafened = restore?.deafened ?? (rejoining ? isDeafenedRef.current : false);
-
-    try {
-      // Read now rather than from the render that built this callback, which
-      // may predate a change made in the settings dialog.
-      const current = getVoiceSettings();
-      const micOptions = micOptionsFrom(current);
-      backendRef.current = selectVoiceBackend();
-      let mic: LocalMic;
-      try {
-        mic = await backendRef.current.acquireMic(micOptions);
-      } catch (err) {
+  // One call engine for as long as VoiceControls is mounted.
+  const [engine] = useState(
+    () =>
+      new VoiceEngine({
+        dispatch,
+        getState: () => stateRef.current,
+        socket: () => wsRef.current,
+        loadVoiceMembers: () => loadVoiceMembers(),
+        selectBackend: selectVoiceBackend,
         // The native engine couldn't open the mic (or isn't running): the
         // browser's stack can still carry the call.
-        if (backendRef.current === browserVoiceBackend) throw err;
-        console.warn("[voice] native engine unavailable, using the browser's", err);
-        backendRef.current = browserVoiceBackend;
-        mic = await backendRef.current.acquireMic(micOptions);
-      }
-      micRef.current = mic;
-      backendRef.current.setOutput({ deviceId: current.outputDeviceId, volume: current.outputVolume / 100 });
-      // A fresh track starts enabled, so silence it before anything is sent.
-      if (nextMuted || nextDeafened) mic.setEnabled(false);
+        fallbackBackend: browserVoiceBackend,
+        cleanupScreen: () => cleanupScreenRef.current(),
+        // Enough to put the call back after a refresh, mute and deafen
+        // included: coming back on an open mic is the one mistake here the
+        // person cannot see. Cleared on leaving, so a refresh on this device
+        // does not take the session back off whichever device holds it.
+        session: {
+          save: (session) => {
+            try {
+              sessionStorage.setItem("voiceSession", JSON.stringify(session));
+            } catch {
+              // Only costs the restore; the call itself is unaffected.
+            }
+          },
+          clear: () => {
+            try {
+              sessionStorage.removeItem("voiceSession");
+            } catch {
+              // Nothing stored to clear.
+            }
+          },
+        },
+        notices: {
+          reconnecting: () => toast.warning("Voice connection lost. Reconnecting…", { id: RECONNECTING_TOAST }),
+          recovered: () => toast.dismiss(RECONNECTING_TOAST),
+          failed: (message) => toast.error(message, { id: RECONNECTING_TOAST }),
+          info: (message) => toast.info(message),
+          error: (message) => toast.error(message),
+        },
+      }),
+  );
 
-      const resolvedChannelId = channelId || state.voiceChannelId || undefined;
-      const joinedChannel = state.channels.find((c) => c.channel_id === resolvedChannelId);
-      voiceBitrateRef.current = clampVoiceBitrate(joinedChannel?.voice_bitrate);
-      dispatch({ type: "SET_VOICE_STATE", payload: { inVoiceChannel: true, isMuted: nextMuted, isDeafened: nextDeafened, voiceInputMode: pushToTalk ? "ptt" : "open", voiceRoomId: state.currentRoomId, voiceChannelId: resolvedChannelId ?? null, voicePublisherState: "new" } });
-      voiceChannelIdRef.current = resolvedChannelId ?? null;
+  // A layout effect, so the engine has caught up before any passive effect
+  // below acts on the same change.
+  useLayoutEffect(() => {
+    stateRef.current = state;
+    engine.sync();
+  }, [engine, state]);
 
-      // Persist voice session for auto-rejoin on refresh
-      persistVoiceSession({
-        roomId: state.currentRoomId,
-        channelId: resolvedChannelId ?? null,
-        muted: nextMuted,
-        deafened: nextDeafened,
-      });
+  // Settings changed in the Voice & Audio dialog apply to the call already
+  // running; the engine touches only what changed.
+  useEffect(() => {
+    engine.applySettings();
+  }, [engine, settings, state.inVoiceChannel]);
 
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        // Mute and deafen ride along with the join. They used to follow it as
-        // two more messages, and each one was a second broadcast — so everyone
-        // else saw the arrival unmuted first and corrected a moment later.
-        const joinMsg: any = {
-          type: "voice_join",
-          room_id: state.currentRoomId,
-          muted: nextMuted,
-          deafened: nextDeafened,
-        };
-        if (resolvedChannelId) joinMsg.channel_id = resolvedChannelId;
-        wsRef.current.send(JSON.stringify(joinMsg));
-      }
-      await createVoicePublisher();
-      // One subscription covers everyone in the call, so it is opened on join
-      // rather than in response to anybody publishing. Its slots start empty
-      // and the server fills them as people speak.
-      await createVoiceSubscription();
-      await loadVoiceMembers();
-    } catch {
-      toast.error("Could not access microphone. Please check permissions.");
-    }
-  }, [state.currentRoomId, state.voiceChannelId, state.channels, createVoicePublisher, createVoiceSubscription, loadVoiceMembers, dispatch]);
+  // Every socket frame goes to the engine; it acts on the voice ones.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      void engine.handleFrame((e as CustomEvent).detail);
+    };
+    window.addEventListener("ws-message", handler);
+    return () => window.removeEventListener("ws-message", handler);
+  }, [engine]);
 
   // Announce the departure while the socket is still open.
   //
@@ -677,155 +109,33 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
   // someone who has gone. pagehide covers tab close, navigation and mobile
   // backgrounding, where beforeunload does not.
   useEffect(() => {
-    const announceLeave = () => {
-      if (!inVoiceRef.current) return;
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      const roomId = voiceRoomIdRef.current || currentRoomRef.current;
-      if (!roomId) return;
-      try {
-        ws.send(
-          JSON.stringify({
-            type: "voice_leave",
-            room_id: roomId,
-            channel_id: voiceChannelIdRef.current || undefined,
-          }),
-        );
-      } catch {
-        // The socket was already going down; the server falls back to noticing.
-      }
-    };
+    const announceLeave = () => engine.announceLeave();
     window.addEventListener("pagehide", announceLeave);
     return () => window.removeEventListener("pagehide", announceLeave);
-  }, [wsRef]);
+  }, [engine]);
 
-  /** Shut the local half of a voice session down, telling nobody.
-   *
-   *  On its own this is what a device does when it has already lost the
-   *  session — announcing a leave for a call it no longer holds is at best
-   *  noise, and would have been an eviction before the server started
-   *  scoping membership to a connection. */
-  const teardownLocalVoice = useCallback(async () => {
-    // Stop screen sharing via the screen hook cleanup
-    await cleanupScreenRef.current();
-
-    // Close voice peers
-    if (voicePublisherPcRef.current) {
-      voicePublisherPcRef.current.close();
-      voicePublisherPcRef.current = null;
-    }
-    if (voiceSubscriberPcRef.current) {
-      try { voiceSubscriberPcRef.current.close(); } catch {}
-      voiceSubscriberPcRef.current = null;
-    }
-    closeVoiceAudioGraph();
-    voicePublishRetryCountRef.current = 0;
-    voiceSubscribeRetryCountRef.current = 0;
-    forceMutedRef.current = false;
-    toast.dismiss(RECONNECTING_TOAST);
-    // Every exit runs through here, so an entrance sting still waiting on a
-    // connection is dropped whichever way the call ended — left deliberately,
-    // taken by another device, or released after too long off the socket.
-    // A sting must never surface on some later call it was not announcing.
-    dropDeferredArrivalSound();
-
-    micRef.current?.stop();
-    micRef.current = null;
-
-    dispatch({ type: "SET_VOICE_STATE", payload: { inVoiceChannel: false, isMuted: false, isDeafened: false, isScreenSharing: false, voiceRoomId: null, voiceChannelId: null, voiceChannelName: null, voicePublisherState: "closed" } });
-    // Cleared so a refresh on this device does not auto-rejoin and take the
-    // session straight back off whichever device is holding it.
-    try { sessionStorage.removeItem("voiceSession"); } catch {}
-  }, [dispatch, cleanupScreenRef]);
-
-  const leaveVoice = useCallback(async () => {
-    // Read before the teardown, which clears the voice state: afterwards there
-    // is no call left to name the room it was in. The room on screen is not a
-    // stand-in — leaving from another room announced the departure there, and
-    // the people actually in the call went on seeing someone who had gone.
-    const roomId = voiceRoomIdRef.current || currentRoomRef.current;
-    const channelId = voiceChannelIdRef.current;
-    await teardownLocalVoice();
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      const leaveMsg: any = { type: "voice_leave", room_id: roomId };
-      if (channelId) leaveMsg.channel_id = channelId;
-      wsRef.current.send(JSON.stringify(leaveMsg));
-    }
-    await loadVoiceMembers();
-  }, [teardownLocalVoice, loadVoiceMembers]);
-
-  // ─── Mute ─────────────────────────────────────────────────────────────────
-  // The pack of the room this call belongs to, so the effects match the server
-  // being talked on rather than whichever room is on screen.
-  //
-  // Held in a ref because the PTT handlers below are bound once: adding it to
-  // their dependencies would rebind the keyboard listeners every time any room
-  // updated, and reading it through a stale closure would play the previous
-  // room's sounds after switching calls.
-  const roomSoundsRef = useRef<SoundPack | undefined>(undefined);
-  roomSoundsRef.current = state.roomInfoMap[state.voiceRoomId ?? state.currentRoomId ?? ""]
-    ?.sounds as SoundPack | undefined;
-
-  // Every `voice_mute` below names the room the *call* is in, not the one on
-  // screen. They are not the same the moment someone browses elsewhere while
-  // still in a call, and the room is what the broadcast is addressed to — so
-  // naming the visible one sent the mute to a room the other end was not in,
-  // and the mic icon beside their name never moved.
-  const toggleMute = useCallback(() => {
-    if (!micRef.current) return;
-    const newMuted = !state.isMuted;
-    micRef.current.setEnabled(!newMuted);
-    isMutedRef.current = newMuted;
-    dispatch({ type: "SET_VOICE_STATE", payload: { isMuted: newMuted } });
-    persistVoiceSession({ muted: newMuted });
-    playSound(newMuted ? "mute" : "unmute", roomSoundsRef.current);
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "voice_mute", room_id: voiceRoomIdRef.current || currentRoomRef.current, channel_id: voiceChannelIdRef.current || undefined, muted: newMuted }));
-    }
-  }, [state.isMuted, dispatch]);
+  const joinVoice = useCallback(
+    (channelId?: string, restore?: VoiceRestoreState) => engine.join(channelId, restore),
+    [engine],
+  );
+  const leaveVoice = useCallback(() => engine.leave(), [engine]);
+  const releaseVoice = useCallback(() => engine.release(), [engine]);
+  const toggleMute = useCallback(() => engine.toggleMute(), [engine]);
+  const toggleDeafen = useCallback(() => engine.toggleDeafen(), [engine]);
+  const toggleInputMode = useCallback(() => engine.toggleInputMode(), [engine]);
+  const setUserVolume = useCallback((userId: string, vol: number) => engine.setUserVolume(userId, vol), [engine]);
 
   // ─── PTT ──────────────────────────────────────────────────────────────────
-  const toggleInputMode = useCallback(() => {
-    const newMode = state.voiceInputMode === "open" ? "ptt" : "open";
-    // The toolbar and the settings dialog are one switch: remembered, and
-    // applied from here whichever was used.
-    if (getVoiceSettings().inputMode !== newMode) updateVoiceSettings({ inputMode: newMode });
-    if (newMode === "ptt" && micRef.current) {
-      micRef.current.setEnabled(false);
-      dispatch({ type: "SET_VOICE_STATE", payload: { voiceInputMode: "ptt", isMuted: true } });
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "voice_mute", room_id: voiceRoomIdRef.current || currentRoomRef.current, channel_id: voiceChannelIdRef.current || undefined, muted: true }));
-      }
-    } else {
-      micRef.current?.setEnabled(true);
-      dispatch({ type: "SET_VOICE_STATE", payload: { voiceInputMode: "open", isMuted: false } });
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "voice_mute", room_id: voiceRoomIdRef.current || currentRoomRef.current, channel_id: voiceChannelIdRef.current || undefined, muted: false }));
-      }
-    }
-  }, [state.voiceInputMode, dispatch]);
-
   // The dialog's switch, or a call joined with push-to-talk remembered.
   const { inputMode } = settings;
   useEffect(() => {
-    if (state.inVoiceChannel && inputMode !== state.voiceInputMode) toggleInputMode();
-  }, [state.inVoiceChannel, inputMode, state.voiceInputMode, toggleInputMode]);
+    if (state.inVoiceChannel && inputMode !== state.voiceInputMode) engine.toggleInputMode();
+  }, [engine, state.inVoiceChannel, inputMode, state.voiceInputMode]);
 
   // PTT key handling
   useEffect(() => {
     if (!state.inVoiceChannel || state.voiceInputMode !== "ptt") return;
-    let transmitting = false;
-    const setTransmitting = (on: boolean) => {
-      if (on === transmitting) return;
-      transmitting = on;
-      micRef.current?.setEnabled(on);
-      dispatch({ type: "SET_VOICE_STATE", payload: { isMuted: !on } });
-      playSound(on ? "unmute" : "mute", roomSoundsRef.current);
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "voice_mute", room_id: voiceRoomIdRef.current || currentRoomRef.current, channel_id: voiceChannelIdRef.current || undefined, muted: !on }));
-      }
-    };
+    const setTransmitting = (on: boolean) => engine.setTransmitting(on);
 
     // The desktop app watches its key system-wide, so it works while a game
     // has focus; a browser only sees keys while this page does.
@@ -851,54 +161,22 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", blur);
     };
-  }, [state.inVoiceChannel, state.voiceInputMode, dispatch]);
+  }, [engine, state.inVoiceChannel, state.voiceInputMode]);
 
-  // ─── Volume control ───────────────────────────────────────────────────────
-  const setUserVolume = useCallback((userId: string, vol: number) => {
-    voiceUserVolumesRef.current[userId] = vol;
-    // Only takes effect now if they currently hold a slot; otherwise it is
-    // waiting for them in voiceUserVolumesRef when they next occupy one.
-    for (const [slot, occupant] of voiceSlotUsersRef.current) {
-      if (occupant === userId) applySlotGain(slot);
-    }
-  }, []);
-
-  // ─── Deafen ───────────────────────────────────────────────────────────────
-  const toggleDeafen = useCallback(() => {
-    const newDeafened = !state.isDeafened;
-    // Disable the outgoing mic track when deafening so others can't hear the user.
-    // When undeafening, only re-enable it if the user isn't separately muted.
-    micRef.current?.setEnabled(newDeafened ? false : !state.isMuted);
-    // Set before the gains are recomputed: applySlotGain reads this ref, and a
-    // slot map arriving before the next render would otherwise be built at full
-    // volume while the user is deafened.
-    isDeafenedRef.current = newDeafened;
-    voiceSlotsRef.current.forEach((slot) => applySlotGain(slot));
-    persistVoiceSession({ deafened: newDeafened });
-    dispatch({ type: "SET_VOICE_STATE", payload: { isDeafened: newDeafened } });
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: "voice_deafen",
-        room_id: voiceRoomIdRef.current || currentRoomRef.current,
-        channel_id: voiceChannelIdRef.current || undefined,
-        deafened: newDeafened,
-      }));
-    }
-  }, [state.isDeafened, state.isMuted, dispatch]);
-
-  joinVoiceRef.current = joinVoice;
-  leaveVoiceRef.current = leaveVoice;
-  releaseVoiceRef.current = teardownLocalVoice;
+  // For connection stats and speaking detection.
+  const [refs] = useState(() => ({
+    micRef: liveRef<LocalMic | null>(() => engine.connections.mic),
+    voicePublisherPcRef: liveRef<VoicePeer | null>(() => engine.connections.publisher),
+    voiceSubscriberPcRef: liveRef<VoicePeer | null>(() => engine.connections.subscriber),
+  }));
 
   return {
-    micRef,
-    voicePublisherPcRef,
-    voiceSubscriberPcRef,
+    ...refs,
     joinVoice,
     leaveVoice,
     /** Drop the local half of a call without announcing a leave — for when the
      *  session is already gone on the server's side. */
-    releaseVoice: teardownLocalVoice,
+    releaseVoice,
     toggleMute,
     toggleDeafen,
     toggleInputMode,

@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { reducer } from "../../store/reducer";
 import { initialState, type Action, type AppState } from "../../store/types";
 import { VOICE_SLOT_COUNT } from "../../webrtc";
 import { VoiceEngine } from "../engine";
 import type { LocalMic, VoiceMediaBackend, VoicePeer } from "../media";
+import { DEFAULT_VOICE_SETTINGS, updateVoiceSettings } from "../settings";
 
 // A peer that records what the engine does with it.
 function fakePeer() {
@@ -37,7 +38,7 @@ function fakePeer() {
   return peer;
 }
 
-function setup(state: Partial<AppState> = {}) {
+function setup(state: Partial<AppState> = {}, options: { fallback?: VoiceMediaBackend } = {}) {
   let current: AppState = {
     ...initialState,
     userId: "me",
@@ -54,7 +55,7 @@ function setup(state: Partial<AppState> = {}) {
     attachTo: () => {},
     setEnabled: (on) => void (mic.enabled = on),
     isSpeaking: () => false,
-    update: async () => {},
+    update: vi.fn(async () => {}),
     stop: () => void (mic.stopped = true),
   };
   const backend = {
@@ -69,13 +70,14 @@ function setup(state: Partial<AppState> = {}) {
     attachSlot: () => {},
     setSlotGain: (slot: number, gain: number) => void gains.set(slot, gain),
     setSlotPosition: () => {},
-    setListenerPosition: () => {},
-    setOutput: () => {},
+    setListenerPosition: vi.fn(),
+    setOutput: vi.fn(),
     closeGraph: () => {},
     listDevices: async () => ({ inputs: [], outputs: [] }),
     onDevicesChanged: () => () => {},
     startMicTest: async () => ({ setMonitoring: async () => {}, setGain: () => {}, stop: () => {} }),
   } satisfies VoiceMediaBackend;
+  const selectBackend = vi.fn((): VoiceMediaBackend => backend);
   const notices = { reconnecting: vi.fn(), recovered: vi.fn(), failed: vi.fn(), info: vi.fn(), error: vi.fn() };
   const engine = new VoiceEngine({
     dispatch: (action: Action) => {
@@ -85,11 +87,30 @@ function setup(state: Partial<AppState> = {}) {
     getState: () => current,
     socket: () => socket,
     loadVoiceMembers: async () => {},
-    selectBackend: () => backend,
+    selectBackend,
+    fallbackBackend: options.fallback,
     notices,
   });
-  return { engine, sent, peers, gains, mic, notices, state: () => current };
+  return {
+    engine,
+    backend,
+    selectBackend,
+    sent,
+    peers,
+    gains,
+    mic,
+    localMic,
+    notices,
+    state: () => current,
+    /** Something else in the app changed the store. */
+    change(patch: Partial<AppState>) {
+      current = { ...current, ...patch };
+      engine.sync();
+    },
+  };
 }
+
+afterEach(() => updateVoiceSettings(DEFAULT_VOICE_SETTINGS));
 
 describe("VoiceEngine", () => {
   it("joins with a publisher and a subscription of fixed slots", async () => {
@@ -193,5 +214,59 @@ describe("VoiceEngine", () => {
     expect(t.state().inVoiceChannel).toBe(false);
     expect(t.sent.length).toBe(before);
     expect(t.notices.info).toHaveBeenCalled();
+  });
+
+  it("chooses the media stack when a call starts, not before", async () => {
+    // Standing in for the browser stack, which an unused engine may touch.
+    const fallback = { kind: "browser", setListenerPosition: () => {}, closeGraph: () => {} } as unknown as VoiceMediaBackend;
+    const t = setup({}, { fallback });
+    expect(t.selectBackend).not.toHaveBeenCalled();
+    await t.engine.join("voice1");
+    expect(t.selectBackend).toHaveBeenCalledTimes(1);
+    expect(t.peers).toHaveLength(2);
+  });
+
+  it("applies a settings change only to what it changed", async () => {
+    const t = setup();
+    await t.engine.join("voice1");
+    expect(t.backend.setOutput).toHaveBeenCalledTimes(1);
+
+    // An output level is a gain on playout; reopening the mic for it would
+    // cut the person off mid-sentence.
+    updateVoiceSettings({ outputVolume: 50 });
+    t.engine.applySettings();
+    expect(t.localMic.update).not.toHaveBeenCalled();
+    expect(t.backend.setOutput).toHaveBeenLastCalledWith({ deviceId: "default", volume: 0.5 });
+
+    updateVoiceSettings({ inputDeviceId: "usb" });
+    t.engine.applySettings();
+    expect(t.localMic.update).toHaveBeenCalledTimes(1);
+    expect(t.localMic.update).toHaveBeenLastCalledWith(expect.objectContaining({ deviceId: "usb" }));
+    expect(t.backend.setOutput).toHaveBeenCalledTimes(2);
+
+    // Push-to-talk is a setting too, and touches neither.
+    updateVoiceSettings({ inputMode: "ptt" });
+    t.engine.applySettings();
+    expect(t.localMic.update).toHaveBeenCalledTimes(1);
+    expect(t.backend.setOutput).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-points the listener when the member list is reloaded with nobody moved", async () => {
+    const member = { userId: "me", muted: false, deafened: false, screen_sharing: false, webcam_sharing: false, x: 0.2, y: 0.8 };
+    const t = setup({
+      channels: [{ channel_id: "voice1", name: "Floor", channel_type: "spatial" } as AppState["channels"][number]],
+    });
+    await t.engine.join("voice1");
+    t.change({ voiceChannelMembers: { voice1: [member] } });
+    const calls = t.backend.setListenerPosition.mock.calls.length;
+    expect(t.backend.setListenerPosition).toHaveBeenLastCalledWith(expect.objectContaining({ x: expect.any(Number) }));
+
+    // The graph may not have existed for that one; a reload is the next chance.
+    t.change({ voiceChannelMembers: { voice1: [{ ...member }] } });
+    expect(t.backend.setListenerPosition.mock.calls.length).toBe(calls + 1);
+
+    // Nothing replaced: nothing to do.
+    t.change({ isMuted: false });
+    expect(t.backend.setListenerPosition.mock.calls.length).toBe(calls + 1);
   });
 });

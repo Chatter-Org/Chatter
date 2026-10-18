@@ -58,7 +58,7 @@ FCM push notifications are deliberately **last**: everything else first.
 
 ### Voice and video
 - [x] Shared `VoiceEngine` in core (`packages/core/src/voice/engine.ts`), ported from `useWebRTCVoice`, on a `react-native-webrtc` backend (`src/voice/nativeBackend.ts`)
-- [ ] **Web:** `useWebRTCVoice` adopts `VoiceEngine`, so both clients share one call implementation (its own reviewable change)
+- [x] **Web:** `useWebRTCVoice` adopts `VoiceEngine`, so web, desktop and mobile share one call implementation
 - [x] Join/leave, mute/deafen, slots, per-person volume, speaking rings, rejoin after a dropped socket
 - [ ] Push-to-talk button (the engine has `setTransmitting`; needs a hold-to-talk control)
 - [x] Calls keep running in the background: foreground service with Mute/Leave in its notification, wake and Wi-Fi locks (`modules/chatter-call`)
