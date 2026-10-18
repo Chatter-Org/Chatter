@@ -1,7 +1,8 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Pressable, TextInput, View, type ScrollViewProps } from "react-native";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
-import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
+import { KeyboardChatScrollView, useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { ArrowDown, SendHorizontal, X } from "lucide-react-native";
@@ -13,6 +14,7 @@ import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { MessageRow } from "./MessageRow";
 import { MessageActions } from "./MessageActions";
 import { Composer } from "./Composer";
+import { CallBar } from "./CallBar";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { useTheme } from "@/theme/ThemeProvider";
@@ -29,6 +31,13 @@ export function ChatView() {
   const state = useChatter();
   const actions = useChatterActions();
   const insets = useSafeAreaInsets();
+  const inCall = state.inVoiceChannel;
+  const [callBarHeight, setCallBarHeight] = useState(0);
+  const keyboard = useReanimatedKeyboardAnimation();
+  const below = inCall ? callBarHeight : insets.bottom;
+  const composerLift = useAnimatedStyle(() => ({
+    transform: [{ translateY: Math.min(0, keyboard.height.value + below) }],
+  }));
   const listRef = useRef<FlashListRef<Row>>(null);
   const [replyTo, setReplyTo] = useState<MatrixMessage | null>(null);
   const [acting, setActing] = useState<MatrixMessage | null>(null);
@@ -169,16 +178,20 @@ export function ChatView() {
           <Icon as={ArrowDown} tone="secondary-foreground" size={17} />
         </Pressable>
       )}
-      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }}>
+      {/* The composer rides the keyboard; the call bar under it stays put, so
+          the keyboard's lift is measured from the bar's top. Never lower than
+          its resting place: a floating keyboard reports almost no height. */}
+      <Animated.View style={composerLift}>
         <TypingLine names={state.typingUsers.filter((u) => u !== state.userId).map(nameOf)} />
         <Composer
           key={`${roomId}|${channelId ?? ""}`}
           replyTo={replyTo}
           replyName={replyTo ? nameOf(replyTo.sender) : undefined}
           onClearReply={() => setReplyTo(null)}
-          bottomInset={insets.bottom}
+          bottomInset={inCall ? 0 : insets.bottom}
         />
-      </KeyboardStickyView>
+      </Animated.View>
+      <CallBar bottomInset={insets.bottom} onHeight={setCallBarHeight} />
       <MessageActions message={acting} onClose={() => setActing(null)} onReply={setReplyTo} />
     </View>
   );

@@ -21,6 +21,7 @@ import { initialState, type AppState } from "@chatter/core/store/types";
 import { createWsMessageHandler } from "@chatter/core/store/wsHandler";
 import { decideResumeAction } from "@chatter/core/wsResume";
 import { VoiceEngine } from "@chatter/core/voice/engine";
+import type { VoicePeer } from "@chatter/core/voice/media";
 import { decideVoiceRejoin } from "@chatter/core/voice/rejoin";
 import { subscribeVoiceSettings } from "@chatter/core/voice/settings";
 import { showToast } from "@/platform/toast";
@@ -68,6 +69,8 @@ export interface ChatterActions extends StoreActions {
     setUserVolume(userId: string, volume: number): void;
     /** Whether this device's microphone is picking up speech, for the ring. */
     isSpeaking(): boolean;
+    /** The call's sending connection, for its quality. */
+    peer(): VoicePeer | null;
   };
 }
 
@@ -391,6 +394,7 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         setTransmitting: (on) => voice.setTransmitting(on),
         setUserVolume: (userId, volume) => voice.setUserVolume(userId, volume),
         isSpeaking: () => voice.connections.mic?.isSpeaking() ?? false,
+        peer: () => voice.connections.publisher,
       },
       async signIn(username, password, totpCode) {
         const data = await apiLogin(username, password, totpCode);

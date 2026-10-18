@@ -6,7 +6,7 @@ import { scheduleOnRN } from "react-native-worklets";
 import * as Haptics from "expo-haptics";
 import {
   Bluetooth,
-  ChevronDown,
+  ChevronUp,
   HeadphoneOff,
   Headphones,
   Hand,
@@ -30,20 +30,25 @@ import { Sheet } from "@/ui/Sheet";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { useTheme } from "@/theme/ThemeProvider";
+import Svg, { Rect } from "react-native-svg";
+import type { ConnectionQuality } from "@chatter/core/voice/quality";
+import { useCallQuality } from "@/voice/quality";
 
 /**
  * The call, on a phone: the web's MobileCallBar and its sheet, natively.
  *
- * A strip under the header that is there whatever channel is open — the room
- * and channel, how long the call has run, and the three controls a thumb
- * wants without looking (mute, deafen, leave). Tapping the strip brings up
- * the sheet behind it: everyone in the call, who is talking, a volume for
- * each, and the controls again with their words underneath.
+ * A strip along the bottom, under the composer as on the web, there whatever
+ * channel is open: how good the connection is, the channel and how long the
+ * call has run, and the three controls a thumb wants without looking (mute,
+ * deafen, leave). Tapping the strip brings up the sheet behind it: everyone
+ * in the call, who is talking, a volume for each, and the controls again
+ * with their words underneath.
  */
-export function CallBar() {
+export function CallBar({ bottomInset = 0, onHeight }: { bottomInset?: number; onHeight?(height: number): void }) {
   const state = useChatter();
   const { voice, selectRoom, selectChannel } = useChatterActions();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const quality = useCallQuality(state.inVoiceChannel, voice.peer);
 
   if (!state.inVoiceChannel) return null;
   const room = state.voiceRoomId ? state.roomInfoMap[state.voiceRoomId] : undefined;
@@ -60,24 +65,28 @@ export function CallBar() {
 
   return (
     <>
-      <View className="flex-row items-center gap-1 border-b border-border bg-card px-2 py-1.5">
+      <View
+        className="flex-row items-center gap-1 border-t border-border bg-card px-2 pt-1.5"
+        style={{ paddingBottom: Math.max(6, bottomInset) }}
+        onLayout={(e) => onHeight?.(e.nativeEvent.layout.height)}
+      >
         <Pressable
           onPress={() => setSheetOpen(true)}
           accessibilityRole="button"
           accessibilityLabel="Call details"
           className="min-h-11 flex-1 flex-row items-center gap-2 rounded-md px-2 active:bg-accent"
         >
-          <SignalDot tone={status.tone} />
+          <SignalBars quality={quality} />
           <View className="min-w-0 flex-1">
-            <T numberOfLines={1} className={cn("font-mono-medium text-sm", STATUS_TEXT[status.tone])}>
+            <T numberOfLines={1} className="text-sm font-medium text-success">
               {state.voiceChannelName ?? "Voice"}
             </T>
-            <T numberOfLines={1} className="text-[11px] text-muted-foreground">
+            <T numberOfLines={1} className={cn("text-3xs", status.connected ? "text-muted-foreground" : STATUS_TEXT[status.tone])}>
               {status.connected && since ? <CallTimer since={since} /> : status.label}
               {room?.name ? ` · ${room.name}` : ""}
             </T>
           </View>
-          <Icon as={ChevronDown} size={16} />
+          <Icon as={ChevronUp} size={16} />
         </Pressable>
         {state.voiceInputMode === "ptt" ? (
           <TalkButton disabled={state.isDeafened} talking={!state.isMuted} onTalk={voice.setTransmitting} />
@@ -98,7 +107,7 @@ export function CallBar() {
         />
         <BarButton icon={PhoneOff} label="Leave call" hangup onPress={() => void voice.leave()} />
       </View>
-      <CallSheet open={sheetOpen} onClose={() => setSheetOpen(false)} onGoToCall={goToCall} />
+      <CallSheet open={sheetOpen} onClose={() => setSheetOpen(false)} onGoToCall={goToCall} quality={quality} />
     </>
   );
 }
@@ -116,15 +125,21 @@ const STATUS_TEXT: Record<StatusTone, string> = {
   warning: "text-warning",
   destructive: "text-destructive",
 };
-const STATUS_DOT: Record<StatusTone, string> = {
-  success: "bg-success",
-  warning: "bg-warning",
-  destructive: "bg-destructive",
-};
 
-function SignalDot({ tone }: { tone: StatusTone }) {
-  return <View className={cn("h-2.5 w-2.5 rounded-full", STATUS_DOT[tone])} />;
+/** The web's four signal bars, lit to the measured quality. */
+function SignalBars({ quality }: { quality: ConnectionQuality }) {
+  const { colors } = useTheme();
+  const color = [colors["muted-foreground"], colors.destructive, "#ff8904", colors.success, colors.success][quality];
+  return (
+    <Svg width={14} height={12} viewBox="0 0 16 14">
+      <Rect x={0} y={10} width={3} height={4} rx={0.5} fill={color} opacity={quality >= 1 ? 1 : 0.3} />
+      <Rect x={4.5} y={7} width={3} height={7} rx={0.5} fill={color} opacity={quality >= 2 ? 1 : 0.3} />
+      <Rect x={9} y={3.5} width={3} height={10.5} rx={0.5} fill={color} opacity={quality >= 3 ? 1 : 0.3} />
+      <Rect x={13} y={0} width={3} height={14} rx={0.5} fill={color} opacity={quality >= 4 ? 1 : 0.3} />
+    </Svg>
+  );
 }
+
 
 function CallTimer({ since }: { since: number }) {
   const [now, setNow] = useState(Date.now);
@@ -200,7 +215,17 @@ function TalkButton({ talking, disabled, onTalk }: { talking: boolean; disabled?
 
 // ─── The sheet ───────────────────────────────────────────────────────────────
 
-function CallSheet({ open, onClose, onGoToCall }: { open: boolean; onClose(): void; onGoToCall(): void }) {
+function CallSheet({
+  open,
+  onClose,
+  onGoToCall,
+  quality,
+}: {
+  open: boolean;
+  onClose(): void;
+  onGoToCall(): void;
+  quality: ConnectionQuality;
+}) {
   const state = useChatter();
   const { voice } = useChatterActions();
   const { height } = useWindowDimensions();
@@ -237,7 +262,7 @@ function CallSheet({ open, onClose, onGoToCall }: { open: boolean; onClose(): vo
         accessibilityLabel="Go to the call's channel"
         className="flex-row items-center gap-2 px-4 pb-3"
       >
-        <SignalDot tone={callStatus(state.voicePublisherState).tone} />
+        <SignalBars quality={quality} />
         <View className="min-w-0 flex-1">
           <T numberOfLines={1} className="font-mono-bold text-sm text-success">
             {state.voiceChannelName ?? "Voice"}
