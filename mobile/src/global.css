@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@import "uniwind";
+@import "./theme/themes.css";
+
+/* Same names as client/src/index.css `@theme inline`, so a className written
+   for the web (rounded-lg, font-mono) means the same thing here. The colours
+   come from the active theme (src/theme/themes.css). */
+@theme {
+  --font-sans: "JetBrainsMono_400Regular";
+  --font-mono: "JetBrainsMono_400Regular";
+  /* React Native picks a weight by family name, not font-weight, so each
+     weight is its own family: font-mono-medium, font-mono-bold. */
+  --font-mono-medium: "JetBrainsMono_500Medium";
+  --font-mono-bold: "JetBrainsMono_700Bold";
+  /* The web's --radius is 0.875rem; sm/md/lg/xl step around it as there. */
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 22px;
+  --radius-3xl: 26px;
+  --radius-4xl: 30px;
+}
