@@ -38,6 +38,14 @@ import {
   apiSetNotificationLevel,
   apiSetResumePoint,
   apiSync,
+  apiGetThreadMessages,
+  apiSendThreadMessage,
+  apiSetThreadName,
+  apiDeleteThread,
+  apiPinMessage,
+  apiUnpinMessage,
+  apiSearchMessages,
+  PAGE_SIZE,
   type MatrixMessage,
   type RoomInfo,
 } from "../api";
@@ -717,6 +725,251 @@ export function createStoreActions(ctx: StoreContext) {
     }, TYPING_THROTTLE_MS);
   };
 
+
+  // ─── Threads ─────────────────────────────────────────────────────────────
+
+  const openThread = async (eventId: string) => {
+    if (!getState().currentRoomId) return;
+    const roomId = getState().currentRoomId!;
+    const data = await apiGetThreadMessages(roomId, eventId);
+    dispatch({
+      type: "OPEN_THREAD",
+      payload: {
+        eventId,
+        root: data.root,
+        messages: data.messages,
+        hasMore: data.has_more,
+        posters: data.posters ?? [],
+      },
+    });
+    // Opening a thread is reading it, so its unread mention badge is dismissed
+    // on the server too — the reducer drops it for this session, the marker is
+    // what keeps it dropped after a reload. A thread has its own marker because
+    // its replies are not in the channel's timeline, so reading that channel
+    // never showed anyone a reply and must not dismiss one.
+    void apiMarkRead(roomId, undefined, eventId).catch(() => {});
+    // Pins are a nicety on top of the thread, so a refusal leaves it open
+    // with none rather than failing the open. SET_THREAD_PINS drops an answer
+    // for a thread that has since been swapped for another.
+    try {
+      const page = await apiGetPins(roomId, undefined, 0, PAGE_SIZE, eventId);
+      dispatch({ type: "SET_THREAD_PINS", payload: { threadId: eventId, pins: page.items } });
+    } catch {
+      // Nothing to show.
+    }
+  };
+
+  /** Prepend the page of replies before the oldest one held, as scrolling a
+   *  channel does. */
+  const loadOlderThreadMessages = async () => {
+    const cur = getState();
+    const roomId = cur.currentRoomId;
+    const threadId = cur.activeThreadEventId;
+    if (!roomId || !threadId || cur.threadLoadingOlder || !cur.threadHasMore) return;
+    const oldest = cur.threadMessages[0];
+    if (!oldest) return;
+    dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: true } });
+    try {
+      const data = await apiGetThreadMessages(roomId, threadId, {
+        ts: oldest.origin_server_ts,
+        eventId: oldest.event_id,
+      });
+      dispatch({
+        type: "PREPEND_THREAD_MESSAGES",
+        payload: { threadId, messages: data.messages, hasMore: data.has_more },
+      });
+    } catch {
+      dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: false } });
+    }
+  };
+
+  /** Page back through the open thread until `eventId` is loaded, so a pin or
+   *  a quoted reply older than what is on screen can still be reached.
+   *  Answers whether it was found. Keeps its own cursor rather than rereading
+   *  the state, which only catches up after a render. */
+  const revealThreadMessage = async (eventId: string) => {
+    const cur = getState();
+    const roomId = cur.currentRoomId;
+    const threadId = cur.activeThreadEventId;
+    if (!roomId || !threadId) return false;
+    if (cur.threadMessages.some((m) => m.event_id === eventId)) return true;
+    let oldest = cur.threadMessages[0];
+    let hasMore = cur.threadHasMore;
+    while (hasMore && oldest) {
+      dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: true } });
+      let data;
+      try {
+        data = await apiGetThreadMessages(
+          roomId,
+          threadId,
+          { ts: oldest.origin_server_ts, eventId: oldest.event_id },
+          100,
+        );
+      } catch {
+        dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: false } });
+        return false;
+      }
+      dispatch({
+        type: "PREPEND_THREAD_MESSAGES",
+        payload: { threadId, messages: data.messages, hasMore: data.has_more },
+      });
+      if (data.messages.some((m) => m.event_id === eventId)) return true;
+      hasMore = data.has_more;
+      oldest = data.messages[0];
+    }
+    return false;
+  };
+
+  const closeThread = () => {
+    dispatch({ type: "CLOSE_THREAD" });
+  };
+
+  const sendThreadMessage = async (body: string) => {
+    const cur = getState();
+    if (!cur.currentRoomId || !cur.activeThreadEventId) return;
+    await apiSendThreadMessage(
+      cur.currentRoomId,
+      cur.activeThreadEventId,
+      body,
+      cur.threadReplyingTo?.event_id,
+    );
+    dispatch({ type: "SET_THREAD_REPLYING_TO", payload: null });
+  };
+
+  const setThreadName = async (name: string) => {
+    const cur = getState();
+    if (!cur.currentRoomId || !cur.activeThreadEventId) return;
+    await apiSetThreadName(cur.currentRoomId, cur.activeThreadEventId, name);
+    dispatch({
+      type: "SET_THREAD_NAME",
+      payload: { eventId: cur.activeThreadEventId, name },
+    });
+  };
+
+  const deleteThread = async () => {
+    const cur = getState();
+    if (!cur.currentRoomId || !cur.activeThreadEventId) return;
+    await apiDeleteThread(cur.currentRoomId, cur.activeThreadEventId);
+    dispatch({ type: "DELETE_THREAD", payload: cur.activeThreadEventId });
+  };
+
+  // ─── Pins ────────────────────────────────────────────────────────────────
+
+  const loadPins = async () => {
+    const cur = getState();
+    if (!cur.currentRoomId) return;
+    try {
+      const page = await apiGetPins(cur.currentRoomId, cur.currentChannelId || undefined);
+      dispatch({
+        type: "SET_PINNED_MESSAGES",
+        payload: { pins: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset },
+      });
+    } catch {
+      dispatch({
+        type: "SET_PINNED_MESSAGES",
+        payload: { pins: [], hasMore: false, nextOffset: 0 },
+      });
+    }
+  };
+
+  const loadMorePins = async () => {
+    const cur = getState();
+    if (!cur.currentRoomId || !cur.pinsHasMore || cur.loadingMorePins) return;
+    dispatch({ type: "SET_LOADING_MORE_PINS", payload: true });
+    try {
+      const page = await apiGetPins(
+        cur.currentRoomId,
+        cur.currentChannelId || undefined,
+        cur.pinsNextOffset,
+      );
+      dispatch({
+        type: "APPEND_PINNED_MESSAGES",
+        payload: { pins: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset },
+      });
+    } catch {
+      dispatch({ type: "SET_LOADING_MORE_PINS", payload: false });
+    }
+  };
+
+  const pinMessage = async (eventId: string) => {
+    const cur = getState();
+    if (!cur.currentRoomId) return;
+    // The server broadcasts m.room.pinned, which is what updates the list.
+    await apiPinMessage(cur.currentRoomId, eventId);
+  };
+
+  const unpinMessage = async (eventId: string) => {
+    const cur = getState();
+    if (!cur.currentRoomId) return;
+    await apiUnpinMessage(cur.currentRoomId, eventId);
+  };
+
+  // ─── Search ──────────────────────────────────────────────────────────────
+
+  /** Where a search looks: this channel, the room's channel-less messages
+   *  (a DM), or the whole room. */
+  const searchScope = (cur: AppState) => {
+    let channelId: string | undefined;
+    let noChannelOnly: boolean | undefined;
+    if (cur.search.thisChannel) {
+      if (cur.currentChannelId) channelId = cur.currentChannelId;
+      else noChannelOnly = true;
+    }
+    return { channelId, noChannelOnly };
+  };
+
+  /**
+   * Run the search the store describes (`state.search`), first page. The apps
+   * call it a beat after the query or its filters change — the debounce is
+   * theirs, the request is this.
+   */
+  const runSearch = async () => {
+    const cur = getState();
+    const { open, query, filter, fileTypeFilter } = cur.search;
+    const roomId = cur.currentRoomId;
+    if (!open || !roomId) return;
+    const { channelId, noChannelOnly } = searchScope(cur);
+    if (filter !== "thread" && filter !== "file" && !query.trim()) {
+      dispatch({ type: "SET_SEARCH", payload: { results: [], hasMore: false, nextOffset: 0 } });
+      return;
+    }
+    dispatch({ type: "SET_SEARCH", payload: { loading: true } });
+    try {
+      const page =
+        filter === "thread"
+          ? await apiGetRoomThreads(roomId, query.trim() || undefined, channelId, noChannelOnly)
+          : await apiSearchMessages(roomId, query.trim(), filter, fileTypeFilter, channelId, noChannelOnly);
+      dispatch({
+        type: "SET_SEARCH",
+        payload: { results: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset },
+      });
+    } catch {
+      dispatch({ type: "SET_SEARCH", payload: { results: [], hasMore: false, nextOffset: 0 } });
+    } finally {
+      dispatch({ type: "SET_SEARCH", payload: { loading: false } });
+    }
+  };
+
+  const loadMoreSearchResults = async () => {
+    const cur = getState();
+    const { open, query, filter, fileTypeFilter, hasMore, loadingMore, nextOffset } = cur.search;
+    if (!open || !cur.currentRoomId || !hasMore || loadingMore) return;
+    const { channelId, noChannelOnly } = searchScope(cur);
+    dispatch({ type: "SET_SEARCH", payload: { loadingMore: true } });
+    try {
+      const page =
+        filter === "thread"
+          ? await apiGetRoomThreads(cur.currentRoomId, query.trim() || undefined, channelId, noChannelOnly, nextOffset)
+          : await apiSearchMessages(cur.currentRoomId, query.trim(), filter, fileTypeFilter, channelId, noChannelOnly, nextOffset);
+      dispatch({
+        type: "APPEND_SEARCH_RESULTS",
+        payload: { results: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset },
+      });
+    } catch {
+      dispatch({ type: "SET_SEARCH", payload: { loadingMore: false } });
+    }
+  };
+
   return {
     loadRooms,
     loadUnreads,
@@ -736,6 +989,19 @@ export function createStoreActions(ctx: StoreContext) {
     loadOlderMessages,
     openMessage,
     clearPendingJump,
+    openThread,
+    loadOlderThreadMessages,
+    revealThreadMessage,
+    closeThread,
+    sendThreadMessage,
+    setThreadName,
+    deleteThread,
+    loadPins,
+    loadMorePins,
+    pinMessage,
+    unpinMessage,
+    runSearch,
+    loadMoreSearchResults,
     loadMessagesAround,
     selectChannel,
     sendMessage,

@@ -24,13 +24,9 @@ import {
   apiRegister,
   apiLogout,
   apiDeleteAccount,
-  apiMarkRead,
   apiCreateRoom,
   apiJoinRoom,
   apiLeaveRoom,
-  apiSearchMessages,
-  apiGetRoomThreads,
-  apiGetPins,
   apiCreateEvent,
   apiUpdateEvent,
   apiDeleteEvent,
@@ -42,8 +38,6 @@ import {
   type EventDraft,
   type PollDraft,
   type RsvpStatus,
-  apiPinMessage,
-  apiUnpinMessage,
   apiGetAllRooms,
   apiCreateDM,
   apiAddToDM,
@@ -69,10 +63,6 @@ import {
   apiBlockUser,
   apiUnblockUser,
   apiGetServerInfo,
-  apiGetThreadMessages,
-  apiSendThreadMessage,
-  apiSetThreadName,
-  apiDeleteThread,
   apiCreateChannel,
   apiUpdateChannel,
   apiDeleteChannel,
@@ -82,7 +72,6 @@ import {
   apiDeleteRole,
   apiGetAllMemberRoles,
   apiAssignMemberRoles,
-  PAGE_SIZE,
 } from "../api";
 import { clearMediaBlobs } from "@/lib/mediaBlobs";
 import { clearMessagePreviews } from "@/lib/messageLinks";
@@ -165,75 +154,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.currentRoomId]);
 
   // Debounced message-search execution (state lives in the store so the search
-  // panel and the provider share one source of truth).
+  // panel and the provider share one source of truth). The request itself is
+  // core's runSearch, shared with the mobile app; the debounce is ours.
   useEffect(() => {
-    const { open, query, filter, fileTypeFilter, thisChannel } = state.search;
-    if (!open || !state.currentRoomId) return;
-
-    let searchChannelId: string | undefined;
-    let searchNoChannelOnly: boolean | undefined;
-    if (thisChannel) {
-      if (state.currentChannelId) {
-        searchChannelId = state.currentChannelId;
-      } else {
-        searchNoChannelOnly = true;
-      }
-    }
-
-    if (filter === "thread") {
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-      searchTimerRef.current = setTimeout(async () => {
-        dispatch({ type: "SET_SEARCH", payload: { loading: true } });
-        try {
-          const page = await apiGetRoomThreads(
-            state.currentRoomId!,
-            query.trim() || undefined,
-            searchChannelId,
-            searchNoChannelOnly
-          );
-          dispatch({
-            type: "SET_SEARCH",
-            payload: { results: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset },
-          });
-        } catch {
-          dispatch({ type: "SET_SEARCH", payload: { results: [], hasMore: false, nextOffset: 0 } });
-        } finally {
-          dispatch({ type: "SET_SEARCH", payload: { loading: false } });
-        }
-      }, 300);
-      return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
-    }
-
-    if (filter !== "file" && !query.trim()) {
-      dispatch({ type: "SET_SEARCH", payload: { results: [], hasMore: false, nextOffset: 0 } });
-      return;
-    }
+    if (!state.search.open || !state.currentRoomId) return;
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(async () => {
-      dispatch({ type: "SET_SEARCH", payload: { loading: true } });
-      try {
-        const page = await apiSearchMessages(
-          state.currentRoomId!,
-          query.trim(),
-          filter,
-          fileTypeFilter,
-          searchChannelId,
-          searchNoChannelOnly
-        );
-        dispatch({
-          type: "SET_SEARCH",
-          payload: { results: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset },
-        });
-      } catch {
-        dispatch({ type: "SET_SEARCH", payload: { results: [], hasMore: false, nextOffset: 0 } });
-      } finally {
-        dispatch({ type: "SET_SEARCH", payload: { loading: false } });
-      }
-    }, 300);
+    searchTimerRef.current = setTimeout(() => void shared.runSearch(), 300);
     return () => {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     };
-  }, [state.search.open, state.search.query, state.search.filter, state.search.fileTypeFilter, state.search.thisChannel, state.currentRoomId, state.currentChannelId]);
+  }, [state.search.open, state.search.query, state.search.filter, state.search.fileTypeFilter, state.search.thisChannel, state.currentRoomId, state.currentChannelId, shared]);
 
   // Rehydrate session on mount via the HttpOnly refresh-token cookie.
   // No tokens are read from localStorage — the cookie is sent automatically
@@ -322,9 +252,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     Promise.resolve(),
   );
 
-  const handleWsMessage = useCallback(
+  // Made once for the provider's lifetime; it reads state through stateRef.
+  const [handleWsMessage] = useState(() =>
     createWsMessageHandler(dispatch, stateRef, typingTimeoutsRef, loadRoomsRef, loadPresenceRef),
-    []
   );
 
   /** False until the socket has connected once, so the first open is not
@@ -841,224 +771,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "UPDATE_POLL", payload: poll });
   }, []);
 
-  const loadPins = useCallback(async () => {
-    const cur = stateRef.current;
-    if (!cur.currentRoomId) return;
-    try {
-      const page = await apiGetPins(cur.currentRoomId, cur.currentChannelId || undefined);
-      dispatch({
-        type: "SET_PINNED_MESSAGES",
-        payload: { pins: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset },
-      });
-    } catch {
-      dispatch({
-        type: "SET_PINNED_MESSAGES",
-        payload: { pins: [], hasMore: false, nextOffset: 0 },
-      });
-    }
-  }, []);
+  const loadPins = shared.loadPins;
 
-  const loadMorePins = useCallback(async () => {
-    const cur = stateRef.current;
-    if (!cur.currentRoomId || !cur.pinsHasMore || cur.loadingMorePins) return;
-    dispatch({ type: "SET_LOADING_MORE_PINS", payload: true });
-    try {
-      const page = await apiGetPins(
-        cur.currentRoomId,
-        cur.currentChannelId || undefined,
-        cur.pinsNextOffset,
-      );
-      dispatch({
-        type: "APPEND_PINNED_MESSAGES",
-        payload: { pins: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset },
-      });
-    } catch {
-      dispatch({ type: "SET_LOADING_MORE_PINS", payload: false });
-    }
-  }, []);
+  const loadMorePins = shared.loadMorePins;
 
-  const loadMoreSearchResults = useCallback(async () => {
-    const cur = stateRef.current;
-    const { open, query, filter, fileTypeFilter, thisChannel, hasMore, loadingMore, nextOffset } =
-      cur.search;
-    if (!open || !cur.currentRoomId || !hasMore || loadingMore) return;
+  const loadMoreSearchResults = shared.loadMoreSearchResults;
 
-    let searchChannelId: string | undefined;
-    let searchNoChannelOnly: boolean | undefined;
-    if (thisChannel) {
-      if (cur.currentChannelId) {
-        searchChannelId = cur.currentChannelId;
-      } else {
-        searchNoChannelOnly = true;
-      }
-    }
+  const pinMessage = shared.pinMessage;
 
-    dispatch({ type: "SET_SEARCH", payload: { loadingMore: true } });
-    try {
-      const page =
-        filter === "thread"
-          ? await apiGetRoomThreads(
-              cur.currentRoomId,
-              query.trim() || undefined,
-              searchChannelId,
-              searchNoChannelOnly,
-              nextOffset,
-            )
-          : await apiSearchMessages(
-              cur.currentRoomId,
-              query.trim(),
-              filter,
-              fileTypeFilter,
-              searchChannelId,
-              searchNoChannelOnly,
-              nextOffset,
-            );
-      dispatch({
-        type: "APPEND_SEARCH_RESULTS",
-        payload: { results: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset },
-      });
-    } catch {
-      dispatch({ type: "SET_SEARCH", payload: { loadingMore: false } });
-    }
-  }, []);
+  const unpinMessage = shared.unpinMessage;
 
-  const pinMessage = useCallback(async (eventId: string) => {
-    const cur = stateRef.current;
-    if (!cur.currentRoomId) return;
-    // The server broadcasts m.room.pinned, which is what updates the list.
-    await apiPinMessage(cur.currentRoomId, eventId);
-  }, []);
-
-  const unpinMessage = useCallback(async (eventId: string) => {
-    const cur = stateRef.current;
-    if (!cur.currentRoomId) return;
-    await apiUnpinMessage(cur.currentRoomId, eventId);
-  }, []);
-
-  const openThread = useCallback(async (eventId: string) => {
-    if (!stateRef.current.currentRoomId) return;
-    const roomId = stateRef.current.currentRoomId;
-    const data = await apiGetThreadMessages(roomId, eventId);
-    dispatch({
-      type: "OPEN_THREAD",
-      payload: {
-        eventId,
-        root: data.root,
-        messages: data.messages,
-        hasMore: data.has_more,
-        posters: data.posters ?? [],
-      },
-    });
-    // Opening a thread is reading it, so its unread mention badge is dismissed
-    // on the server too — the reducer drops it for this session, the marker is
-    // what keeps it dropped after a reload. A thread has its own marker because
-    // its replies are not in the channel's timeline, so reading that channel
-    // never showed anyone a reply and must not dismiss one.
-    void apiMarkRead(roomId, undefined, eventId).catch(() => {});
-    // Pins are a nicety on top of the thread, so a refusal leaves it open
-    // with none rather than failing the open. SET_THREAD_PINS drops an answer
-    // for a thread that has since been swapped for another.
-    try {
-      const page = await apiGetPins(roomId, undefined, 0, PAGE_SIZE, eventId);
-      dispatch({ type: "SET_THREAD_PINS", payload: { threadId: eventId, pins: page.items } });
-    } catch {
-      // Nothing to show.
-    }
-  }, []);
+  const openThread = shared.openThread;
 
   /** Prepend the page of replies before the oldest one held, as scrolling a
    *  channel does. */
-  const loadOlderThreadMessages = useCallback(async () => {
-    const cur = stateRef.current;
-    const roomId = cur.currentRoomId;
-    const threadId = cur.activeThreadEventId;
-    if (!roomId || !threadId || cur.threadLoadingOlder || !cur.threadHasMore) return;
-    const oldest = cur.threadMessages[0];
-    if (!oldest) return;
-    dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: true } });
-    try {
-      const data = await apiGetThreadMessages(roomId, threadId, {
-        ts: oldest.origin_server_ts,
-        eventId: oldest.event_id,
-      });
-      dispatch({
-        type: "PREPEND_THREAD_MESSAGES",
-        payload: { threadId, messages: data.messages, hasMore: data.has_more },
-      });
-    } catch {
-      dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: false } });
-    }
-  }, []);
+  const loadOlderThreadMessages = shared.loadOlderThreadMessages;
 
   /** Page back through the open thread until `eventId` is loaded, so a pin or
    *  a quoted reply older than what is on screen can still be reached.
    *  Answers whether it was found. Keeps its own cursor rather than rereading
    *  `stateRef`, which only catches up after a render. */
-  const revealThreadMessage = useCallback(async (eventId: string) => {
-    const cur = stateRef.current;
-    const roomId = cur.currentRoomId;
-    const threadId = cur.activeThreadEventId;
-    if (!roomId || !threadId) return false;
-    if (cur.threadMessages.some((m) => m.event_id === eventId)) return true;
-    let oldest = cur.threadMessages[0];
-    let hasMore = cur.threadHasMore;
-    while (hasMore && oldest) {
-      dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: true } });
-      let data;
-      try {
-        data = await apiGetThreadMessages(
-          roomId,
-          threadId,
-          { ts: oldest.origin_server_ts, eventId: oldest.event_id },
-          100,
-        );
-      } catch {
-        dispatch({ type: "SET_THREAD_LOADING_OLDER", payload: { threadId, loading: false } });
-        return false;
-      }
-      dispatch({
-        type: "PREPEND_THREAD_MESSAGES",
-        payload: { threadId, messages: data.messages, hasMore: data.has_more },
-      });
-      if (data.messages.some((m) => m.event_id === eventId)) return true;
-      hasMore = data.has_more;
-      oldest = data.messages[0];
-    }
-    return false;
-  }, []);
+  const revealThreadMessage = shared.revealThreadMessage;
 
-  const closeThread = useCallback(() => {
-    dispatch({ type: "CLOSE_THREAD" });
-  }, []);
+  const closeThread = shared.closeThread;
 
-  const sendThreadMessage = useCallback(async (body: string) => {
-    const cur = stateRef.current;
-    if (!cur.currentRoomId || !cur.activeThreadEventId) return;
-    await apiSendThreadMessage(
-      cur.currentRoomId,
-      cur.activeThreadEventId,
-      body,
-      cur.threadReplyingTo?.event_id,
-    );
-    dispatch({ type: "SET_THREAD_REPLYING_TO", payload: null });
-  }, []);
+  const sendThreadMessage = shared.sendThreadMessage;
 
-  const setThreadName = useCallback(async (name: string) => {
-    const cur = stateRef.current;
-    if (!cur.currentRoomId || !cur.activeThreadEventId) return;
-    await apiSetThreadName(cur.currentRoomId, cur.activeThreadEventId, name);
-    dispatch({
-      type: "SET_THREAD_NAME",
-      payload: { eventId: cur.activeThreadEventId, name },
-    });
-  }, []);
+  const setThreadName = shared.setThreadName;
 
-  const deleteThread = useCallback(async () => {
-    const cur = stateRef.current;
-    if (!cur.currentRoomId || !cur.activeThreadEventId) return;
-    await apiDeleteThread(cur.currentRoomId, cur.activeThreadEventId);
-    dispatch({ type: "DELETE_THREAD", payload: cur.activeThreadEventId });
-  }, []);
+  const deleteThread = shared.deleteThread;
 
   const addReaction = shared.addReaction;
 
