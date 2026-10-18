@@ -183,6 +183,13 @@ export function createStoreActions(ctx: StoreContext) {
     void apiMarkRead(roomId, channelId).catch(() => {});
   };
 
+  /** Clear a channel's badge here, without waiting for the server: a
+   *  channel's own, or for a room without channels (a DM) its loose bucket. */
+  const clearUnread = (roomId: string, channelId?: string | null) => {
+    if (channelId) dispatch({ type: "CLEAR_CHANNEL_UNREAD", payload: channelId });
+    else dispatch({ type: "CLEAR_ROOM_UNREAD", payload: roomId });
+  };
+
   const loadNotificationSettings = async () => {
     try {
       const data = await apiGetNotificationSettings();
@@ -711,6 +718,7 @@ export function createStoreActions(ctx: StoreContext) {
     loadRooms,
     loadUnreads,
     markChannelRead,
+    clearUnread,
     loadNotificationSettings,
     setNotificationLevel,
     loadActiveThreads,

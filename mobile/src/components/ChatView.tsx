@@ -15,12 +15,16 @@ import { MessageRow } from "./MessageRow";
 import { MessageActions } from "./MessageActions";
 import { Composer } from "./Composer";
 import { CallBar } from "./CallBar";
+import { NewDivider, UnreadBanner, useNewDivider } from "./UnreadMarks";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { useTheme } from "@/theme/ThemeProvider";
 import { showToast } from "@/platform/toast";
 
-type Row = { kind: "day"; key: string; label: string } | { kind: "message"; key: string; message: MatrixMessage; grouped: boolean };
+type Row =
+  | { kind: "day"; key: string; label: string }
+  | { kind: "new"; key: string }
+  | { kind: "message"; key: string; message: MatrixMessage; grouped: boolean };
 
 const ChatScroll = forwardRef<any, ScrollViewProps>(function ChatScroll(props, ref) {
   return <KeyboardChatScrollView ref={ref} {...props} keyboardLiftBehavior="always" />;
@@ -47,6 +51,7 @@ export function ChatView() {
   const channelId = state.currentChannelId;
   const roomInfo = roomId ? state.roomInfoMap[roomId] : undefined;
 
+  const firstUnread = useNewDivider();
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     state.messages.forEach((message, i) => {
@@ -64,10 +69,18 @@ export function ChatView() {
           }),
         });
       }
-      out.push({ kind: "message", key: message.event_id, message, grouped: groupsWith(prev, message) && !startsNewDay(prev, message) });
+      const isFirstUnread = message.event_id === firstUnread;
+      if (isFirstUnread) out.push({ kind: "new", key: `new-${message.event_id}` });
+      out.push({
+        kind: "message",
+        key: message.event_id,
+        message,
+        // The line breaks the group: what follows it starts fresh.
+        grouped: groupsWith(prev, message) && !startsNewDay(prev, message) && !isFirstUnread,
+      });
     });
     return out;
-  }, [state.messages]);
+  }, [state.messages, firstUnread]);
 
   const formatOptions = useMemo<FormatOptions>(
     () => ({
@@ -94,6 +107,7 @@ export function ChatView() {
   const myName = state.userId ? displayUserId(state.userId).toLowerCase() : "";
   const renderItem = useCallback(
     ({ item }: { item: Row }) => {
+      if (item.kind === "new") return <NewDivider />;
       if (item.kind === "day") {
         return (
           // The web's day divider: a line either side of a pill.
@@ -142,11 +156,12 @@ export function ChatView() {
 
   return (
     <View className="flex-1">
+      <UnreadBanner />
       <FlashList
         ref={listRef}
         data={rows}
         keyExtractor={(row) => row.key}
-        getItemType={(row) => (row.kind === "day" ? "day" : row.grouped ? "grouped" : "full")}
+        getItemType={(row) => (row.kind === "message" ? (row.grouped ? "grouped" : "full") : row.kind)}
         renderItem={renderItem}
         renderScrollComponent={ChatScroll}
         maintainVisibleContentPosition={{ startRenderingFromBottom: true, autoscrollToBottomThreshold: 0.2 }}
