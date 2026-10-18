@@ -8,6 +8,8 @@
  * before React loads by replaying the same four assignments.
  */
 
+import { DEFAULT_DISPLAY as CORE_DEFAULT_DISPLAY } from "@chatter/core/theme";
+
 export type Density = "comfortable" | "compact";
 /** "system" defers to `prefers-reduced-motion`; the other two override it. */
 export type MotionPreference = "system" | "reduce" | "full";
@@ -24,12 +26,8 @@ export interface DisplaySettings {
 
 export const DISPLAY_STORAGE_KEY = "chatter_display";
 
-export const DEFAULT_DISPLAY: DisplaySettings = {
-  fontScale: 1,
-  radius: 0.875,
-  density: "comfortable",
-  motion: "system",
-};
+// Shared with the phone, which sends them to the account when it has none.
+export const DEFAULT_DISPLAY: DisplaySettings = { ...CORE_DEFAULT_DISPLAY };
 
 export const FONT_SCALE_RANGE = { min: 0.8, max: 1.4, step: 0.05 } as const;
 export const RADIUS_RANGE = { min: 0, max: 1.5, step: 0.125 } as const;

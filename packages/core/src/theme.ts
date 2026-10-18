@@ -332,3 +332,24 @@ export function themeFromAppearance(raw: unknown): ThemeDefinition | null {
     advanced: normalizeAdvanced(t.advanced),
   };
 }
+
+/**
+ * The web's display settings (text size, corner radius, density, motion)
+ * before anyone changes them. The phone has none of its own, but the
+ * account's appearance document needs them whole, so it sends these when the
+ * account has never saved any.
+ */
+export const DEFAULT_DISPLAY = {
+  fontScale: 1,
+  radius: 0.875,
+  density: "comfortable",
+  motion: "system",
+} as const;
+
+/** `DEFAULT_DISPLAY` as the appearance API carries it. */
+export const DEFAULT_APPEARANCE_DISPLAY = {
+  font_scale: DEFAULT_DISPLAY.fontScale,
+  radius: DEFAULT_DISPLAY.radius,
+  density: DEFAULT_DISPLAY.density,
+  motion: DEFAULT_DISPLAY.motion,
+};
