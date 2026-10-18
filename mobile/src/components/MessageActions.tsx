@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { Copy, Link2, Pencil, Reply, SmilePlus, Trash2, type LucideProps } from "lucide-react-native";
-import type { ComponentType } from "react";
+import { Copy, Link2, Pencil, Reply, SmilePlus, Trash2 } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
 import { messageLinkFor } from "@chatter/core/messageLinks";
 import { canManageMessages } from "@chatter/core/permissions";
@@ -11,8 +10,8 @@ import { isDeletedMessage } from "@chatter/core/messageFormat";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { showToast } from "@/platform/toast";
 import { Icon, T } from "@/ui/primitives";
-import { cn } from "@/ui/cn";
-import { Sheet } from "@/ui/Sheet";
+import { Button } from "@/ui/controls";
+import { Sheet, SheetRow } from "@/ui/Sheet";
 import { EmojiPickerSheet } from "./EmojiPickerSheet";
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
@@ -55,59 +54,66 @@ export function MessageActions({
   };
 
   return (
-    <Sheet open={!!message} onClose={onClose}>
-      <View style={{ paddingBottom: 12 }}>
+    // MessageItem's touch sheet: "Message", then its actions as rows.
+    <Sheet open={!!message} onClose={onClose} title={editing ? "Edit message" : "Message"}>
+      <View>
         {!message ? null : editing ? (
-          <View className="gap-3 px-4 pb-2">
-            <T className="font-mono-bold">Edit message</T>
+          <View className="gap-2 px-4 pt-2">
+            {/* The web's edit box. */}
             <TextInput
               value={draft}
               onChangeText={setDraft}
               multiline
               autoFocus
-              className="max-h-48 rounded-lg border border-input bg-card px-3 py-2 font-mono text-[15px] text-foreground"
+              className="max-h-40 rounded-md border border-input px-3 py-2 font-mono text-sm leading-5 text-foreground"
             />
-            <View className="flex-row justify-end gap-2">
-              <SheetButton label="Cancel" onPress={() => setEditing(false)} />
-              <SheetButton
-                label="Save"
-                primary
+            <T className="text-xs text-muted-foreground">Saved for everyone, marked as edited.</T>
+            <View className="flex-row justify-end gap-2 pt-1">
+              <Button variant="ghost" size="sm" onPress={() => setEditing(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
                 onPress={run(() => {
                   const next = draft.trim();
                   if (next && next !== body) {
                     actions.editMessage(message.event_id, next).catch((e) => showToast({ message: String(e?.message ?? e), tone: "error" }));
                   }
                 })}
-              />
+              >
+                Save
+              </Button>
             </View>
           </View>
         ) : (
           <>
             {!deleted && (
-              <View className="flex-row justify-around px-3 pb-3">
+              // A phone's shortcut the web doesn't need: the common reactions,
+              // one tap away, in the web's reaction-pill style.
+              <View className="flex-row justify-around px-3 pb-2 pt-2">
                 {QUICK_REACTIONS.slice(0, 5).map((emoji) => (
                   <Pressable
                     key={emoji}
                     onPress={run(() => void actions.addReaction(message.event_id, emoji))}
                     accessibilityLabel={`React ${emoji}`}
-                    className="h-12 w-12 items-center justify-center rounded-full bg-muted"
+                    className="size-11 items-center justify-center rounded-full border border-border active:bg-accent"
                   >
-                    <T className="text-2xl">{emoji}</T>
+                    <T className="text-xl">{emoji}</T>
                   </Pressable>
                 ))}
                 <Pressable
                   onPress={() => setPicking(true)}
                   accessibilityLabel="More reactions"
-                  className="h-12 w-12 items-center justify-center rounded-full bg-muted"
+                  className="size-11 items-center justify-center rounded-full border border-border active:bg-accent"
                 >
-                  <Icon as={SmilePlus} tone="foreground" size={22} />
+                  <Icon as={SmilePlus} size={20} />
                 </Pressable>
               </View>
             )}
-            <View className="mx-3 overflow-hidden rounded-xl bg-card">
-              <Row icon={Reply} label="Reply" onPress={run(() => onReply(message))} />
-              {!deleted && <Row icon={Copy} label="Copy text" onPress={run(() => void Clipboard.setStringAsync(body))} />}
-              <Row
+            <View>
+              <SheetRow icon={Reply} label="Reply" onPress={run(() => onReply(message))} />
+              {!deleted && <SheetRow icon={Copy} label="Copy text" onPress={run(() => void Clipboard.setStringAsync(body))} />}
+              <SheetRow
                 icon={Link2}
                 label="Copy message link"
                 onPress={run(() => {
@@ -116,7 +122,7 @@ export function MessageActions({
                 })}
               />
               {mine && !deleted && (
-                <Row
+                <SheetRow
                   icon={Pencil}
                   label="Edit"
                   onPress={() => {
@@ -126,7 +132,7 @@ export function MessageActions({
                 />
               )}
               {mayDelete && (
-                <Row
+                <SheetRow
                   icon={Trash2}
                   label="Delete"
                   destructive
@@ -149,6 +155,7 @@ export function MessageActions({
         )}
       </View>
       <EmojiPickerSheet
+        title="Add reaction"
         open={picking}
         onClose={() => setPicking(false)}
         roomCustomEmojis={room?.custom_emojis}
@@ -159,22 +166,5 @@ export function MessageActions({
         }}
       />
     </Sheet>
-  );
-}
-
-function Row({ icon, label, onPress, destructive }: { icon: ComponentType<LucideProps>; label: string; onPress(): void; destructive?: boolean }) {
-  return (
-    <Pressable onPress={onPress} accessibilityRole="button" className="flex-row items-center gap-3 border-b border-border px-4 py-3.5 active:bg-accent">
-      <Icon as={icon} tone={destructive ? "destructive" : "foreground"} size={18} />
-      <T className={cn("text-[15px]", destructive && "text-destructive")}>{label}</T>
-    </Pressable>
-  );
-}
-
-function SheetButton({ label, onPress, primary }: { label: string; onPress(): void; primary?: boolean }) {
-  return (
-    <Pressable onPress={onPress} accessibilityRole="button" className={cn("rounded-lg px-4 py-2.5", primary ? "bg-primary" : "bg-muted")}>
-      <T className={cn(primary && "text-primary-foreground")}>{label}</T>
-    </Pressable>
   );
 }

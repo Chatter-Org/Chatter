@@ -35,8 +35,9 @@ export const SIDE_BY_SIDE_MIN_WIDTH = 720;
 const MEMBERS_BESIDE_MIN_WIDTH = 1040;
 const LEFT_PANEL_WIDTH = 360;
 const RIGHT_PANEL_WIDTH = 280;
-/** The strip at the right edge that starts a swipe for the member list. */
-const RIGHT_EDGE = 28;
+/** The strip at the right edge that starts a swipe for the member list: narrow
+ *  enough to leave the controls at the end of a message (its "…") tappable. */
+const RIGHT_EDGE = 16;
 
 const SPRING = { damping: 26, stiffness: 260, mass: 0.9, overshootClamping: true } as const;
 

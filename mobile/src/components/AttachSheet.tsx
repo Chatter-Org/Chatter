@@ -1,12 +1,9 @@
-import { Pressable, View } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
-import { Camera, File, Images, type LucideProps } from "lucide-react-native";
-import type { ComponentType } from "react";
+import { Camera, File, Images } from "lucide-react-native";
 import type { PickedFile } from "@/platform/uploads";
 import { showToast } from "@/platform/toast";
-import { Sheet } from "@/ui/Sheet";
-import { Icon, T } from "@/ui/primitives";
+import { Sheet, SheetRow } from "@/ui/Sheet";
 
 /** What a message can carry at most, as on the web (usePendingFiles). */
 export const MAX_ATTACHMENTS = 10;
@@ -71,23 +68,11 @@ export function AttachSheet({
   };
 
   return (
-    <Sheet open={open} onClose={onClose}>
-      <View className="flex-row justify-around px-4 pb-4">
-        <Choice icon={Images} label="Photos & videos" onPress={() => void pick("library")} />
-        <Choice icon={Camera} label="Camera" onPress={() => void pick("camera")} />
-        <Choice icon={File} label="Files" onPress={() => void pick("files")} />
-      </View>
+    // The web's attach menu, as sheet rows.
+    <Sheet open={open} onClose={onClose} title="Attach">
+      <SheetRow icon={Images} label="Photos and videos" onPress={() => void pick("library")} />
+      <SheetRow icon={Camera} label="Take a photo or video" onPress={() => void pick("camera")} />
+      <SheetRow icon={File} label="Files" onPress={() => void pick("files")} />
     </Sheet>
-  );
-}
-
-function Choice({ icon, label, onPress }: { icon: ComponentType<LucideProps>; label: string; onPress(): void }) {
-  return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} className="w-24 items-center gap-2">
-      <View className="h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-        <Icon as={icon} tone="foreground" size={24} />
-      </View>
-      <T className="text-center text-xs">{label}</T>
-    </Pressable>
   );
 }

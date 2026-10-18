@@ -1,10 +1,13 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ComponentType, type ReactNode } from "react";
+import type { LucideProps } from "lucide-react-native";
 import { Modal, Pressable, StyleSheet, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView, usePanGesture } from "react-native-gesture-handler";
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@/theme/ThemeProvider";
+import { Icon, T } from "./primitives";
+import { cn } from "./cn";
 
 /**
  * A bottom sheet: what a phone shows where the web shows a menu or a dialog.
@@ -12,7 +15,7 @@ import { useTheme } from "@/theme/ThemeProvider";
  * Slides up over a dimmed backdrop; a tap on the backdrop, a swipe down on the
  * sheet, or Back closes it. Sized to its content.
  */
-export function Sheet({ open, onClose, children }: { open: boolean; onClose(): void; children: ReactNode }) {
+export function Sheet({ open, onClose, title, children }: { open: boolean; onClose(): void; title?: string; children: ReactNode }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   // Kept mounted while the closing animation plays.
@@ -51,7 +54,8 @@ export function Sheet({ open, onClose, children }: { open: boolean; onClose(): v
   });
 
   const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: offset.value }] }));
-  const backdropStyle = useAnimatedStyle(() => ({ opacity: dim.value * 0.45 }));
+  // The web's sheet overlay: black at half.
+  const backdropStyle = useAnimatedStyle(() => ({ opacity: dim.value * 0.5 }));
 
   if (!visible) return null;
   return (
@@ -66,12 +70,14 @@ export function Sheet({ open, onClose, children }: { open: boolean; onClose(): v
             onLayout={(e) => setHeight(e.nativeEvent.layout.height)}
             style={[
               styles.sheet,
-              { backgroundColor: colors.popover, borderColor: colors.border, paddingBottom: insets.bottom + 12 },
+              { backgroundColor: colors.background, borderColor: colors.border, paddingBottom: insets.bottom + 16 },
               sheetStyle,
             ]}
             accessibilityViewIsModal
           >
+            {/* The grabber, as on the web's call sheet: the way out as well as the sign of one. */}
             <View style={[styles.handle, { backgroundColor: colors["muted-foreground"] }]} />
+            {title ? <T className="px-4 pb-1 text-sm font-semibold">{title}</T> : null}
             {children}
           </Animated.View>
         </GestureDetector>
@@ -86,10 +92,31 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingTop: 8,
+    // rounded-t-2xl and a top border, as the web's bottom sheets.
+    borderTopLeftRadius: 23.4,
+    borderTopRightRadius: 23.4,
+    borderTopWidth: 1,
+    paddingTop: 13,
   },
-  handle: { alignSelf: "center", width: 36, height: 4, borderRadius: 2, opacity: 0.5, marginBottom: 12 },
+  handle: { alignSelf: "center", width: 44, height: 4.4, borderRadius: 2.2, opacity: 0.4, marginBottom: 13 },
 });
+
+/** A choice in a sheet — the web's sheet rows: an icon, then what it does. */
+export function SheetRow({
+  icon,
+  label,
+  onPress,
+  destructive,
+}: {
+  icon: ComponentType<LucideProps>;
+  label: string;
+  onPress(): void;
+  destructive?: boolean;
+}) {
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" className="flex-row items-center gap-3 px-4 py-3 active:bg-accent">
+      <Icon as={icon} size={17} tone={destructive ? "destructive" : "foreground"} />
+      <T className={cn("text-sm", destructive ? "text-destructive" : "text-foreground")}>{label}</T>
+    </Pressable>
+  );
+}

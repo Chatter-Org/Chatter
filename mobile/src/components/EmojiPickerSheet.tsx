@@ -4,6 +4,7 @@ import { Image } from "expo-image";
 import { filterEmojiCatalog, getFrequentEmojis, isCustomEmojiUrl, recordEmojiUsage } from "@chatter/core/emojiCatalog";
 import { Sheet } from "@/ui/Sheet";
 import { T } from "@/ui/primitives";
+import { UI_HEADING } from "@/ui/roles";
 import { serverImage } from "@/ui/media";
 import { useTheme } from "@/theme/ThemeProvider";
 
@@ -17,7 +18,9 @@ export function EmojiPickerSheet({
   onPick,
   roomCustomEmojis,
   emojiAliases,
+  title = "Emoji",
 }: {
+  title?: string;
   open: boolean;
   onClose(): void;
   onPick(emoji: string): void;
@@ -44,9 +47,9 @@ export function EmojiPickerSheet({
   };
 
   return (
-    <Sheet open={open} onClose={onClose}>
+    <Sheet open={open} onClose={onClose} title={title}>
       <View style={{ height: Math.round(height * 0.55) }}>
-        <View className="px-3 pb-2">
+        <View className="px-3 pb-2 pt-2">
           <TextInput
             value={search}
             onChangeText={setSearch}
@@ -54,7 +57,8 @@ export function EmojiPickerSheet({
             placeholderTextColor={colors["muted-foreground"]}
             autoCorrect={false}
             autoCapitalize="none"
-            className="rounded-lg border border-input bg-card px-3 py-2 font-mono text-[15px] text-foreground"
+            // EmojiPicker's search box.
+            className="rounded border border-border bg-background px-2 py-1.5 font-mono text-sm text-foreground"
           />
         </View>
         <ScrollView contentContainerClassName="px-3 pb-6" keyboardShouldPersistTaps="handled">
@@ -64,7 +68,7 @@ export function EmojiPickerSheet({
             <Section key={name} title={name} emojis={emojis} cell={cell} onPick={pick} />
           ))}
           {search && categories.length === 0 && custom.length === 0 ? (
-            <T className="py-6 text-center text-muted-foreground">No emoji found</T>
+            <T className="py-4 text-center text-sm text-muted-foreground">No emoji found</T>
           ) : null}
         </ScrollView>
       </View>
@@ -85,7 +89,7 @@ const Section = memo(function Section({
 }) {
   return (
     <View className="mb-3">
-      <T className="mb-1 text-[11px] uppercase tracking-widest text-muted-foreground">{title}</T>
+      <T className={`${UI_HEADING} mb-1`}>{title}</T>
       <View className="flex-row flex-wrap">
         {emojis.map((e) => (
           <Pressable
@@ -93,7 +97,7 @@ const Section = memo(function Section({
             onPress={() => onPick(e)}
             accessibilityLabel={isCustomEmojiUrl(e) ? "custom emoji" : e}
             style={{ width: cell, height: cell }}
-            className="items-center justify-center rounded-lg active:bg-accent"
+            className="items-center justify-center rounded active:bg-accent"
           >
             <EmojiGlyph emoji={e} size={Math.round(cell * 0.6)} />
           </Pressable>

@@ -1,6 +1,6 @@
-import { memo, useState } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
-import { GestureDetector, useCompetingGestures, useLongPressGesture, usePanGesture } from "react-native-gesture-handler";
+import { GestureDetector, useCompetingGestures, useLongPressGesture, usePanGesture, useTapGesture } from "react-native-gesture-handler";
 import Animated, { interpolate, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import * as Haptics from "expo-haptics";
@@ -203,35 +203,66 @@ function RowContent({
             {Object.entries(reactions).map(([emoji, users]) => {
               const mine = !!myUserId && users.includes(myUserId);
               return (
-                <Pressable
+                <Tap
                   key={emoji}
                   onPress={() => onReact(message.event_id, emoji)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${emoji} ${users.length}${mine ? ", you reacted" : ""}`}
+                  label={`${emoji} ${users.length}${mine ? ", you reacted" : ""}`}
                   className={cn(
-                    "min-h-7 flex-row items-center gap-1 rounded-full border px-2 py-0.5 active:bg-accent",
+                    "min-h-7 flex-row items-center gap-1 rounded-full border px-2 py-0.5",
                     mine ? "border-primary/50 bg-primary/10" : "border-border",
                   )}
                 >
                   <EmojiGlyph emoji={emoji} size={17} />
                   <T className="text-sm font-medium text-muted-foreground">{users.length}</T>
-                </Pressable>
+                </Tap>
               );
             })}
           </View>
         ) : null}
       </View>
       {/* The web's touch "…": the same actions as holding the message. */}
-      <Pressable
-        onPress={() => onLongPress(message)}
-        hitSlop={6}
-        accessibilityRole="button"
-        accessibilityLabel="Message actions"
-        className="mt-0.5 rounded-md p-1 opacity-60 active:bg-accent"
-      >
+      <Tap onPress={() => onLongPress(message)} label="Message actions" className="mt-0.5 rounded-md p-1 opacity-60">
         <Icon as={MoreHorizontal} size={17} />
-      </Pressable>
+      </Tap>
     </View>
+  );
+}
+
+/**
+ * Something tappable inside a message. The row's own gestures (swipe to
+ * reply, hold for actions) take the touch before a React Native Pressable
+ * would see it, so a control here is a tap gesture of its own, which wins
+ * over them the moment the finger lifts without moving.
+ */
+function Tap({ onPress, label, className, children }: { onPress(): void; label: string; className?: string; children: ReactNode }) {
+  const [pressed, setPressed] = useState(false);
+  const tap = useTapGesture({
+    onBegin: () => {
+      "worklet";
+      scheduleOnRN(setPressed, true);
+    },
+    onActivate: () => {
+      "worklet";
+      scheduleOnRN(onPress);
+    },
+    onFinalize: () => {
+      "worklet";
+      scheduleOnRN(setPressed, false);
+    },
+  });
+  return (
+    <GestureDetector gesture={tap}>
+      <View
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityActions={[{ name: "activate" }]}
+        onAccessibilityAction={onPress}
+        className={cn(className, pressed && "bg-accent")}
+      >
+        {children}
+      </View>
+    </GestureDetector>
   );
 }
 
