@@ -34,17 +34,21 @@ export function Composer({
   replyName,
   onClearReply,
   bottomInset,
+  threadEventId,
 }: {
   replyTo: MatrixMessage | null;
   replyName?: string;
   onClearReply(): void;
   bottomInset: number;
+  /** Post into this thread instead of the channel. */
+  threadEventId?: string;
 }) {
   const state = useChatter();
   const actions = useChatterActions();
   const { colors } = useTheme();
   const draftKey = `${state.currentRoomId}|${state.currentChannelId ?? ""}`;
-  const [text, setText] = useState(() => state.drafts[draftKey] ?? "");
+  // A thread's box starts empty: drafts are the channel's.
+  const [text, setText] = useState(() => (threadEventId ? "" : (state.drafts[draftKey] ?? "")));
   const [staged, setStaged] = useState<PickedFile[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [pickingEmoji, setPickingEmoji] = useState(false);
@@ -80,13 +84,16 @@ export function Composer({
     setSelection({ start: next.caret, end: next.caret });
   };
 
-  const here: OutgoingTarget | null = state.currentRoomId
-    ? { kind: "channel", roomId: state.currentRoomId, channelId: state.currentChannelId ?? "" }
-    : null;
+  const here: OutgoingTarget | null = !state.currentRoomId
+    ? null
+    : threadEventId
+      ? { kind: "thread", roomId: state.currentRoomId, threadEventId }
+      : { kind: "channel", roomId: state.currentRoomId, channelId: state.currentChannelId ?? "" };
   const outgoing = useOutgoingUploads();
 
   const onChange = (value: string) => {
     setText(value);
+    if (threadEventId) return;
     if (value) actions.sendTyping();
     // Drafts follow the person to their other devices, a beat after they stop.
     if (draftTimer.current) clearTimeout(draftTimer.current);
@@ -98,7 +105,7 @@ export function Composer({
   const clearDraft = () => {
     setText("");
     if (draftTimer.current) clearTimeout(draftTimer.current);
-    if (state.currentRoomId) void actions.saveDraft(state.currentRoomId, state.currentChannelId ?? "", "");
+    if (state.currentRoomId && !threadEventId) void actions.saveDraft(state.currentRoomId, state.currentChannelId ?? "", "");
   };
 
   const send = async () => {
@@ -111,13 +118,15 @@ export function Composer({
     // included — so it lands where it was written even if the reader moves on.
     if (staged.length > 0) {
       enqueueOutgoing({
-        target: {
-          kind: "channel",
-          roomId: state.currentRoomId,
-          channelId: state.currentChannelId ?? "",
-          replyTo: replyTo?.event_id,
-        },
-        label: channel ? `#${channel.name}` : room?.name ?? "this conversation",
+        target: threadEventId
+          ? { kind: "thread", roomId: state.currentRoomId, threadEventId, replyTo: replyTo?.event_id }
+          : {
+              kind: "channel",
+              roomId: state.currentRoomId,
+              channelId: state.currentChannelId ?? "",
+              replyTo: replyTo?.event_id,
+            },
+        label: threadEventId ? "the thread" : channel ? `#${channel.name}` : room?.name ?? "this conversation",
         body,
         files: staged.map(nativeUploadSource),
       });
@@ -129,7 +138,8 @@ export function Composer({
 
     setSending(true);
     try {
-      await actions.sendMessage(body, replyTo?.event_id);
+      if (threadEventId) await actions.sendThreadMessage(body, replyTo?.event_id);
+      else await actions.sendMessage(body, replyTo?.event_id);
       clearDraft();
       onClearReply();
     } catch (e) {

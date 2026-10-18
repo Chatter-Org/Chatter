@@ -5,7 +5,7 @@ import Animated, { interpolate, useAnimatedStyle, useSharedValue, withSpring } f
 import { scheduleOnRN } from "react-native-worklets";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
-import { EyeOff, MoreHorizontal, Reply } from "lucide-react-native";
+import { EyeOff, MessagesSquare, MoreHorizontal, Reply } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
 import type { FormatOptions } from "@chatter/core/messageFormat";
 import { extractMedia, isDeletedMessage } from "@chatter/core/messageFormat";
@@ -40,6 +40,8 @@ export interface MessageRowProps {
   onReply(message: MatrixMessage): void;
   onLongPress(message: MatrixMessage): void;
   onReact(eventId: string, emoji: string): void;
+  /** Open the thread hanging off this message; absent inside a thread. */
+  onOpenThread?(eventId: string): void;
 }
 
 /**
@@ -142,6 +144,7 @@ function RowContent({
   formatOptions,
   onReact,
   onLongPress,
+  onOpenThread,
 }: MessageRowProps) {
   const deleted = isDeletedMessage(message);
   const body = message.content.body ?? "";
@@ -200,6 +203,17 @@ function RowContent({
             <MessageMedia media={media} />
           </>
         )}
+        {onOpenThread && (message.thread_reply_count ?? 0) > 0 ? (
+          // The web's thread link under a message: how many replies, in the
+          // primary colour.
+          <Tap onPress={() => onOpenThread(message.event_id)} label="Open thread" className="mt-1 flex-row items-center gap-1.5 self-start rounded py-0.5">
+            <Icon as={MessagesSquare} size={15} tone="primary" />
+            <T className="text-xs text-primary">
+              {message.thread_name ? `${message.thread_name} · ` : ""}
+              {message.thread_reply_count} {message.thread_reply_count === 1 ? "reply" : "replies"}
+            </T>
+          </Tap>
+        ) : null}
         {reactions && Object.keys(reactions).length > 0 ? (
           <View className="mt-1.5 flex-row flex-wrap gap-1">
             {Object.entries(reactions).map(([emoji, users]) => {

@@ -824,14 +824,16 @@ export function createStoreActions(ctx: StoreContext) {
     dispatch({ type: "CLOSE_THREAD" });
   };
 
-  const sendThreadMessage = async (body: string) => {
+  /** Post into the open thread, answering `replyTo` (or the reply the store
+   *  holds, which is how the web's thread composer keeps it). */
+  const sendThreadMessage = async (body: string, replyTo?: string) => {
     const cur = getState();
     if (!cur.currentRoomId || !cur.activeThreadEventId) return;
     await apiSendThreadMessage(
       cur.currentRoomId,
       cur.activeThreadEventId,
       body,
-      cur.threadReplyingTo?.event_id,
+      replyTo ?? cur.threadReplyingTo?.event_id,
     );
     dispatch({ type: "SET_THREAD_REPLYING_TO", payload: null });
   };

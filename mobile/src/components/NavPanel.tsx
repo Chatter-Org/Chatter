@@ -15,6 +15,7 @@ import {
   LayoutList,
   Lock,
   MessageCircle,
+  MessagesSquare,
   Mic,
   MicOff,
   Move3d,
@@ -392,6 +393,7 @@ const ChannelRow = memo(function ChannelRow({
         {occupants.length > 0 && occupiedSince ? <VoiceTimer since={occupiedSince} /> : null}
         {mentions > 0 ? <CountBadge count={mentions} className="ml-auto h-4 min-w-4" /> : null}
       </Pressable>
+      <ThreadPreviews channel={channel} />
       {occupants.length > 0 ? (
         <View className="ml-7 gap-0.5 pb-1">
           {occupants.map((m) => (
@@ -402,6 +404,55 @@ const ChannelRow = memo(function ChannelRow({
     </View>
   );
 });
+
+/**
+ * The channel's recently active threads, hung under it on a tree line as the
+ * web's channel list shows them. Tapping one opens the channel and the thread.
+ */
+function ThreadPreviews({ channel }: { channel: Channel }) {
+  const state = useChatter();
+  const { selectChannel, openThread } = useChatterActions();
+  const { close } = usePanels();
+  const threads = state.channelThreads[channel.channel_id];
+  if (!threads?.length) return null;
+  const open = async (threadId: string) => {
+    tick();
+    close();
+    if (state.currentChannelId !== channel.channel_id) await selectChannel(channel.channel_id).catch(() => {});
+    void openThread(threadId).catch(() => {});
+    router.push("/thread");
+  };
+  return (
+    <View className="ml-5 pb-1 pr-1">
+      {threads.map((t, i) => {
+        const last = i === threads.length - 1;
+        const mentions = state.threadMentions[t.threadId] ?? 0;
+        const active = state.activeThreadEventId === t.threadId;
+        return (
+          <View key={t.threadId} className="relative pl-3">
+            {/* The tree: a line down past every thread but the last, and an
+                elbow into each. */}
+            {!last ? <View className="absolute bottom-0 left-0 top-0 w-0 border-l-2 border-muted-foreground/60" /> : null}
+            <View className="absolute -top-0.5 left-0 h-3.5 w-2 rounded-bl-md border-b-2 border-l-2 border-muted-foreground/60" />
+            <Pressable
+              onPress={() => void open(t.threadId)}
+              accessibilityRole="button"
+              accessibilityLabel={`Thread ${t.name || "untitled"}, ${t.replyCount} replies`}
+              className={cn("flex-row items-center gap-1.5 rounded px-1 py-1", active ? "bg-accent" : "active:bg-accent/50")}
+            >
+              <Icon as={MessagesSquare} size={13} tone={active ? "foreground" : "muted-foreground"} />
+              <T className={cn("flex-1 text-xs", active ? "text-foreground" : "text-muted-foreground")} numberOfLines={1}>
+                {t.name || "Thread"}
+              </T>
+              <T className="text-xs text-muted-foreground opacity-70">{t.replyCount}</T>
+              {mentions > 0 ? <CountBadge count={mentions} className="h-3.5 min-w-3.5" /> : null}
+            </Pressable>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
 
 /** How long a voice channel has been occupied (m:ss), beside its name. */
 function VoiceTimer({ since }: { since: number }) {

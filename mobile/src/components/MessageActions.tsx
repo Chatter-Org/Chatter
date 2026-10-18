@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { Copy, Link2, Pencil, Reply, SmilePlus, Trash2 } from "lucide-react-native";
+import { Copy, Link2, MessagesSquare, Pencil, Reply, SmilePlus, Trash2 } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
 import { messageLinkFor } from "@chatter/core/messageLinks";
 import { canManageMessages } from "@chatter/core/permissions";
@@ -25,10 +25,13 @@ export function MessageActions({
   message,
   onClose,
   onReply,
+  onOpenThread,
 }: {
   message: MatrixMessage | null;
   onClose(): void;
   onReply(message: MatrixMessage): void;
+  /** Absent inside a thread: there is no thread in a thread. */
+  onOpenThread?(eventId: string): void;
 }) {
   const state = useChatter();
   const actions = useChatterActions();
@@ -112,6 +115,9 @@ export function MessageActions({
             )}
             <View>
               <SheetRow icon={Reply} label="Reply" onPress={run(() => onReply(message))} />
+              {onOpenThread && !deleted && message.content.msgtype !== "m.system" ? (
+                <SheetRow icon={MessagesSquare} label="Open thread" onPress={run(() => onOpenThread(message.event_id))} />
+              ) : null}
               {!deleted && <SheetRow icon={Copy} label="Copy text" onPress={run(() => void Clipboard.setStringAsync(body))} />}
               <SheetRow
                 icon={Link2}

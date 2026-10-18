@@ -5,17 +5,17 @@ import { KeyboardChatScrollView, useReanimatedKeyboardAnimation } from "react-na
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
+import { router } from "expo-router";
 import { ArrowDown, SendHorizontal, X } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
-import { groupsWith, senderNameColor, startsNewDay, type FormatOptions } from "@chatter/core/messageFormat";
-import { mentionRoleColors } from "@chatter/core/mentions";
-import { displayUserId } from "@chatter/core/utils";
+import { groupsWith, startsNewDay } from "@chatter/core/messageFormat";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { MessageRow } from "./MessageRow";
 import { MessageActions } from "./MessageActions";
 import { Composer } from "./Composer";
 import { CallBar } from "./CallBar";
 import { NewDivider, UnreadBanner, useNewDivider } from "./UnreadMarks";
+import { useMessageRows } from "./useMessageRows";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { useTheme } from "@/theme/ThemeProvider";
@@ -83,18 +83,15 @@ export function ChatView() {
     return out;
   }, [state.messages, firstUnread]);
 
-  const formatOptions = useMemo<FormatOptions>(
-    () => ({
-      currentUserId: state.userId,
-      roleColors: mentionRoleColors(state.customRoles, roomInfo),
-      emojiAliases: Object.fromEntries(Object.entries(roomInfo?.emoji_aliases ?? {}).map(([alias, url]) => [url as string, alias])),
-    }),
-    [state.userId, state.customRoles, roomInfo],
-  );
+  const { rowData, nameOf } = useMessageRows();
 
-  const nameOf = useCallback(
-    (userId: string) => state.userPresence[userId]?.displayName || state.roomMembers.find((m) => m.userId === userId)?.displayName || displayUserId(userId),
-    [state.userPresence, state.roomMembers],
+  // A thread opens as a screen of its own, over the conversation.
+  const openThread = useCallback(
+    (eventId: string) => {
+      void actions.openThread(eventId).catch(() => showToast({ message: "Couldn't open the thread", tone: "error" }));
+      router.push("/thread");
+    },
+    [actions],
   );
 
   // What the reader has seen is read: the newest message, while they are at
@@ -105,7 +102,6 @@ export function ChatView() {
     actions.markChannelRead(roomId, channelId ?? undefined);
   }, [roomId, channelId, newest, atBottom, actions]);
 
-  const myName = state.userId ? displayUserId(state.userId).toLowerCase() : "";
   const renderItem = useCallback(
     ({ item }: { item: Row }) => {
       if (item.kind === "new") return <NewDivider />;
@@ -122,30 +118,19 @@ export function ChatView() {
         );
       }
       const m = item.message;
-      const body = m.content.body ?? "";
-      const mentionsMe =
-        m.sender !== state.userId &&
-        (m.content.reply_to_sender === state.userId || (!!myName && new RegExp(`@${myName}\\b`, "i").test(body)));
       return (
         <MessageRow
+          {...rowData(m)}
           message={m}
           grouped={item.grouped}
-          senderName={nameOf(m.sender)}
-          senderColor={senderNameColor(state, roomInfo, m.sender)}
-          avatarUrl={state.userPresence[m.sender]?.avatarUrl}
-          replySenderName={m.content.reply_to_sender ? nameOf(m.content.reply_to_sender) : undefined}
-          reactions={state.messageReactions[m.event_id]}
-          myUserId={state.userId}
-          mentionsMe={mentionsMe}
           highlighted={m.event_id === highlighted}
-          formatOptions={formatOptions}
           onReply={setReplyTo}
           onLongPress={setActing}
-          onReact={actions.addReaction}
+          onOpenThread={openThread}
         />
       );
     },
-    [state, roomInfo, formatOptions, nameOf, myName, actions.addReaction, highlighted],
+    [rowData, highlighted, openThread],
   );
 
   // A jump to a message — a message link opened, from here or another room
@@ -242,7 +227,7 @@ export function ChatView() {
         />
       </Animated.View>
       <CallBar bottomInset={insets.bottom} onHeight={setCallBarHeight} />
-      <MessageActions message={acting} onClose={() => setActing(null)} onReply={setReplyTo} />
+      <MessageActions message={acting} onClose={() => setActing(null)} onReply={setReplyTo} onOpenThread={openThread} />
     </View>
   );
 }
