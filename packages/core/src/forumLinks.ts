@@ -15,7 +15,8 @@
  * are cached too: a link nobody is allowed to follow must not cost a request per
  * render.
  */
-import { apiGetForumPreview, type ForumPreview } from "@/lib/api";
+import { apiGetForumPreview, type ForumPreview } from "./api";
+import { host } from "./platform";
 
 /** The path a forum link lives at. Matched in `App.tsx` on a cold load. */
 const FORUM_LINK_PATH = "/f/";
@@ -32,12 +33,12 @@ const PREVIEW_TTL_MS = 5 * 60 * 1000;
 
 /** A post link, for putting on the clipboard. */
 export function forumLinkFor(postId: string): string {
-  return `${window.location.origin}${FORUM_LINK_PATH}${encodeURIComponent(postId)}`;
+  return `${host.origin()}${FORUM_LINK_PATH}${encodeURIComponent(postId)}`;
 }
 
 /** A reply link, for putting on the clipboard. */
 export function forumReplyLinkFor(postId: string, commentId: string): string {
-  return `${window.location.origin}${FORUM_LINK_PATH}${encodeURIComponent(postId)}/${encodeURIComponent(commentId)}`;
+  return `${host.origin()}${FORUM_LINK_PATH}${encodeURIComponent(postId)}/${encodeURIComponent(commentId)}`;
 }
 
 /**
@@ -52,11 +53,11 @@ export function parseForumLink(url: string): ForumLinkRef | null {
   let parsed: URL;
   try {
     // The base makes a relative `/f/...` parse; an absolute URL ignores it.
-    parsed = new URL(url, window.location.origin);
+    parsed = new URL(url, host.origin());
   } catch {
     return null;
   }
-  if (parsed.origin !== window.location.origin) return null;
+  if (parsed.origin !== host.origin()) return null;
   return forumRefFromPath(parsed.pathname);
 }
 

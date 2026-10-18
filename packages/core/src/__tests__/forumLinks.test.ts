@@ -1,6 +1,4 @@
 /**
- * @vitest-environment jsdom
- *
  * Building and recognising shared forum post and reply links.
  *
  * The parsing is what decides whether a URL in somebody's message gets asked
@@ -20,8 +18,11 @@ import {
   resolveForumPreview,
   forgetForumPreview,
   clearForumPreviews,
-} from "@/lib/forumLinks";
-import * as api from "@/lib/api";
+} from "../forumLinks";
+import * as api from "../api";
+import { configureHost } from "../platform";
+
+const ORIGIN = "https://chatter.example";
 
 const POST = "post_AbCd-_0123456789abcdef";
 const COMMENT = "comment_zzz-_0123456789abcdef";
@@ -46,13 +47,13 @@ const preview = {
 
 beforeEach(() => {
   clearForumPreviews();
-  expect(window.location.origin).toBeTruthy();
+  configureHost({ origin: () => ORIGIN });
 });
 
 describe("forumLinkFor", () => {
   it("is absolute, so it survives being pasted anywhere", () => {
     const link = forumLinkFor(POST);
-    expect(link.startsWith(`${window.location.origin}/f/`)).toBe(true);
+    expect(link.startsWith(`${ORIGIN}/f/`)).toBe(true);
   });
 
   it("round-trips a post id through its own encoding", () => {
@@ -120,7 +121,7 @@ describe("findForumLinks", () => {
     const body = [
       "https://example.com/thing",
       `https://other.example/f/${encodeURIComponent(POST)}`,
-      `${window.location.origin}/invite/abc123`,
+      `${ORIGIN}/invite/abc123`,
     ].join(" ");
     expect(findForumLinks(body)).toEqual([]);
   });

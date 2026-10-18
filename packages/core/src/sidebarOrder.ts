@@ -17,7 +17,7 @@
  * or making a folder does not depend on the order being rewritten first, and
  * a client that has never dragged anything sees exactly what it saw before.
  */
-import type { RoomGroup } from "@/lib/api";
+import type { RoomGroup } from "./api";
 
 /** One thing the top level draws: a room on its own, or a folder of rooms. */
 export type SidebarEntry =

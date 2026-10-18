@@ -1,6 +1,4 @@
 /**
- * @vitest-environment jsdom
- *
  * Building and recognising shared message links.
  *
  * The parsing is what decides whether a URL in somebody's message gets asked
@@ -19,22 +17,23 @@ import {
   resolveMessagePreview,
   forgetMessagePreview,
   clearMessagePreviews,
-} from "@/lib/messageLinks";
-import * as api from "@/lib/api";
+} from "../messageLinks";
+import * as api from "../api";
+import { configureHost } from "../platform";
+
+const ORIGIN = "https://chatter.example";
 
 const EVENT = "$AbCd-_0123456789abcdef";
 
 beforeEach(() => {
   clearMessagePreviews();
-  // jsdom serves the app from http://localhost:3000 by default; assert on the
-  // real value rather than a guess so a jsdom change cannot quietly pass.
-  expect(window.location.origin).toBeTruthy();
+  configureHost({ origin: () => ORIGIN });
 });
 
 describe("messageLinkFor", () => {
   it("is absolute, so it survives being pasted anywhere", () => {
     const link = messageLinkFor(EVENT);
-    expect(link.startsWith(`${window.location.origin}/m/`)).toBe(true);
+    expect(link.startsWith(`${ORIGIN}/m/`)).toBe(true);
   });
 
   it("round-trips an event id through its own encoding", () => {
@@ -89,7 +88,7 @@ describe("findMessageLinks", () => {
     const body = [
       "https://example.com/thing",
       `https://other.example/m/${encodeURIComponent(EVENT)}`,
-      `${window.location.origin}/invite/abc123`,
+      `${ORIGIN}/invite/abc123`,
     ].join(" ");
     expect(findMessageLinks(body)).toEqual([]);
   });

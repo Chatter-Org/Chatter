@@ -1,15 +1,13 @@
 /**
- * @vitest-environment jsdom
- *
  * A thread's unread mention badge belongs to the thread's own row in the
  * channel list, not to the channel it hangs in: reading that channel never put
  * a reply on screen, so it must not dismiss one.
  */
-import { describe, it, expect, vi } from "vitest";
-import { reducer } from "@/lib/store/reducer";
-import { initialState } from "@/lib/store/types";
-import type { AppState, Action } from "@/lib/store/types";
-import type { MatrixMessage } from "@/lib/api";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { reducer } from "../../store/reducer";
+import { initialState } from "../../store/types";
+import type { AppState, Action } from "../../store/types";
+import type { MatrixMessage } from "../../api";
 
 const root = (): MatrixMessage => ({
   event_id: "$root",
@@ -20,18 +18,13 @@ const root = (): MatrixMessage => ({
   content: { body: "what should we play tonight?", msgtype: "m.text" },
 });
 
-vi.mock("@/lib/notifications", async (orig) => {
-  const actual = await orig<typeof import("@/lib/notifications")>();
-  return { ...actual, showDesktopNotification: () => true };
-});
-vi.mock("@/lib/sounds", () => ({
-  arrivalSound: () => "", deferArrivalSound: () => {}, playSound: () => {},
-  playSoundUrl: () => {}, prewarmSounds: () => {},
-}));
-vi.mock("../api", () => ({ apiGetRoomMembers: vi.fn() }));
-vi.mock("sonner", () => ({ toast: Object.assign(() => {}, { error: () => {}, success: () => {} }) }));
 
-import { createWsMessageHandler } from "@/lib/store/wsHandler";
+import { createWsMessageHandler } from "../../store/wsHandler";
+import { configureHost } from "../../platform";
+
+beforeEach(() => {
+  configureHost({ notify: () => true, hasFocus: () => false });
+});
 
 describe("the badge on a thread's row in the channel list", () => {
   const withBadge = (): AppState => ({

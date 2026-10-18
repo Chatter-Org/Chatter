@@ -1,6 +1,5 @@
 import type { ReadMarkerUpdate } from "../unreads";
 import type { MatrixMessage, PinnedMessage, RoomInfo, RoomGroup, Channel, ChannelCategory, CustomRole, RolePermissions, Embed, PollState, RoomEvent, RsvpStatus } from "../api";
-import type { Dispatch } from "react";
 import type { NotificationLevel, NotificationSettings } from "../notifications";
 import type { ProfileTheme } from "../profileTheme";
 import type { ServerUnread } from "../unreads";
@@ -510,10 +509,17 @@ export const initialState: AppState = {
   blockedUsers: [],
 };
 
+/** React's `Dispatch` and `MutableRefObject`, described structurally so the
+ *  core does not depend on React. Both apps' React values satisfy them. */
+export type Dispatch<A> = (value: A) => void;
+export interface MutableRefObject<T> {
+  current: T;
+}
+
 export interface AppContextValue {
   state: AppState;
   dispatch: Dispatch<Action>;
-  wsRef: React.MutableRefObject<WebSocket | null>;
+  wsRef: MutableRefObject<WebSocket | null>;
   // Actions
   login: (username: string, password: string, totpCode?: string) => Promise<{ requires_totp?: boolean }>;
   register: (username: string, password: string, passwordConfirm: string, inviteCode?: string) => Promise<{ user_id: string; totp_secret: string; totp_uri: string; totp_qr_base64: string }>;

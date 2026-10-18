@@ -10,19 +10,71 @@ import {
   missingChunks,
   receivedBytes,
   type UploadStatus,
-} from "@/lib/uploadResume";
+} from "./uploadResume";
 import {
   forgetResumable,
   listResumable,
   loadResumable,
   saveResumable,
-} from "@/lib/uploadStore";
+} from "./uploadStore";
+import { host } from "./platform";
 
 // Access token lives only in memory — never persisted to localStorage.
-// The refresh token is stored exclusively in an HttpOnly cookie managed by the
-// server, so JS cannot read or exfiltrate it even under XSS.
+// In the browser the refresh token is stored exclusively in an HttpOnly cookie
+// managed by the server, so JS cannot read or exfiltrate it even under XSS.
 let _accessToken: string | null = null;
 let _refreshPromise: Promise<RefreshOutcome> | null = null;
+
+// ─── Transport ──────────────────────────────────────────────────────────────
+
+/**
+ * Where a platform without the browser's cookie jar keeps the refresh token —
+ * the mobile app's Keystore. The browser never configures one: its token stays
+ * in the HttpOnly cookie, out of reach of script.
+ */
+export interface RefreshTokenStore {
+  get(): string | null;
+  set(token: string | null): void;
+}
+
+/** The server's origin, prefixed to every path. Empty in the browser, which is
+ *  served from it. */
+let _origin = "";
+let _refreshStore: RefreshTokenStore | null = null;
+
+/**
+ * Point the API at a server and say where its refresh token lives. The web
+ * client calls nothing: it talks to the origin it was served from and the
+ * browser holds the cookie.
+ */
+export function configureApi(options: {
+  origin?: string;
+  refreshTokenStore?: RefreshTokenStore | null;
+}) {
+  if (options.origin !== undefined) _origin = options.origin.replace(/\/+$/, "");
+  if (options.refreshTokenStore !== undefined) _refreshStore = options.refreshTokenStore;
+}
+
+/** A server path as a URL this platform can fetch. Absolute URLs pass through. */
+export function serverUrl(path: string): string {
+  return path.startsWith("/") ? _origin + path : path;
+}
+
+/**
+ * Every request to the server goes through here. With a token store the
+ * cookie is not wanted at all — the token travels in the body — so none is
+ * sent or kept, and there is never a second copy of the session to go stale.
+ */
+function serverFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(serverUrl(path), _refreshStore ? { ...init, credentials: "omit" } : init);
+}
+
+/** Keep a rotated refresh token from a response, where this platform holds one. */
+function keepRefreshToken(data: { refresh_token?: unknown } | null | undefined) {
+  if (_refreshStore && data && typeof data.refresh_token === "string" && data.refresh_token) {
+    _refreshStore.set(data.refresh_token);
+  }
+}
 
 /** Whether this browser has ever held a session, so a load that cannot reach
  *  the server knows to wait behind a reconnecting screen rather than present a
@@ -54,10 +106,11 @@ export function setAccessToken(token: string | null) {
   if (token) rememberHadSession(true);
 }
 
-/** No-op kept for call-site compatibility; the server manages the refresh-token
- *  cookie via Set-Cookie.  Do not write it to localStorage. */
-export function setRefreshToken(_token: string | null) {
-  // intentionally empty
+/** In the browser a no-op kept for call-site compatibility: the server manages
+ *  the refresh-token cookie via Set-Cookie. Do not write it to localStorage.
+ *  Where a token store is configured, it goes there. */
+export function setRefreshToken(token: string | null) {
+  _refreshStore?.set(token);
 }
 
 export function getAccessToken() {
@@ -72,6 +125,7 @@ export function restoreTokens() {
 
 export function clearTokens() {
   _accessToken = null;
+  _refreshStore?.set(null);
   rememberHadSession(false);
   // Non-sensitive UI state that's fine to keep in localStorage:
   localStorage.removeItem("is_admin");
@@ -124,12 +178,15 @@ export type RefreshOutcome = "refreshed" | "rejected" | "unreachable";
 export async function apiRefreshToken(): Promise<RefreshOutcome> {
   let res: Response;
   try {
-    // Send an empty body; the browser attaches the HttpOnly refresh_token cookie
-    // automatically.  The server rotates the cookie and returns a new access token.
-    res = await fetch("/_matrix/client/r0/refresh", {
+    // In the browser send an empty body; it attaches the HttpOnly refresh_token
+    // cookie automatically. The server rotates the cookie and returns a new
+    // access token. A platform with a token store sends the token itself, which
+    // the server reads before any cookie.
+    const stored = _refreshStore?.get();
+    res = await serverFetch("/_matrix/client/r0/refresh", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify(stored ? { refresh_token: stored } : {}),
     });
   } catch {
     // Nothing answered — DNS, connection refused, offline, aborted.
@@ -148,6 +205,7 @@ export async function apiRefreshToken(): Promise<RefreshOutcome> {
   try {
     const data = await res.json();
     setAccessToken(data.access_token);
+    keepRefreshToken(data);
     if (data.is_admin !== undefined) setIsAdmin(data.is_admin);
     if (data.totp_verified !== undefined) setTotpVerified(data.totp_verified);
     return "refreshed";
@@ -182,7 +240,7 @@ async function authenticatedFetch(
   url: string,
   init?: RequestInit
 ): Promise<Response> {
-  const res = await fetch(url, {
+  const res = await serverFetch(url, {
     ...init,
     headers: { ...authHeaders(), ...init?.headers },
   });
@@ -194,7 +252,7 @@ async function authenticatedFetch(
     const refreshed = await refreshSession();
     if (refreshed === "refreshed") {
       // Retry with new token
-      return fetch(url, {
+      return serverFetch(url, {
         ...init,
         headers: { ...authHeaders(), ...init?.headers },
       });
@@ -209,7 +267,7 @@ async function authenticatedFetch(
 export async function apiLogin(username: string, password: string, totpCode?: string) {
   let res: Response;
   try {
-    res = await fetch("/_matrix/client/r0/login", {
+    res = await serverFetch("/_matrix/client/r0/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password, totp_code: totpCode }),
@@ -230,7 +288,9 @@ export async function apiLogin(username: string, password: string, totpCode?: st
       );
     }
   }
-  return res.json() as Promise<{
+  const data = await res.json();
+  keepRefreshToken(data);
+  return data as Promise<{
     access_token: string;
     refresh_token: string;
     user_id: string;
@@ -243,7 +303,7 @@ export async function apiLogin(username: string, password: string, totpCode?: st
 export async function apiRegister(username: string, password: string, passwordConfirm: string, inviteCode?: string) {
   let res: Response;
   try {
-    res = await fetch("/_matrix/client/r0/register", {
+    res = await serverFetch("/_matrix/client/r0/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password, password_confirm: passwordConfirm, invite_code: inviteCode || undefined }),
@@ -274,7 +334,7 @@ export async function apiRegister(username: string, password: string, passwordCo
 }
 
 export async function apiCheckUsername(username: string) {
-  const res = await fetch("/api/check-username", {
+  const res = await serverFetch("/api/check-username", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username }),
@@ -289,7 +349,7 @@ export async function apiVerifyTotp(userId: string, code: string) {
   // record. Enrolling 2FA on an existing account does have one, and the server
   // now requires it, so it goes through authHeaders() rather than a bare
   // Content-Type.
-  const res = await fetch("/api/totp/verify", {
+  const res = await serverFetch("/api/totp/verify", {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ user_id: userId, code }),
@@ -298,7 +358,9 @@ export async function apiVerifyTotp(userId: string, code: string) {
     const body = await res.json().catch(() => null);
     throw new Error(body?.error || "TOTP verification failed");
   }
-  return res.json() as Promise<{
+  const data = await res.json();
+  keepRefreshToken(data);
+  return data as Promise<{
     verified: boolean;
     recovery_codes?: string[];
     access_token: string;
@@ -310,7 +372,7 @@ export async function apiVerifyTotp(userId: string, code: string) {
 }
 
 export async function apiRecoveryLogin(username: string, recoveryCode: string) {
-  const res = await fetch("/api/recovery-login", {
+  const res = await serverFetch("/api/recovery-login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, recovery_code: recoveryCode }),
@@ -319,7 +381,9 @@ export async function apiRecoveryLogin(username: string, recoveryCode: string) {
     const body = await res.json().catch(() => null);
     throw new Error(body?.error || "Recovery login failed");
   }
-  return res.json() as Promise<{
+  const data = await res.json();
+  keepRefreshToken(data);
+  return data as Promise<{
     user_id: string;
     access_token: string;
     refresh_token: string;
@@ -1361,7 +1425,7 @@ function uploadSingleFile(
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/upload");
+    xhr.open("POST", serverUrl("/api/upload"));
     xhr.timeout = SINGLE_UPLOAD_TIMEOUT_MS;
     if (_accessToken) {
       xhr.setRequestHeader("Authorization", `Bearer ${_accessToken}`);
@@ -1387,7 +1451,7 @@ function uploadSingleFile(
             return;
           }
           const retryXhr = new XMLHttpRequest();
-          retryXhr.open("POST", "/api/upload");
+          retryXhr.open("POST", serverUrl("/api/upload"));
           retryXhr.timeout = SINGLE_UPLOAD_TIMEOUT_MS;
           if (_accessToken) {
             retryXhr.setRequestHeader("Authorization", `Bearer ${_accessToken}`);
@@ -1456,17 +1520,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * mean no network — which is the direction that matters here.
  */
 function waitForNetwork(): Promise<void> {
+  // eslint-disable-next-line no-restricted-globals -- guarded: absent on mobile, which skips the wait
   if (typeof navigator === "undefined" || navigator.onLine !== false) {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
     const done = () => {
-      window.removeEventListener("online", done);
+      globalThis.removeEventListener?.("online", done);
       clearTimeout(timer);
       resolve();
     };
     const timer = setTimeout(done, OFFLINE_PARK_MS);
-    window.addEventListener("online", done);
+    globalThis.addEventListener?.("online", done);
   });
 }
 
@@ -1486,7 +1551,7 @@ function sendChunkOnce(
     fd.append("file", blob);
 
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/upload/chunk");
+    xhr.open("POST", serverUrl("/api/upload/chunk"));
     xhr.timeout = CHUNK_UPLOAD_TIMEOUT_MS;
     if (_accessToken) {
       xhr.setRequestHeader("Authorization", `Bearer ${_accessToken}`);
@@ -1957,7 +2022,7 @@ export async function apiUpdateRoomSettings(
 // ─── Invites ────────────────────────────────────────────────────────────────
 
 export async function apiGetInviteInfo(code: string) {
-  const res = await fetch(`/api/invites/${code}`);
+  const res = await serverFetch(`/api/invites/${code}`);
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new Error(body?.error || "Invite not found");
@@ -2558,7 +2623,7 @@ export interface AdminRoom {
 }
 
 export async function apiGetServerInfo(): Promise<{ invite_only: boolean; require_auth_for_uploads: boolean; storage_limit_bytes: number; upload_limit_bytes: number }> {
-  const res = await fetch("/api/server/info");
+  const res = await serverFetch("/api/server/info");
   if (!res.ok) throw new Error("Failed to get server info");
   return res.json();
 }
@@ -3043,15 +3108,8 @@ export async function apiDownloadExport() {
   const res = await authenticatedFetch("/api/admin/export");
   if (!res.ok) throw new Error("Failed to export");
   const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
   const stamp = new Date().toISOString().slice(0, 10);
-  a.download = `chatter-export-${stamp}.ndjson`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  host.saveFile(blob, `chatter-export-${stamp}.ndjson`);
 }
 
 // ─── Cross-device continuity ─────────────────────────────────────────────────
@@ -3418,7 +3476,7 @@ export async function apiSteamExchangeCode(code: string): Promise<{
   totp_verified: boolean;
 }> {
   // Unauthenticated — user is not logged in yet when this is called.
-  const res = await fetch("/api/auth/steam/exchange", {
+  const res = await serverFetch("/api/auth/steam/exchange", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code }),
@@ -3427,7 +3485,9 @@ export async function apiSteamExchangeCode(code: string): Promise<{
     const data = await res.json().catch(() => null);
     throw new Error(data?.error || "Steam login failed");
   }
-  return res.json();
+  const data = await res.json();
+  keepRefreshToken(data);
+  return data;
 }
 
 export async function apiGetSteamLinkUrl(): Promise<{ url: string }> {

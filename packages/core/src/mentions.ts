@@ -1,4 +1,4 @@
-import type { AppState } from "@/lib/store/types";
+import type { AppState } from "./store/types";
 
 export interface MentionMatch {
   kind: "user" | "role";

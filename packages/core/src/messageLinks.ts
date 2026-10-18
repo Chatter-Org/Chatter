@@ -13,7 +13,8 @@
  * them. Refusals are cached too: a link nobody is allowed to follow must not
  * cost a request per render.
  */
-import { apiGetMessagePreview, type MessagePreview } from "@/lib/api";
+import { apiGetMessagePreview, type MessagePreview } from "./api";
+import { host } from "./platform";
 
 /** The path a message link lives at. Matched in `App.tsx` on a cold load. */
 const MESSAGE_LINK_PATH = "/m/";
@@ -30,7 +31,7 @@ const PREVIEW_TTL_MS = 5 * 60 * 1000;
 
 /** An absolute link to a message, for putting on the clipboard. */
 export function messageLinkFor(eventId: string): string {
-  return `${window.location.origin}${MESSAGE_LINK_PATH}${encodeURIComponent(eventId)}`;
+  return `${host.origin()}${MESSAGE_LINK_PATH}${encodeURIComponent(eventId)}`;
 }
 
 /**
@@ -46,11 +47,11 @@ export function parseMessageLink(url: string): string | null {
   let parsed: URL;
   try {
     // The base makes a relative `/m/...` parse; an absolute URL ignores it.
-    parsed = new URL(url, window.location.origin);
+    parsed = new URL(url, host.origin());
   } catch {
     return null;
   }
-  if (parsed.origin !== window.location.origin) return null;
+  if (parsed.origin !== host.origin()) return null;
   return eventIdFromPath(parsed.pathname);
 }
 

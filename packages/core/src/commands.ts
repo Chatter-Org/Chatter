@@ -1,4 +1,4 @@
-import type { AppState } from "./store";
+import type { AppState } from "./store/types";
 import type { RoomSummary } from "./api";
 import { displayUserId } from "./utils";
 

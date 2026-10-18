@@ -1,32 +1,17 @@
-import type { Dispatch, MutableRefObject } from "react";
-import type { Action, AppState, VoiceChannelMember } from "./types";
+import type { Action, AppState, Dispatch, MutableRefObject, VoiceChannelMember } from "./types";
 import { apiGetRoomMembers } from "../api";
-import { displayUserId } from "@/lib/utils";
-import { forgetMessagePreview } from "@/lib/messageLinks";
-import { forgetForumPreview } from "@/lib/forumLinks";
-import { adoptGifFavorites } from "@/hooks/useFavoriteGifs";
-import { toast } from "sonner";
+import { displayUserId } from "../utils";
+import { forgetMessagePreview } from "../messageLinks";
+import { forgetForumPreview } from "../forumLinks";
 import {
   channelNotificationTag,
-  closeReadNotifications,
   notificationBody,
   resolveNotificationLevel,
   shouldNotify,
-  showDesktopNotification,
   threadNotificationTag,
-} from "@/lib/notifications";
-import {
-  arrivalSound,
-  deferArrivalSound,
-  playSound,
-  playSoundUrl,
-  prewarmSounds,
-  type SoundPack,
-} from "@/lib/sounds";
-
-// Warm the derived leave sound now, so the first leave is not silent while
-// it decodes. See lib/sounds.ts.
-prewarmSounds();
+} from "../notifications";
+import { arrivalSound, type SoundPack } from "../soundRules";
+import { host } from "../platform";
 
 /** Coalesce room-list refreshes.
  *
@@ -209,28 +194,23 @@ function notifyThreadReply(
 
   // Already reading this exact thread — the message is on screen.
   const viewingThisThread =
-    typeof document !== "undefined" &&
-    document.hasFocus() &&
+    host.hasFocus() &&
     stateRef.current.activeThreadEventId === msg.thread_id;
   if (viewingThisThread) return;
 
-  if (presence !== "dnd") playSound("mention", packFor(stateRef, msg.room_id));
+  if (presence !== "dnd") host.playSound("mention", packFor(stateRef, msg.room_id));
 
   const senderName =
     stateRef.current.userPresence[msg.sender]?.displayName || displayUserId(msg.sender);
   const threadLabel = msg.thread_name || "a thread";
-  showDesktopNotification({
+  host.notify({
     title: `${senderName} · ${threadLabel}`,
     body: notificationBody(body),
     icon: roomInfo?.icon_url || undefined,
     tag: threadNotificationTag(msg.room_id, msg.thread_id),
     ts: msg.origin_server_ts,
     onClick: () =>
-      window.dispatchEvent(
-        new CustomEvent("notification-navigate", {
-          detail: { roomId: msg.room_id, channelId: msg.channel_id, threadId: msg.thread_id },
-        }),
-      ),
+      host.emit("notification-navigate", { roomId: msg.room_id, channelId: msg.channel_id, threadId: msg.thread_id }),
   });
 }
 
@@ -298,8 +278,7 @@ function notifyForumMention(
   const roomId = msg.room_id;
   const channelId = msg.channel_id || "";
   const isViewing =
-    typeof document !== "undefined" &&
-    document.hasFocus() &&
+    host.hasFocus() &&
     roomId === stateRef.current.currentRoomId &&
     (channelId ? channelId === stateRef.current.currentChannelId : !stateRef.current.currentChannelId);
   const level = resolveNotificationLevel(stateRef.current.notificationSettings, roomId, channelId);
@@ -309,21 +288,19 @@ function notifyForumMention(
   if (roomId !== stateRef.current.currentRoomId) {
     dispatch({ type: "SET_MENTION", payload: { roomId, hasMention: true } });
   }
-  playSound("mention", packFor(stateRef, roomId));
+  host.playSound("mention", packFor(stateRef, roomId));
 
   const roomInfo = stateRef.current.roomInfoMap[roomId];
   const senderName =
     stateRef.current.userPresence[author]?.displayName || displayUserId(author);
   const where = postTitle ? `“${postTitle}”` : roomInfo?.name || "the forum";
-  showDesktopNotification({
+  host.notify({
     title: `${senderName} · ${where}`,
     body: notificationBody(body),
     icon: roomInfo?.icon_url || undefined,
     tag: `${roomId}|forum|${postId}`,
     onClick: () =>
-      window.dispatchEvent(
-        new CustomEvent("notification-navigate", { detail: { roomId, channelId, postId } }),
-      ),
+      host.emit("notification-navigate", { roomId, channelId, postId }),
   });
 }
 
@@ -417,8 +394,7 @@ export function createWsMessageHandler(
       ? channelId === stateRef.current.currentChannelId
       : !stateRef.current.currentChannelId;
     const isViewing =
-      typeof document !== "undefined" &&
-      document.hasFocus() &&
+      host.hasFocus() &&
       roomId === stateRef.current.currentRoomId &&
       sameChannel;
 
@@ -442,7 +418,7 @@ export function createWsMessageHandler(
         ? `${senderName} · #${channelName}`
         : `${senderName} · ${roomName}`;
 
-    showDesktopNotification({
+    host.notify({
       title,
       body: notificationBody(bodyText),
       icon: roomInfo?.icon_url || undefined,
@@ -450,9 +426,7 @@ export function createWsMessageHandler(
       tag: channelNotificationTag(roomId, channelId),
       ts: msg.origin_server_ts,
       onClick: () =>
-        window.dispatchEvent(
-          new CustomEvent("notification-navigate", { detail: { roomId, channelId } }),
-        ),
+        host.emit("notification-navigate", { roomId, channelId }),
     });
   };
 
@@ -513,7 +487,7 @@ export function createWsMessageHandler(
         }
         if (isMention) {
           const ownStatus = cur.userPresence[me]?.status;
-          if (ownStatus !== "dnd") playSound("mention", packFor(stateRef, msg.room_id));
+          if (ownStatus !== "dnd") host.playSound("mention", packFor(stateRef, msg.room_id));
         }
       }
     } else if (msg.type === "m.room.member") {
@@ -630,29 +604,25 @@ export function createWsMessageHandler(
       const cur = stateRef.current;
       const roomInfo = cur.roomInfoMap[msg.room_id];
       const ownStatus = cur.userPresence[cur.userId ?? ""]?.status;
-      if (ownStatus !== "dnd") playSound("mention", packFor(stateRef, msg.room_id));
-      showDesktopNotification({
+      if (ownStatus !== "dnd") host.playSound("mention", packFor(stateRef, msg.room_id));
+      host.notify({
         title: String(msg.name || "Event"),
         body: `${msg.when} · ${roomInfo?.name || "a room"}`,
         icon: roomInfo?.icon_url || undefined,
         tag: `${msg.room_id}|event|${msg.event_id}`,
         onClick: () =>
-          window.dispatchEvent(
-            new CustomEvent("notification-navigate", {
-              // The channel is only carried when the event is held in one, so
-              // a reminder for a voice event lands in the voice channel and
-              // everything else lands on the list.
-              detail: {
-                roomId: msg.room_id,
-                channelId: msg.channel_id || undefined,
-                panel: "events",
-              },
-            }),
-          ),
+          host.emit("notification-navigate", {
+            roomId: msg.room_id,
+            // The channel is only carried when the event is held in one, so
+            // a reminder for a voice event lands in the voice channel and
+            // everything else lands on the list.
+            channelId: msg.channel_id || undefined,
+            panel: "events",
+          }),
       });
       // In-app too: the desktop notification is silent when the tab is focused
       // and permission was never granted, and this is time-critical.
-      toast(String(msg.name || "Event"), {
+      host.toast(String(msg.name || "Event"), {
         description: `${msg.when} · ${roomInfo?.name || "a room"}`,
       });
     } else if (msg.type === "m.room.event_deleted") {
@@ -836,9 +806,9 @@ export function createWsMessageHandler(
             // which is before any audio is negotiated. Held until the voice
             // publisher connects, so the sound marks arriving in a call you can
             // hear rather than the intention to.
-            deferArrivalSound(arrival);
+            host.deferArrivalSound(arrival);
           } else if (arrival) {
-            playSoundUrl(arrival.url, arrival.gain);
+            host.playSoundUrl(arrival.url, arrival.gain);
           }
         }
       }
@@ -851,7 +821,7 @@ export function createWsMessageHandler(
             ? msg.channel_id === stateRef.current.voiceChannelId
             : msg.room_id === stateRef.current.voiceRoomId);
         if (inSameChannelLeave || msg.user_id === stateRef.current.userId) {
-          playSound("voice-leave", packFor(stateRef, msg.room_id));
+          host.playSound("voice-leave", packFor(stateRef, msg.room_id));
         }
       }
     } else if (msg.type === "voice_user_clipping") {
@@ -906,14 +876,12 @@ export function createWsMessageHandler(
     } else if (msg.type === "sound_rejected") {
       // A chosen sound failed the server's length or format check. Without
       // this the file would simply never play and nothing would say why.
-      toast.error(String(msg.error || "That sound could not be used"));
+      host.toastError(String(msg.error || "That sound could not be used"));
       // The picker set it optimistically and the server did not store it, so
       // say so: otherwise the profile keeps showing a sound that will never
       // play, and previewing it works, because the file did upload — only the
       // choice was refused.
-      window.dispatchEvent(
-        new CustomEvent("sound-rejected", { detail: { scope: String(msg.scope || "") } }),
-      );
+      host.emit("sound-rejected", { scope: String(msg.scope || "") });
     } else if (msg.type === "m.reply_notification") {
       // Deliberately nothing. The reply's own `m.room.message` carries
       // `reply_to_sender` and is counted, pinged and sounded there, on the
@@ -931,7 +899,7 @@ export function createWsMessageHandler(
           type: "APPLY_READ_MARKER",
           payload: { roomId, threadId: msg.thread_id, mentions: msg.mentions ?? 0 },
         });
-        void closeReadNotifications(threadNotificationTag(roomId, msg.thread_id), lastReadTs);
+        void host.closeReadNotifications(threadNotificationTag(roomId, msg.thread_id), lastReadTs);
       } else {
         const channelId: string = msg.channel_id || "";
         dispatch({
@@ -944,12 +912,12 @@ export function createWsMessageHandler(
             latestTs: msg.latest_ts ?? 0,
           },
         });
-        void closeReadNotifications(channelNotificationTag(roomId, channelId), lastReadTs);
+        void host.closeReadNotifications(channelNotificationTag(roomId, channelId), lastReadTs);
       }
     }
     // The user's own favourite GIFs, changed on this or another device.
     else if (msg.type === "gif_favorites") {
-      adoptGifFavorites(msg);
+      host.adoptGifFavorites(msg);
     }
     else if (msg.type === "m.room.dm_streak") {
       dispatch({
@@ -1093,9 +1061,7 @@ export function createWsMessageHandler(
              msg.type === "forum.comment.created" || msg.type === "forum.comment.deleted" ||
              msg.type === "forum.post.edited" || msg.type === "forum.comment.edited" ||
              msg.type === "forum.post.pinned" || msg.type === "forum.post.unpinned") {
-      window.dispatchEvent(
-        new CustomEvent(msg.type, { detail: msg })
-      );
+      host.emit(msg.type, msg);
       // A shared card of an edited or deleted post/reply is now stale, so drop
       // its cached resolution and let the next look re-resolve it. A created
       // one needs nothing: nobody could have linked it before it existed.
@@ -1115,9 +1081,7 @@ export function createWsMessageHandler(
     // Whiteboard real-time events — dispatch as custom events for WhiteboardArea to handle
     else if (msg.type === "whiteboard_stroke" || msg.type === "whiteboard_cursor" ||
              msg.type === "whiteboard_clear" || msg.type === "whiteboard_undo") {
-      window.dispatchEvent(
-        new CustomEvent(msg.type, { detail: msg })
-      );
+      host.emit(msg.type, msg);
     }
     // Watch Party real-time events
     else if (
@@ -1125,7 +1089,7 @@ export function createWsMessageHandler(
       msg.type === "watchparty_video_changed" ||
       msg.type === "watchparty_reaction_added"
     ) {
-      window.dispatchEvent(new CustomEvent(msg.type, { detail: msg }));
+      host.emit(msg.type, msg);
     }
     else if (msg.type === "watchparty_viewer_joined" || msg.type === "watchparty_viewer_left") {
       if (msg.room_id && Array.isArray(msg.viewers)) {
@@ -1153,8 +1117,6 @@ export function createWsMessageHandler(
     }
     // WebRTC signaling messages are handled by the voice/screen hooks
     // by subscribing to raw WS messages via a custom event
-    window.dispatchEvent(
-      new CustomEvent("ws-message", { detail: msg })
-    );
+    host.emit("ws-message", msg);
   };
 }

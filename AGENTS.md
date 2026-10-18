@@ -66,12 +66,20 @@ On GitHub, the same checks run in `.github/workflows/rust-quality.yml`.
 - Auth uses Bearer tokens generated at register/login, validated manually in each endpoint
 - Static files served from `client/dist/` via `tower-http::services::ServeDir`
 
+**packages/core/** - Chatter's protocol and state rules, shared by the web client and the mobile app. No React, no DOM; runs in Node for its tests. Key files:
+- `src/api.ts` - HTTP API wrappers. `configureApi({ origin, refreshTokenStore })` is for the mobile app; the browser calls nothing and keeps its HttpOnly cookie
+- `src/store/types.ts` - `AppState`, `Action` union, `initialState`, `AppContextValue`
+- `src/store/reducer.ts` - Pure reducer function
+- `src/store/wsHandler.ts` - `createWsMessageHandler` factory for WebSocket message dispatch
+- `src/platform.ts` - `host`: what the core asks of the app it runs in (toasts, sounds, notifications, focus, events, origin, saving a file). The web client's implementation is `client/src/lib/host.ts`
+- `src/notifications.ts`, `src/soundRules.ts`, `src/utils.ts` - the platform-neutral halves of the client's `notifications.ts`, `sounds.ts`, `utils.ts`
+- The client imports it as `@chatter/core/*` (tsconfig paths + Vite alias); old `client/src/lib/*` paths are one-line re-exports. New shared logic goes in core; anything touching `window`/`document` stays in the client or goes through `host` (eslint enforces this)
+- `cd packages/core && npm install && npm run check` - typecheck, lint, tests. Use npm 11 for `npm install` (npm 10.9 trips an arborist bug on vitest's peers)
+
 **client/** - React + Vite + TypeScript frontend using shadcn/ui component library (new-york style with Lyra preset theme, JetBrains Mono font, neutral base color, dark mode). Key files:
 
 *State management (`src/lib/store/`)*:
-- `store/types.ts` - `AppState`, `Action` union, `initialState`, `screenStreamsMap`, `AppContextValue`
-- `store/reducer.ts` - Pure reducer function (33 switch cases)
-- `store/wsHandler.ts` - `createWsMessageHandler` factory for WebSocket message dispatch
+- `store/types.ts`, `store/reducer.ts`, `store/wsHandler.ts` - now live in `packages/core/src/store/` (above); the client files re-export them
 - `store/provider.tsx` - `AppProvider`, `useAppContext` hook, all action callbacks, side effects
 - `store/index.ts` - Barrel re-exports (`useAppContext`, `AppProvider`, `screenStreamsMap`)
 
@@ -84,7 +92,7 @@ On GitHub, the same checks run in `.github/workflows/rust-quality.yml`.
 - `src/components/ThemeSync.tsx` / `ThemeInvite.tsx` - Cross-device sync; offers from a link or a room
 
 *Shared utilities*:
-- `src/lib/api.ts` - HTTP API wrapper functions
+- `src/lib/api.ts` - HTTP API wrapper functions (re-exported from `packages/core`)
 - `src/lib/webrtc.ts` - `WEBRTC_CONFIG`, `PeerStats` interface, `canSignal()`, `mungeScreenAudioSdp()`
 - `src/lib/polls.ts` - What a poll means on the client: the limits mirrored from the server, the countdown, and what a bar is a percentage *of*
 

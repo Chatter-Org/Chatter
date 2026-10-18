@@ -1,27 +1,22 @@
 /**
- * @vitest-environment jsdom
- *
  * Covers the wiring around the notification policy rather than the policy
  * itself (see notifications.test.ts): what the handler decides a DM *is*, and
  * whether it gets as far as raising one.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { initialState } from "@/lib/store/types";
-import type { AppState } from "@/lib/store/types";
+import { initialState } from "../../store/types";
+import type { AppState } from "../../store/types";
 
 const shown = vi.fn();
-vi.mock("@/lib/notifications", async (orig) => {
-  const actual = await orig<typeof import("@/lib/notifications")>();
-  return { ...actual, showDesktopNotification: (n: unknown) => { shown(n); return true; } };
-});
-vi.mock("@/lib/sounds", () => ({
-  arrivalSound: () => "", deferArrivalSound: () => {}, playSound: () => {},
-  playSoundUrl: () => {}, prewarmSounds: () => {},
-}));
-vi.mock("../api", () => ({ apiGetRoomMembers: vi.fn() }));
-vi.mock("sonner", () => ({ toast: Object.assign(() => {}, { error: () => {}, success: () => {} }) }));
 
-import { createWsMessageHandler } from "@/lib/store/wsHandler";
+import { createWsMessageHandler } from "../../store/wsHandler";
+import { configureHost } from "../../platform";
+
+let focused = false;
+beforeEach(() => {
+  focused = false;
+  configureHost({ notify: (n) => { shown(n); return true; }, hasFocus: () => focused });
+});
 
 function harness(state: Partial<AppState>) {
   const full = { ...initialState, userId: "@me:x", ...state } as AppState;
@@ -47,7 +42,7 @@ const dmMessage = {
 };
 
 describe("DM notifications", () => {
-  beforeEach(() => { shown.mockClear(); vi.spyOn(document, "hasFocus").mockReturnValue(false); });
+  beforeEach(() => { shown.mockClear(); focused = false; });
 
   it("notifies for a DM in a room the client knows about", () => {
     const h = harness({
@@ -118,7 +113,7 @@ describe("DM notifications", () => {
   });
 
   it("stays quiet when the DM is already open and focused", () => {
-    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    focused = true;
     const h = harness({
       currentRoomId: "!dm:x",
       roomInfoMap: dmRoomInfo,

@@ -49,12 +49,14 @@ let dbPromise: Promise<IDBDatabase | null> | null = null;
 function openDb(): Promise<IDBDatabase | null> {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve) => {
+    // eslint-disable-next-line no-restricted-globals -- guarded: absent on mobile, where resume is off
     if (typeof indexedDB === "undefined") {
       resolve(null);
       return;
     }
     let request: IDBOpenDBRequest;
     try {
+      // eslint-disable-next-line no-restricted-globals -- guarded above
       request = indexedDB.open(DB_NAME, DB_VERSION);
     } catch {
       resolve(null);

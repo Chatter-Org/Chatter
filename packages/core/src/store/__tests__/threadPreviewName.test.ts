@@ -1,25 +1,18 @@
 /**
- * @vitest-environment jsdom
- *
  * The channel list names an unnamed thread after the message that started it.
  * A live reply used to rename the row after itself.
  */
-import { describe, it, expect, vi } from "vitest";
-import { initialState } from "@/lib/store/types";
-import type { AppState, Action } from "@/lib/store/types";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { initialState } from "../../store/types";
+import type { AppState, Action } from "../../store/types";
 
-vi.mock("@/lib/notifications", async (orig) => {
-  const actual = await orig<typeof import("@/lib/notifications")>();
-  return { ...actual, showDesktopNotification: () => true };
+
+import { createWsMessageHandler } from "../../store/wsHandler";
+import { configureHost } from "../../platform";
+
+beforeEach(() => {
+  configureHost({ notify: () => true, hasFocus: () => false });
 });
-vi.mock("@/lib/sounds", () => ({
-  arrivalSound: () => "", deferArrivalSound: () => {}, playSound: () => {},
-  playSoundUrl: () => {}, prewarmSounds: () => {},
-}));
-vi.mock("../api", () => ({ apiGetRoomMembers: vi.fn() }));
-vi.mock("sonner", () => ({ toast: Object.assign(() => {}, { error: () => {}, success: () => {} }) }));
-
-import { createWsMessageHandler } from "@/lib/store/wsHandler";
 
 function previewNameAfter(msg: Record<string, unknown>, state: Partial<AppState> = {}) {
   const dispatch = vi.fn();
