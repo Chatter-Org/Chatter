@@ -30,6 +30,45 @@ export interface UploadStatus {
 }
 
 /**
+ * A file to upload, as each platform holds one.
+ *
+ * A browser `File` is wrapped as it is (`toUploadSource`), so the web sends
+ * exactly what it always did. A phone has no `File`: its picker hands back a
+ * path, and FormData takes that by reference as `{ uri, name, type }`; a chunk
+ * is a byte range the platform writes out first. The upload code needs only
+ * these few things, so both go through the same resumable path.
+ */
+export interface UploadSource {
+  name: string;
+  size: number;
+  lastModified?: number;
+  /** The whole file, as the `file` part of a multipart body. */
+  part(): Blob | UploadPart;
+  /** Bytes `[start, end)`, as the `file` part of a chunk's multipart body. */
+  chunk(start: number, end: number): Promise<Blob | UploadPart>;
+}
+
+/** A file a native platform passes to FormData by reference. */
+export interface UploadPart {
+  uri: string;
+  name: string;
+  type: string;
+}
+
+/** A browser `File`, or anything already shaped as a source. */
+export function toUploadSource(file: File | UploadSource): UploadSource {
+  if (typeof (file as UploadSource).part === "function") return file as UploadSource;
+  const f = file as File;
+  return {
+    name: f.name,
+    size: f.size,
+    lastModified: f.lastModified,
+    part: () => f,
+    chunk: async (start, end) => f.slice(start, end),
+  };
+}
+
+/**
  * What makes two `File`s the same file across a reload.
  *
  * Deliberately not a content hash: reading eight gigabytes through SubtleCrypto
@@ -38,7 +77,7 @@ export interface UploadStatus {
  * time is what a file picker can tell us for free, and two different files
  * agreeing on all three is not a thing that happens by accident.
  */
-export function fingerprintFile(file: File): string {
+export function fingerprintFile(file: { name: string; size: number; lastModified?: number }): string {
   return [file.name, file.size, file.lastModified || 0].join("\u0000");
 }
 
@@ -51,7 +90,7 @@ export function fingerprintFile(file: File): string {
  * different file, and has to start again.
  */
 export function isSameFile(
-  file: File,
+  file: { name: string; size: number; lastModified?: number },
   stored: { name: string; size: number; fingerprint: string },
 ): boolean {
   return fingerprintFile(file) === stored.fingerprint;

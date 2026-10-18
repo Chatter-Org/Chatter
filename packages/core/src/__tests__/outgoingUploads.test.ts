@@ -5,7 +5,7 @@ const apiSendMessage = vi.fn();
 const apiSendThreadMessage = vi.fn();
 const apiCancelUpload = vi.fn();
 
-vi.mock("@/lib/api", () => ({
+vi.mock("../api", () => ({
   apiUploadFile: (...args: unknown[]) => apiUploadFile(...args),
   apiSendMessage: (...args: unknown[]) => apiSendMessage(...args),
   apiSendThreadMessage: (...args: unknown[]) => apiSendThreadMessage(...args),
@@ -18,7 +18,7 @@ const {
   outgoingUploads,
   discardOutgoing,
   retryOutgoing,
-} = await import("@/lib/outgoingUploads");
+} = await import("../outgoingUploads");
 
 function fileNamed(name: string): File {
   return new File(["x"], name, { type: "application/octet-stream" });

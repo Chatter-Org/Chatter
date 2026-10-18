@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { runPool, UPLOAD_CONCURRENCY } from "@/lib/concurrency";
+import { runPool, UPLOAD_CONCURRENCY } from "../concurrency";
 
 /** A job that resolves when told to, so overlap can be observed. */
 function deferred<T>() {

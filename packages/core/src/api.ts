@@ -3,6 +3,9 @@
 import {
   CHUNK_MAX_ATTEMPTS,
   ChunkUploadError,
+  toUploadSource,
+  type UploadPart,
+  type UploadSource,
   backoffDelayMs,
   chunkRange,
   classifyChunkFailure,
@@ -1432,12 +1435,14 @@ const CLIENT_CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
 const SINGLE_UPLOAD_TIMEOUT_MS = 300_000;
 
 function uploadSingleFile(
-  file: File,
+  file: UploadSource,
   onProgress?: (pct: number) => void
 ): Promise<{ url: string }> {
   const formData = new FormData();
   formData.append("filename", file.name);
-  formData.append("file", file);
+  // A native part ({ uri, name, type }) is not a Blob, but React Native's
+  // FormData takes it by reference; the DOM's types do not know that.
+  formData.append("file", file.part() as Blob);
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -1555,7 +1560,8 @@ function waitForNetwork(): Promise<void> {
 function sendChunkOnce(
   uploadId: string,
   chunkIndex: number,
-  blob: Blob,
+  part: Blob | UploadPart,
+  size: number,
   checksum: string | null,
   onBytes?: (loaded: number) => void,
 ): Promise<void> {
@@ -1564,7 +1570,7 @@ function sendChunkOnce(
     fd.append("uploadId", uploadId);
     fd.append("chunkIndex", String(chunkIndex));
     if (checksum) fd.append("checksum", checksum);
-    fd.append("file", blob);
+    fd.append("file", part as Blob);
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", serverUrl("/api/upload/chunk"));
@@ -1575,7 +1581,7 @@ function sendChunkOnce(
     if (onBytes) {
       // The multipart envelope makes `loaded` run slightly past the blob, and
       // a bar that reaches 101% of a chunk reads as a bug.
-      xhr.upload.onprogress = (e) => onBytes(Math.min(e.loaded, blob.size));
+      xhr.upload.onprogress = (e) => onBytes(Math.min(e.loaded, size));
     }
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
@@ -1609,15 +1615,18 @@ function sendChunkOnce(
 async function sendChunk(
   uploadId: string,
   chunkIndex: number,
-  blob: Blob,
+  part: Blob | UploadPart,
+  size: number,
   onBytes: (loaded: number) => void,
 ): Promise<void> {
-  const checksum = await chunkChecksum(blob);
+  // Only a Blob can be hashed here; a native part is checked by size alone,
+  // which the server treats as enough (the checksum is optional).
+  const checksum = typeof Blob !== "undefined" && part instanceof Blob ? await chunkChecksum(part) : null;
 
   for (let attempt = 1; ; attempt++) {
     await waitForNetwork();
     try {
-      return await sendChunkOnce(uploadId, chunkIndex, blob, checksum, onBytes);
+      return await sendChunkOnce(uploadId, chunkIndex, part, size, checksum, onBytes);
     } catch (err) {
       const failure =
         err instanceof ChunkUploadError
@@ -1676,7 +1685,7 @@ interface UploadSession {
  * staging dir may have been swept out from under it entirely. The stored
  * record only says *which upload* to ask about.
  */
-async function resumeSession(file: File, fingerprint: string): Promise<UploadSession | null> {
+async function resumeSession(file: UploadSource, fingerprint: string): Promise<UploadSession | null> {
   const stored = await loadResumable(fingerprint);
   if (!stored) return null;
 
@@ -1694,7 +1703,7 @@ async function resumeSession(file: File, fingerprint: string): Promise<UploadSes
   };
 }
 
-async function beginSession(file: File, fingerprint: string): Promise<UploadSession> {
+async function beginSession(file: UploadSource, fingerprint: string): Promise<UploadSession> {
   const initRes = await authenticatedFetch("/api/upload/init", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1765,7 +1774,7 @@ async function waitForProcessing(uploadId: string): Promise<string | null> {
 
 /** Send everything `session` is still owed, then assemble. */
 async function runUploadSession(
-  file: File,
+  file: UploadSource,
   fingerprint: string,
   session: UploadSession,
   onProgress?: (pct: number) => void,
@@ -1797,8 +1806,8 @@ async function runUploadSession(
 
   for (const index of missingChunks(chunkCount, sent)) {
     const { start, end } = chunkRange(index, chunkSize, file.size);
-    const blob = file.slice(start, end);
-    await sendChunk(uploadId, index, blob, (loaded) => report(loaded));
+    const part = await file.chunk(start, end);
+    await sendChunk(uploadId, index, part, end - start, (loaded) => report(loaded));
 
     sent.push(index);
     settledBytes += end - start;
@@ -1873,7 +1882,7 @@ async function runUploadSession(
 const inFlightUploads = new Set<string>();
 
 async function uploadChunkedFile(
-  file: File,
+  file: UploadSource,
   onProgress?: (pct: number) => void
 ): Promise<{ url: string }> {
   const fingerprint = fingerprintFile(file);
@@ -1886,7 +1895,7 @@ async function uploadChunkedFile(
 }
 
 async function runChunkedUpload(
-  file: File,
+  file: UploadSource,
   fingerprint: string,
   onProgress?: (pct: number) => void
 ): Promise<{ url: string }> {
@@ -1928,7 +1937,7 @@ export async function apiDiscardInterruptedUpload(fingerprint: string): Promise<
 }
 
 /** The same, for a file still in hand. */
-export async function apiCancelUpload(file: File): Promise<void> {
+export async function apiCancelUpload(file: File | UploadSource): Promise<void> {
   await apiDiscardInterruptedUpload(fingerprintFile(file));
 }
 
@@ -1983,13 +1992,14 @@ export async function apiListInterruptedUploads(): Promise<InterruptedUpload[]> 
 }
 
 export async function apiUploadFile(
-  file: File,
+  file: File | UploadSource,
   onProgress?: (pct: number) => void
 ): Promise<{ url: string }> {
-  if (file.size > CLIENT_CHUNK_SIZE) {
-    return uploadChunkedFile(file, onProgress);
+  const source = toUploadSource(file);
+  if (source.size > CLIENT_CHUNK_SIZE) {
+    return uploadChunkedFile(source, onProgress);
   }
-  return uploadSingleFile(file, onProgress);
+  return uploadSingleFile(source, onProgress);
 }
 
 // ─── Link previews ──────────────────────────────────────────────────────────

@@ -1,13 +1,30 @@
-import { useSyncExternalStore } from "react";
 import {
   apiCancelUpload,
   apiSendMessage,
   apiSendThreadMessage,
   apiUploadFile,
-} from "@/lib/api";
-import { isPreviewable } from "@/hooks/usePendingFiles";
-import { runPool, UPLOAD_CONCURRENCY } from "@/lib/concurrency";
-import type { UploadStatus } from "@/hooks/useUploadQueue";
+} from "./api";
+import { runPool, UPLOAD_CONCURRENCY } from "./concurrency";
+import type { UploadSource } from "./uploadResume";
+
+export type UploadStatus = "queued" | "uploading" | "processing" | "done" | "failed";
+
+/** A file being sent: a browser `File`, or a platform's own source. */
+export type OutgoingFileSource = File | UploadSource;
+
+/**
+ * How a client draws a staged file before it is sent. The web makes an object
+ * URL for pictures and videos; a phone already has the file's path. Neither
+ * is the queue's business beyond asking and, when the batch goes, letting go.
+ */
+let previews: {
+  make: (file: OutgoingFileSource) => string | null;
+  release: (url: string) => void;
+} = { make: () => null, release: () => {} };
+
+export function configureOutgoingPreviews(hooks: typeof previews): void {
+  previews = hooks;
+}
 
 /**
  * Sends that are still going out, held outside React so that leaving the room
@@ -38,7 +55,7 @@ export type OutgoingTarget =
 
 export interface OutgoingFile {
   id: string;
-  file: File;
+  file: OutgoingFileSource;
   /** Object URL for image and video previews; null for everything else. */
   previewUrl: string | null;
   status: UploadStatus;
@@ -79,14 +96,13 @@ function snapshot() {
   return batches;
 }
 
-/** Every send still on its way, wherever it is going. */
-export function useOutgoingUploads(): OutgoingBatch[] {
-  return useSyncExternalStore(subscribe, snapshot, snapshot);
-}
+/** Subscribe to changes; returns the unsubscribe. Each app wraps this in a
+ *  hook (`useSyncExternalStore(subscribeOutgoing, outgoingUploads)`). */
+export const subscribeOutgoing = subscribe;
 
 /** The same, for anything outside React that wants to look. */
 export function outgoingUploads(): OutgoingBatch[] {
-  return batches;
+  return snapshot();
 }
 
 function patchBatch(id: string, change: (batch: OutgoingBatch) => OutgoingBatch) {
@@ -105,7 +121,7 @@ function patchFile(batchId: string, fileId: string, status: UploadStatus, pct: n
 
 function dropBatch(id: string) {
   const going = batches.find((batch) => batch.id === id);
-  going?.files.forEach((entry) => entry.previewUrl && URL.revokeObjectURL(entry.previewUrl));
+  going?.files.forEach((entry) => entry.previewUrl && previews.release(entry.previewUrl));
   batches = batches.filter((batch) => batch.id !== id);
   emit();
 }
@@ -132,7 +148,7 @@ export function enqueueOutgoing(input: {
   target: OutgoingTarget;
   label: string;
   body: string;
-  files: File[];
+  files: OutgoingFileSource[];
 }): string {
   const id = `outgoing-${nextId++}`;
   const batch: OutgoingBatch = {
@@ -147,7 +163,7 @@ export function enqueueOutgoing(input: {
       file,
       // Created here rather than inside the runner, so the tiles have their
       // pictures from the first render.
-      previewUrl: isPreviewable(file) ? URL.createObjectURL(file) : null,
+      previewUrl: previews.make(file),
       status: "queued" as const,
       pct: 0,
     })),
