@@ -2,45 +2,17 @@ import { useEffect, useRef } from "react";
 import { useAppState } from "@/lib/store";
 import {
   useThemeSettings,
-  isSafeThemeId,
-  normalizeAdvanced,
   normalizeDisplay,
   DEFAULT_DISPLAY,
   type ThemeDefinition,
 } from "@/lib/theme";
-import { isHexColor } from "@/lib/color";
-import {
-  apiGetAppearance,
-  apiSetAppearance,
-  type AppearancePayload,
-} from "@/lib/api";
+import { themeFromAppearance, themeToAppearance } from "@chatter/core/theme";
+import { apiGetAppearance, apiSetAppearance } from "@/lib/api";
 
 /** Long enough that dragging a slider is one write, short enough that closing
  *  the tab straight after a click rarely beats it — and the flush below covers
  *  when it does. */
 const PUSH_DEBOUNCE_MS = 600;
-
-function toThemeDefinition(
-  raw: NonNullable<AppearancePayload["custom_themes"]>[number],
-): ThemeDefinition | null {
-  const c = raw?.colors;
-  if (!c || !isSafeThemeId(raw.id)) return null;
-  const keys = ["background", "card", "accent", "primary"] as const;
-  if (!keys.every((k) => isHexColor(c[k]))) return null;
-  if (raw.mode !== "light" && raw.mode !== "dark") return null;
-  return {
-    id: raw.id,
-    name: raw.name,
-    mode: raw.mode,
-    colors: {
-      background: c.background,
-      card: c.card,
-      accent: c.accent,
-      primary: c.primary,
-    },
-    advanced: normalizeAdvanced(raw.advanced),
-  };
-}
 
 /**
  * Keeps appearance settings in step with the server, so a theme built on one
@@ -68,14 +40,9 @@ export function ThemeSync() {
   const localJson = JSON.stringify({
     theme_id: themeId,
     custom_themes: customThemes.map((t) => ({
-      id: t.id,
-      name: t.name,
-      mode: t.mode,
-      colors: t.colors,
-      // Omitted rather than sent as null, so the shape matches what comes back
-      // and the change detection below does not see a difference that is not
-      // one.
-      ...(t.advanced ? { advanced: t.advanced } : {}),
+      // advanced omitted rather than sent as null, so the shape matches what
+      // comes back and the change detection below sees no false difference.
+      ...themeToAppearance(t),
     })),
     display: {
       font_scale: display.fontScale,
@@ -109,7 +76,7 @@ export function ThemeSync() {
             themeId: remote.theme_id,
             customThemes:
               remote.custom_themes
-                ?.map(toThemeDefinition)
+                ?.map(themeFromAppearance)
                 .filter((t): t is ThemeDefinition => t !== null) ?? null,
             display: remote.display
               ? normalizeDisplay({

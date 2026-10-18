@@ -75,3 +75,81 @@ export function resolveSound(event: SoundEvent, pack?: SoundPack): string | null
   if (override) return override;
   return BUILT_IN[event];
 }
+
+// ─── The listener's settings ─────────────────────────────────────────────────
+// Kept on the device, as on the web (the same key), and honoured by whichever
+// platform plays the sound.
+
+const SETTINGS_KEY = "chatter_sound_settings";
+
+export interface SoundSettings {
+  /** Master switch for every effect, including entrance stings. */
+  enabled: boolean;
+  /** 0–1, applied to every sound this module plays. */
+  volume: number;
+}
+
+export const DEFAULT_SOUND_SETTINGS: SoundSettings = { enabled: true, volume: 0.7 };
+
+export function loadSoundSettings(): SoundSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return DEFAULT_SOUND_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<SoundSettings>;
+    return {
+      enabled: parsed.enabled ?? DEFAULT_SOUND_SETTINGS.enabled,
+      // Clamp rather than trust: a stored value out of range would either be
+      // silent or painfully loud, and neither is recoverable from in the UI.
+      volume: clampVolume(parsed.volume ?? DEFAULT_SOUND_SETTINGS.volume),
+    };
+  } catch {
+    return DEFAULT_SOUND_SETTINGS;
+  }
+}
+
+export function saveSoundSettings(settings: SoundSettings) {
+  try {
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ ...settings, volume: clampVolume(settings.volume) }),
+    );
+  } catch {
+    // Storage blocked: the setting holds for this session only.
+  }
+}
+
+export function clampVolume(volume: number): number {
+  if (!Number.isFinite(volume)) return DEFAULT_SOUND_SETTINGS.volume;
+  return Math.min(1, Math.max(0, volume));
+}
+
+/**
+ * An arrival sound waiting for the connection it announces.
+ *
+ * Your own sting is triggered by the server registering the join, which happens
+ * before any audio is negotiated — so it played into a call you could not yet
+ * hear or be heard in, and finished before anyone arrived. Held here instead,
+ * and released when the voice publisher actually connects.
+ *
+ * Module state beside the store, like `screenStreamsMap`: nothing renders from
+ * it, and a re-render must not replay a sound.
+ */
+let pendingArrival: { url: string; gain: number } | null = null;
+
+/** Hold an arrival sound until the connection it announces is up. */
+export function deferArrivalSound(sound: { url: string; gain: number } | null) {
+  pendingArrival = sound;
+}
+
+/** Take whatever was held, once — for the platform to play. A second call
+ *  after it is null. */
+export function takeDeferredArrivalSound(): { url: string; gain: number } | null {
+  const sound = pendingArrival;
+  pendingArrival = null;
+  return sound;
+}
+
+/** Forget it — the call being announced is not happening. */
+export function dropDeferredArrivalSound() {
+  pendingArrival = null;
+}
