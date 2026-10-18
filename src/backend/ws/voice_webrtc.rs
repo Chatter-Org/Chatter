@@ -165,6 +165,7 @@ pub(crate) async fn handle_voice_webrtc_publish_offer(
             "type": "voice_webrtc_error",
             "scope": "publish",
             "room_id": room_id,
+            "code": "force_muted",
             "detail": "You have been muted by a moderator"
         });
         send_to_user(&state, user_id, &error).await;
@@ -181,6 +182,7 @@ pub(crate) async fn handle_voice_webrtc_publish_offer(
             "type": "voice_webrtc_error",
             "scope": "publish",
             "room_id": room_id,
+            "code": "cannot_speak",
             "detail": "You do not have permission to speak in this room"
         });
         send_to_user(&state, user_id, &error).await;

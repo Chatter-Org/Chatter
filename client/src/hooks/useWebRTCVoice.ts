@@ -7,7 +7,7 @@ import {
   playSound,
   type SoundPack,
 } from "@/lib/sounds";
-import { fetchIceServers, getWebRTCConfig, VOICE_SUBSCRIBE_RETRY_MS, VOICE_SUBSCRIBE_MAX_RETRIES, VOICE_SUBSCRIBE_MAX_BACKOFF_MS, VOICE_PUBLISH_INITIAL_RETRY_MS, VOICE_PUBLISH_MAX_BACKOFF_MS, VOICE_SLOT_COUNT, VOICE_BITRATE_DEFAULT_BPS, canSignal, clampVoiceBitrate, mungeVoiceAudioSdp, applyVoiceSenderBitrate } from "@/lib/webrtc";
+import { fetchIceServers, getWebRTCConfig, VOICE_SUBSCRIBE_RETRY_MS, VOICE_SUBSCRIBE_MAX_RETRIES, VOICE_SUBSCRIBE_MAX_BACKOFF_MS, VOICE_PUBLISH_INITIAL_RETRY_MS, VOICE_PUBLISH_MAX_BACKOFF_MS, VOICE_SLOT_COUNT, VOICE_BITRATE_DEFAULT_BPS, VOICE_CONNECT_TIMEOUT_MS, VOICE_DISCONNECTED_GRACE_MS, canSignal, clampVoiceBitrate, mungeVoiceAudioSdp, applyVoiceSenderBitrate, holdCandidatesUntilAnswer, isAwaitingAnswer, addRemoteCandidate, releaseHeldCandidates } from "@/lib/webrtc";
 import { toast } from "sonner";
 import { desktop, hasDesktopFeature } from "@/lib/desktop/bridge";
 import type { VoiceRestoreState } from "@/lib/voiceRejoin";
@@ -15,7 +15,9 @@ import { toWorld } from "@/lib/spatialAudio";
 import { browserVoiceBackend, selectVoiceBackend, type LocalMic, type MicOptions, type VoiceMediaBackend, type VoicePeer } from "@/lib/media";
 
 const VOICE_PUBLISH_MAX_RETRIES = 5;
-const VOICE_PUBLISH_ANSWER_TIMEOUT_MS = 10_000;
+const RECONNECTING_TOAST = "voice-reconnecting";
+// A first retry is usually invisible; by the third someone has noticed.
+const RECONNECTING_TOAST_AFTER = 3;
 
 function micOptionsFrom(settings: VoiceSettings): MicOptions {
   return {
@@ -60,8 +62,9 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
   const voiceSubscribeRetryCountRef = useRef(0);
   const createVoiceSubscriptionRef = useRef<() => Promise<void>>(async () => {});
   const voicePublishRetryCountRef = useRef(0);
-  const voicePublishAnswerReceivedRef = useRef(false);
   const createVoicePublisherRef = useRef<() => Promise<void>>(async () => {});
+  // Set while a moderator has us muted, when the publisher is closed on purpose.
+  const forceMutedRef = useRef(false);
   // Bitrate configured on the voice channel we're publishing into
   const voiceBitrateRef = useRef(VOICE_BITRATE_DEFAULT_BPS);
   // Set below; lets the moderation handlers call join/leave without adding them
@@ -218,12 +221,73 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
     }
   };
 
+  // ─── Connection recovery ──────────────────────────────────────────────────
+  // Both connections recover the same way. A connection that came up and then
+  // broke is retried for as long as the call lasts, backing off to a ceiling:
+  // giving up after a handful of tries, as this used to, left somebody sitting
+  // in a call nobody could hear, with nothing on screen saying so. One that
+  // never got an answer is different — the server refused or ignored the offer,
+  // and the same offer will not fare better — so that is capped.
+  const noteRecovered = () => toast.dismiss(RECONNECTING_TOAST);
+  const noteRetrying = (attempt: number, cap: number, capped: boolean) => {
+    if (capped && attempt > cap) {
+      toast.error("Couldn't connect to voice. Try leaving and rejoining the channel.", { id: RECONNECTING_TOAST });
+    } else if (attempt === RECONNECTING_TOAST_AFTER) {
+      toast.warning("Voice connection lost. Reconnecting…", { id: RECONNECTING_TOAST });
+    }
+  };
+
+  // Rebuild a connection that stalls: no answer or no connection within the
+  // timeout, or "disconnected" for longer than a blip.
+  const watchConnection = (pc: VoicePeer, current: () => VoicePeer | null, fail: (pc: VoicePeer, reason: string, capped: boolean) => void) => {
+    setTimeout(() => {
+      if (pc !== current() || pc.connectionState === "connected") return;
+      fail(pc, isAwaitingAnswer(pc) ? "got no answer" : `stuck ${pc.connectionState}`, isAwaitingAnswer(pc));
+    }, VOICE_CONNECT_TIMEOUT_MS);
+  };
+  const graceDisconnect = (pc: VoicePeer, current: () => VoicePeer | null, fail: (pc: VoicePeer, reason: string, capped: boolean) => void) => {
+    setTimeout(() => {
+      if (pc !== current()) return;
+      if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+        fail(pc, "stayed disconnected", false);
+      }
+    }, VOICE_DISCONNECTED_GRACE_MS);
+  };
+
   // ─── Voice publisher ──────────────────────────────────────────────────────
+  const failPublisher = (pc: VoicePeer, reason: string, capped: boolean) => {
+    if (pc !== voicePublisherPcRef.current) return;
+    try { pc.close(); } catch {}
+    voicePublisherPcRef.current = null;
+    // A moderator's mute closes the publisher on purpose, and lifting it
+    // rebuilds it; retrying in between would only be refused.
+    if (!inVoiceRef.current || forceMutedRef.current) {
+      voicePublishRetryCountRef.current = 0;
+      return;
+    }
+    const attempt = voicePublishRetryCountRef.current + 1;
+    console.warn(`[voice] Publisher ${reason} (attempt ${attempt})`);
+    noteRetrying(attempt, VOICE_PUBLISH_MAX_RETRIES, capped);
+    if (capped && attempt > VOICE_PUBLISH_MAX_RETRIES) {
+      voicePublishRetryCountRef.current = 0;
+      return;
+    }
+    voicePublishRetryCountRef.current = attempt;
+    const delay = Math.min(VOICE_PUBLISH_INITIAL_RETRY_MS * 2 ** (attempt - 1), VOICE_PUBLISH_MAX_BACKOFF_MS);
+    setTimeout(async () => {
+      if (!inVoiceRef.current || voicePublisherPcRef.current) return;
+      await fetchIceServers();
+      await createVoicePublisherRef.current();
+    }, delay);
+  };
+
   const createVoicePublisher = useCallback(async () => {
     if (!micRef.current || !canSignal(wsRef)) return;
     const pc = backendRef.current.createPeer(getWebRTCConfig());
     voicePublisherPcRef.current = pc;
+    holdCandidatesUntilAnswer(pc);
     micRef.current.attachTo(pc);
+    const current = () => voicePublisherPcRef.current;
 
     pc.onicecandidate = (ev) => {
       if (!ev.candidate || !canSignal(wsRef)) return;
@@ -241,26 +305,15 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
       dispatch({ type: "SET_VOICE_STATE", payload: { voicePublisherState: pc.connectionState } });
       if (pc.connectionState === "connected") {
         voicePublishRetryCountRef.current = 0;
+        noteRecovered();
         // Audio is flowing now, so the arrival this call was announcing has
         // actually happened. Held since the join was acknowledged; a retry
         // simply releases it later, and leaving first drops it entirely.
         playDeferredArrivalSound();
+      } else if (pc.connectionState === "disconnected") {
+        graceDisconnect(pc, current, failPublisher);
       } else if (pc.connectionState === "failed") {
-        const attempt = voicePublishRetryCountRef.current + 1;
-        console.warn(`[voice] Publisher connection failed (attempt ${attempt}/${VOICE_PUBLISH_MAX_RETRIES})`);
-        try { pc.close(); } catch {}
-        voicePublisherPcRef.current = null;
-        if (attempt <= VOICE_PUBLISH_MAX_RETRIES && inVoiceRef.current) {
-          voicePublishRetryCountRef.current = attempt;
-          const delay = Math.min(VOICE_PUBLISH_INITIAL_RETRY_MS * 2 ** (attempt - 1), VOICE_PUBLISH_MAX_BACKOFF_MS);
-          setTimeout(async () => {
-            if (!inVoiceRef.current || voicePublisherPcRef.current) return;
-            await fetchIceServers();
-            await createVoicePublisherRef.current();
-          }, delay);
-        } else {
-          voicePublishRetryCountRef.current = 0;
-        }
+        failPublisher(pc, "connection failed", false);
       }
     };
 
@@ -268,41 +321,53 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
     // report here the label would go on showing whatever the dead one last said.
     dispatch({ type: "SET_VOICE_STATE", payload: { voicePublisherState: pc.connectionState } });
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await applyVoiceSenderBitrate(pc, voiceBitrateRef.current);
-    if (!canSignal(wsRef)) return;
-    voicePublishAnswerReceivedRef.current = false;
-    wsRef.current!.send(JSON.stringify({
-      type: "voice_webrtc_publish_offer",
-      room_id: voiceRoomIdRef.current || currentRoomRef.current,
-      channel_id: voiceChannelIdRef.current || undefined,
-      sdp: offer.sdp,
-    }));
-
-    // Timeout: if no answer arrives within threshold, tear down and retry
-    setTimeout(() => {
+    try {
+      const offer = await pc.createOffer();
       if (pc !== voicePublisherPcRef.current) return;
-      if (voicePublishAnswerReceivedRef.current) return;
-      console.warn("[voice] Publisher offer timed out waiting for answer, retrying");
-      try { pc.close(); } catch {}
-      voicePublisherPcRef.current = null;
-      const attempt = voicePublishRetryCountRef.current + 1;
-      if (attempt <= VOICE_PUBLISH_MAX_RETRIES && inVoiceRef.current) {
-        voicePublishRetryCountRef.current = attempt;
-        const delay = Math.min(VOICE_PUBLISH_INITIAL_RETRY_MS * 2 ** (attempt - 1), VOICE_PUBLISH_MAX_BACKOFF_MS);
-        setTimeout(async () => {
-          if (!inVoiceRef.current || voicePublisherPcRef.current) return;
-          await fetchIceServers();
-          await createVoicePublisherRef.current();
-        }, delay);
-      }
-    }, VOICE_PUBLISH_ANSWER_TIMEOUT_MS);
+      await pc.setLocalDescription(offer);
+      await applyVoiceSenderBitrate(pc, voiceBitrateRef.current);
+      if (!canSignal(wsRef)) return;
+      wsRef.current!.send(JSON.stringify({
+        type: "voice_webrtc_publish_offer",
+        room_id: voiceRoomIdRef.current || currentRoomRef.current,
+        channel_id: voiceChannelIdRef.current || undefined,
+        sdp: offer.sdp,
+      }));
+      watchConnection(pc, current, failPublisher);
+    } catch (err) {
+      console.warn("[voice] could not create publisher offer", err);
+      failPublisher(pc, "could not make an offer", true);
+    }
   }, []);
   // Keep ref in sync so the publisher failure handler can re-invoke it
   createVoicePublisherRef.current = createVoicePublisher;
 
   // ─── Voice subscriber ─────────────────────────────────────────────────────
+  const failSubscriber = (pc: VoicePeer, reason: string, capped: boolean) => {
+    if (pc !== voiceSubscriberPcRef.current) return;
+    try { pc.close(); } catch {}
+    voiceSubscriberPcRef.current = null;
+    closeVoiceAudioGraph();
+    if (!inVoiceRef.current) {
+      voiceSubscribeRetryCountRef.current = 0;
+      return;
+    }
+    const attempt = voiceSubscribeRetryCountRef.current + 1;
+    console.warn(`[voice] Subscription ${reason} (attempt ${attempt})`);
+    noteRetrying(attempt, VOICE_SUBSCRIBE_MAX_RETRIES, capped);
+    if (capped && attempt > VOICE_SUBSCRIBE_MAX_RETRIES) {
+      voiceSubscribeRetryCountRef.current = 0;
+      return;
+    }
+    voiceSubscribeRetryCountRef.current = attempt;
+    const delay = Math.min(VOICE_SUBSCRIBE_RETRY_MS * 2 ** (attempt - 1), VOICE_SUBSCRIBE_MAX_BACKOFF_MS);
+    setTimeout(async () => {
+      if (!inVoiceRef.current || voiceSubscriberPcRef.current) return;
+      await fetchIceServers();
+      await createVoiceSubscriptionRef.current();
+    }, delay);
+  };
+
   // One connection carries the entire call. It offers a fixed number of
   // receive-only transceivers — slots — and the server decides which speaker
   // occupies each one, announcing the mapping over the websocket. Nobody
@@ -313,6 +378,8 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
 
     const pc = backendRef.current.createPeer(getWebRTCConfig());
     voiceSubscriberPcRef.current = pc;
+    holdCandidatesUntilAnswer(pc);
+    const current = () => voiceSubscriberPcRef.current;
 
     pc.onicecandidate = (ev) => {
       if (!ev.candidate || !canSignal(wsRef)) return;
@@ -343,26 +410,14 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
       if (pc !== voiceSubscriberPcRef.current) return;
       if (pc.connectionState === "connected") {
         voiceSubscribeRetryCountRef.current = 0;
+        noteRecovered();
       } else if (pc.connectionState === "disconnected") {
-        // Transient loss — attempt ICE restart before giving up
-        try { pc.restartIce(); } catch {}
+        // Usually a blip the browser recovers from by itself. An ICE restart
+        // would need a renegotiation the SFU does not take, so the fallback is
+        // a fresh subscription — the server replaces the old one on the offer.
+        graceDisconnect(pc, current, failSubscriber);
       } else if (pc.connectionState === "failed") {
-        const attempt = voiceSubscribeRetryCountRef.current + 1;
-        console.warn(`[voice] Subscription failed (attempt ${attempt}/${VOICE_SUBSCRIBE_MAX_RETRIES})`);
-        try { pc.close(); } catch {}
-        voiceSubscriberPcRef.current = null;
-        closeVoiceAudioGraph();
-        if (attempt <= VOICE_SUBSCRIBE_MAX_RETRIES && inVoiceRef.current) {
-          voiceSubscribeRetryCountRef.current = attempt;
-          const delay = Math.min(VOICE_SUBSCRIBE_RETRY_MS * 2 ** (attempt - 1), VOICE_SUBSCRIBE_MAX_BACKOFF_MS);
-          setTimeout(async () => {
-            if (!inVoiceRef.current || voiceSubscriberPcRef.current) return;
-            await fetchIceServers();
-            await createVoiceSubscriptionRef.current();
-          }, delay);
-        } else {
-          voiceSubscribeRetryCountRef.current = 0;
-        }
+        failSubscriber(pc, "connection failed", false);
       }
     };
 
@@ -381,9 +436,10 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
         room_id: voiceRoomIdRef.current || currentRoomRef.current,
         sdp: offer.sdp,
       }));
-    } catch {
-      try { pc.close(); } catch {}
-      if (pc === voiceSubscriberPcRef.current) voiceSubscriberPcRef.current = null;
+      watchConnection(pc, current, failSubscriber);
+    } catch (err) {
+      console.warn("[voice] could not create subscription offer", err);
+      failSubscriber(pc, "could not make an offer", true);
     }
   }, []);
   createVoiceSubscriptionRef.current = createVoiceSubscription;
@@ -413,32 +469,42 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
     const handler = async (e: Event) => {
       const msg = (e as CustomEvent).detail;
       if (msg.type === "voice_webrtc_publish_answer" && voicePublisherPcRef.current) {
-        voicePublishAnswerReceivedRef.current = true;
+        const pc = voicePublisherPcRef.current;
+        if (!isAwaitingAnswer(pc)) return;
         try {
-          await voicePublisherPcRef.current.setRemoteDescription({
+          await pc.setRemoteDescription({
             type: "answer",
             sdp: mungeVoiceAudioSdp(msg.sdp, voiceBitrateRef.current),
           });
-          await applyVoiceSenderBitrate(voicePublisherPcRef.current, voiceBitrateRef.current);
-        } catch {}
+          await releaseHeldCandidates(pc);
+          await applyVoiceSenderBitrate(pc, voiceBitrateRef.current);
+        } catch (err) {
+          console.warn("[voice] could not apply publisher answer", err);
+          failPublisher(pc, "answer was rejected", true);
+        }
       } else if (msg.type === "voice_webrtc_publish_candidate" && voicePublisherPcRef.current) {
-        try { await voicePublisherPcRef.current.addIceCandidate(msg.candidate); } catch {}
+        if (msg.candidate) await addRemoteCandidate(voicePublisherPcRef.current, msg.candidate);
       } else if (msg.type === "voice_webrtc_subscribe_answer") {
         const pc = voiceSubscriberPcRef.current;
-        if (pc && msg.sdp) {
-          try { await pc.setRemoteDescription({ type: "answer", sdp: msg.sdp }); } catch {}
+        if (pc && msg.sdp && isAwaitingAnswer(pc)) {
+          try {
+            await pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
+            await releaseHeldCandidates(pc);
+          } catch (err) {
+            console.warn("[voice] could not apply subscription answer", err);
+            failSubscriber(pc, "answer was rejected", true);
+          }
         }
       } else if (msg.type === "voice_webrtc_subscribe_candidate") {
         const pc = voiceSubscriberPcRef.current;
-        if (pc && msg.candidate) {
-          try { await pc.addIceCandidate(msg.candidate); } catch {}
-        }
+        if (pc && msg.candidate) await addRemoteCandidate(pc, msg.candidate);
       } else if (msg.type === "voice_slot_map") {
         if (Array.isArray(msg.slots)) applySlotMap(msg.slots);
       } else if (msg.type === "voice_force_muted") {
         // A moderator muted or unmuted us. The SFU already refuses our audio
         // while muted, so tearing the publisher down here just stops sending
         // into a closed door; rebuilding it on release restores our voice.
+        forceMutedRef.current = !!msg.force_muted;
         if (msg.force_muted) {
           micRef.current?.setEnabled(false);
           if (voicePublisherPcRef.current) {
@@ -471,11 +537,23 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
         console.warn("[voice] WebRTC error:", msg.detail || msg);
         if (msg.scope === "subscribe" && voiceSubscriberPcRef.current) {
           // The subscription is the only way to hear anyone, so a refusal is
-          // rebuilt from scratch rather than left in place.
-          try { voiceSubscriberPcRef.current.close(); } catch {}
-          voiceSubscriberPcRef.current = null;
-          closeVoiceAudioGraph();
-          if (inVoiceRef.current) await createVoiceSubscriptionRef.current();
+          // rebuilt from scratch rather than left in place — on the backoff,
+          // since rebuilding at once into the same refusal is a tight loop.
+          failSubscriber(voiceSubscriberPcRef.current, "was refused", true);
+        } else if (msg.scope === "publish" && voicePublisherPcRef.current && isAwaitingAnswer(voicePublisherPcRef.current)) {
+          if (msg.code === "force_muted" || msg.code === "cannot_speak") {
+            // Not a fault, and no retry will change it: listen only. A
+            // moderator lifting the mute rebuilds the publisher.
+            forceMutedRef.current = msg.code === "force_muted";
+            const pc = voicePublisherPcRef.current;
+            voicePublisherPcRef.current = null;
+            try { pc.close(); } catch {}
+            micRef.current?.setEnabled(false);
+            dispatch({ type: "SET_VOICE_STATE", payload: { isMuted: true } });
+          } else {
+            // Refused before an answer: retried, but only a few times.
+            failPublisher(voicePublisherPcRef.current, "was refused", true);
+          }
         }
       }
     };
@@ -636,6 +714,8 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
     closeVoiceAudioGraph();
     voicePublishRetryCountRef.current = 0;
     voiceSubscribeRetryCountRef.current = 0;
+    forceMutedRef.current = false;
+    toast.dismiss(RECONNECTING_TOAST);
     // Every exit runs through here, so an entrance sting still waiting on a
     // connection is dropped whichever way the call ended — left deliberately,
     // taken by another device, or released after too long off the socket.

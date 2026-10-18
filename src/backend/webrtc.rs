@@ -212,6 +212,121 @@ fn default_webrtc_config() -> RTCConfiguration {
     }
 }
 
+/// The TURN addresses to hand a browser, from the ones configured.
+///
+/// Two things go wrong between a TURN URL that works for the server and one
+/// that works for a client, and both left people unable to connect at all:
+///
+/// - The configured address is often only meaningful inside the deployment —
+///   the compose file ships `turn:host.docker.internal:3478`, which no browser
+///   can resolve. Without `TURN_PUBLIC_URL` that was handed out as-is, so the
+///   relay that exists precisely for people behind strict NATs was unreachable
+///   by every one of them. An internal-only host is replaced by the host the
+///   client reached this server on, which is where the bundled coturn runs.
+/// - A bare `turn:` URL is UDP. The networks that need a relay most — offices,
+///   schools, hotel wifi — are the ones that block UDP outright, and the SFU
+///   offers no TCP candidates of its own. Each UDP URL is therefore paired with
+///   its `?transport=tcp` twin; coturn listens on both by default. The browser
+///   tries UDP first, so this costs nothing where UDP works.
+pub(crate) fn client_turn_urls(configured: &str, public_host: Option<&str>) -> Vec<String> {
+    let mut urls: Vec<String> = Vec::new();
+    let mut push = |url: String| {
+        if !urls.contains(&url) {
+            urls.push(url);
+        }
+    };
+    for raw in configured.split(',') {
+        let url = raw.trim();
+        let Some((scheme, rest)) = url.split_once(':') else {
+            continue;
+        };
+        if !matches!(scheme, "turn" | "turns") || rest.is_empty() {
+            continue;
+        }
+        let (address, query) = match rest.split_once('?') {
+            Some((address, query)) => (address, Some(query)),
+            None => (rest, None),
+        };
+        let (host, port) = split_host_port(address);
+        let host = match public_host {
+            Some(public) if is_internal_host(host) => public,
+            _ => host,
+        };
+        if is_internal_host(host) {
+            // Nothing better to offer; a client cannot use this one.
+            continue;
+        }
+        let host = if host.contains(':') && !host.starts_with('[') {
+            format!("[{host}]")
+        } else {
+            host.to_string()
+        };
+        let address = match port {
+            Some(port) => format!("{host}:{port}"),
+            None => host,
+        };
+        match query {
+            Some(query) => push(format!("{scheme}:{address}?{query}")),
+            None => {
+                push(format!("{scheme}:{address}"));
+                if scheme == "turn" {
+                    push(format!("{scheme}:{address}?transport=tcp"));
+                }
+            }
+        }
+    }
+    urls
+}
+
+fn split_host_port(address: &str) -> (&str, Option<&str>) {
+    if let Some(rest) = address.strip_prefix('[') {
+        // [v6]:port
+        if let Some((host, tail)) = rest.split_once(']') {
+            return (host, tail.strip_prefix(':'));
+        }
+    }
+    match address.rsplit_once(':') {
+        // More than one colon and no brackets is a bare IPv6 address.
+        Some((host, port)) if !host.contains(':') => (host, Some(port)),
+        _ => (address, None),
+    }
+}
+
+/// A hostname only the deployment itself can resolve or reach.
+fn is_internal_host(host: &str) -> bool {
+    let host = host.trim().to_ascii_lowercase();
+    if host.is_empty() || host == "localhost" || host == "host.docker.internal" {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return ip.is_loopback() || ip.is_unspecified();
+    }
+    // A bare name with no dot is a compose service or container name.
+    !host.contains('.')
+}
+
+/// The host a client knows this server by: `SERVER_URL` when it is set, else
+/// what the request was addressed to.
+pub(crate) fn public_host(headers: &axum::http::HeaderMap) -> Option<String> {
+    let from_server_url = std::env::var("SERVER_URL").ok().and_then(|url| {
+        let rest = url.trim().split_once("://").map(|(_, r)| r)?;
+        let authority = rest.split(['/', '?', '#']).next()?;
+        Some(authority.to_string())
+    });
+    let authority = from_server_url.or_else(|| {
+        ["x-forwarded-host", "host"].iter().find_map(|name| {
+            headers
+                .get(*name)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.split(',').next())
+                .map(|v| v.trim().to_string())
+        })
+    })?;
+    let (host, _) = split_host_port(&authority);
+    let host = host.trim();
+    (!host.is_empty() && !is_internal_host(host)).then(|| host.to_string())
+}
+
 pub(crate) async fn create_peer_connection(
     state: &AppState,
 ) -> Result<Arc<RTCPeerConnection>, webrtc::Error> {
@@ -265,7 +380,10 @@ pub(crate) fn rewrite_rtcp_feedback_for_publisher(
 
 #[cfg(test)]
 mod tests {
-    use super::{ice_candidate_to_json, parse_ice_candidate, rewrite_rtcp_feedback_for_publisher};
+    use super::{
+        client_turn_urls, ice_candidate_to_json, parse_ice_candidate,
+        rewrite_rtcp_feedback_for_publisher,
+    };
     use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
     use serde_json::json;
 
@@ -302,5 +420,58 @@ mod tests {
 
         assert_eq!(rewritten_pli.sender_ssrc, 0);
         assert_eq!(rewritten_pli.media_ssrc, 100);
+    }
+
+    #[test]
+    fn turn_urls_gain_a_tcp_twin() {
+        assert_eq!(
+            client_turn_urls("turn:turn.example.com:3478", None),
+            vec![
+                "turn:turn.example.com:3478",
+                "turn:turn.example.com:3478?transport=tcp"
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_transports_and_turns_are_left_alone() {
+        assert_eq!(
+            client_turn_urls(
+                "turn:t.example.com:3478?transport=udp, turns:t.example.com:5349",
+                None
+            ),
+            vec![
+                "turn:t.example.com:3478?transport=udp",
+                "turns:t.example.com:5349"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_internal_turn_host_becomes_the_public_one() {
+        assert_eq!(
+            client_turn_urls("turn:host.docker.internal:3478", Some("chat.example.com")),
+            vec![
+                "turn:chat.example.com:3478",
+                "turn:chat.example.com:3478?transport=tcp"
+            ]
+        );
+        assert_eq!(
+            client_turn_urls("turn:coturn:3478", Some("chat.example.com"))[0],
+            "turn:chat.example.com:3478"
+        );
+    }
+
+    #[test]
+    fn an_internal_turn_host_with_nothing_to_replace_it_is_dropped() {
+        assert!(client_turn_urls("turn:host.docker.internal:3478", None).is_empty());
+    }
+
+    #[test]
+    fn public_ip_hosts_are_kept() {
+        assert_eq!(
+            client_turn_urls("turn:203.0.113.5:3478", Some("chat.example.com"))[0],
+            "turn:203.0.113.5:3478"
+        );
     }
 }

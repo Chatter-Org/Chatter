@@ -1261,4 +1261,10 @@ pub(crate) struct SlotRestamp {
     pub(crate) out_seq: u16,
     pub(crate) out_ts: u32,
     pub(crate) prev_in: Option<(u16, u32)>,
+    /// When the slot last sent a packet. A run that starts after a silence
+    /// advances the timestamp by the time that really passed, not by one
+    /// frame: the receiver's jitter buffer compares timestamps against arrival
+    /// times, and a stream whose clock stood still for a second reads as one
+    /// second of jitter, which it answers by stretching and buffering.
+    pub(crate) last_out: Option<std::time::Instant>,
 }

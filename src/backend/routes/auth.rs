@@ -12,6 +12,7 @@ use super::super::{
     },
     ratelimit,
     state::{AppState, PendingRegistration, RefreshTokenRecord, UserRecord},
+    webrtc::{client_turn_urls, public_host},
 };
 use axum::{
     extract::{ConnectInfo, State},
@@ -153,19 +154,24 @@ pub(crate) async fn ice_servers(
 
     // TURN_PUBLIC_URL is the client-facing TURN address (e.g. turn:yourdomain.com:3478).
     // Falls back to TURN_URL if not set (works when TURN_URL is already public).
-    let turn_url = std::env::var("TURN_PUBLIC_URL")
-        .or_else(|_| std::env::var("TURN_URL"))
-        .unwrap_or_default();
+    let public_url = std::env::var("TURN_PUBLIC_URL").unwrap_or_default();
+    let turn_url = if public_url.trim().is_empty() {
+        std::env::var("TURN_URL").unwrap_or_default()
+    } else {
+        public_url
+    };
 
-    if !turn_url.is_empty() {
+    if !turn_url.trim().is_empty() {
         let username = std::env::var("TURN_USERNAME").unwrap_or_default();
         let credential = std::env::var("TURN_PASSWORD").unwrap_or_default();
-        let client_urls: Vec<String> = turn_url.split(',').map(|s| s.trim().to_string()).collect();
-        servers.push(json!({
-            "urls": client_urls,
-            "username": username,
-            "credential": credential,
-        }));
+        let client_urls = client_turn_urls(&turn_url, public_host(&headers).as_deref());
+        if !client_urls.is_empty() {
+            servers.push(json!({
+                "urls": client_urls,
+                "username": username,
+                "credential": credential,
+            }));
+        }
     }
 
     Ok(Json(json!({ "iceServers": servers })))

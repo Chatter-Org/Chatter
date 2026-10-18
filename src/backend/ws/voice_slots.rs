@@ -20,7 +20,7 @@ use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
     sync::{atomic::Ordering, Arc},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{sync::broadcast, task::JoinHandle};
 use webrtc::track::track_local::TrackLocalWriter;
@@ -128,11 +128,21 @@ pub(crate) fn assign_slots(current: &[Option<String>], wanted: &[String]) -> Vec
 /// begins a new run — the caller sets the marker bit on those so the decoder
 /// resets rather than trying to conceal a gap that is not really loss.
 /// `None` means drop the packet: it is a duplicate or arrived out of order.
+///
+/// Wherever the input's own timestamps cannot be trusted — a new run, or a
+/// jump too large to believe — the output advances by the wall-clock time since
+/// the slot last sent. Advancing by a single frame there, as this used to, told
+/// the receiver that audio separated by seconds was contiguous. Its jitter
+/// buffer saw a packet arrive seconds "late", grew its delay to match, and
+/// time-stretched its way back down: the choppy, warbling start every speaker
+/// change produced.
 pub(crate) fn restamp(
     state: &mut SlotRestamp,
     in_seq: u16,
     in_ts: u32,
+    now: Instant,
 ) -> Option<(u16, u32, bool)> {
+    let elapsed = elapsed_samples(state.last_out, now);
     let discontinuity = match state.prev_in {
         None => true,
         Some((prev_seq, prev_ts)) => {
@@ -146,12 +156,12 @@ pub(crate) fn restamp(
             state.out_seq = state.out_seq.wrapping_add(seq_delta);
             // A silent stretch under DTX legitimately jumps the timestamp, so
             // gaps are carried through; a wildly out-of-range one is not
-            // trusted, and advances by a single frame instead.
+            // trusted, and the clock moves by the time that actually passed.
             state.out_ts =
                 state
                     .out_ts
                     .wrapping_add(if ts_delta == 0 || ts_delta > VOICE_MAX_TS_DELTA {
-                        OPUS_FRAME_SAMPLES
+                        elapsed
                     } else {
                         ts_delta
                     });
@@ -161,11 +171,27 @@ pub(crate) fn restamp(
 
     if discontinuity {
         state.out_seq = state.out_seq.wrapping_add(1);
-        state.out_ts = state.out_ts.wrapping_add(OPUS_FRAME_SAMPLES);
+        state.out_ts = state.out_ts.wrapping_add(elapsed);
     }
 
     state.prev_in = Some((in_seq, in_ts));
+    state.last_out = Some(now);
     Some((state.out_seq, state.out_ts, discontinuity))
+}
+
+/// RTP clock ticks since the slot last sent, never less than one frame.
+///
+/// Capped well inside half the 32-bit timestamp space, past which a receiver
+/// would read the jump as going backwards. A slot idle that long is a fresh
+/// stream to the decoder either way.
+fn elapsed_samples(last_out: Option<Instant>, now: Instant) -> u32 {
+    const MAX_ELAPSED_SAMPLES: u64 = 48 * 60 * 60 * 1000; // an hour
+    let Some(last_out) = last_out else {
+        return OPUS_FRAME_SAMPLES;
+    };
+    let ms = now.saturating_duration_since(last_out).as_millis() as u64;
+    let samples = (ms * 48).min(MAX_ELAPSED_SAMPLES) as u32;
+    samples.max(OPUS_FRAME_SAMPLES)
 }
 
 /// Pump one speaker's RTP into one slot until the speaker stops publishing or
@@ -186,6 +212,7 @@ fn spawn_slot_forwarder(
                             &mut restamp_state,
                             packet.header.sequence_number,
                             packet.header.timestamp,
+                            Instant::now(),
                         )
                     };
                     let Some((sequence_number, timestamp, discontinuity)) = stamped else {
@@ -226,9 +253,18 @@ fn spawn_slot_forwarder(
                         payload: packet.payload.clone(),
                     };
 
+                    // A failed write is not the end of the slot. The forwarder
+                    // used to stop on the first one, while the assignment it
+                    // served stayed in place — and since the sweep keeps a
+                    // speaker who is still wanted exactly where they are, one
+                    // transient send error (a network blip, a write during an
+                    // ICE consent hiccup) silenced that speaker for that
+                    // listener for the rest of the call. The task ends when
+                    // the slot is reassigned or the listener is torn down,
+                    // both of which abort it, or when the publisher goes.
                     match slot.track.write_rtp(&out).await {
                         Ok(bytes) => METRICS.record_out(MediaKind::Voice, bytes),
-                        Err(_) => break,
+                        Err(_) => continue,
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -442,6 +478,16 @@ pub(crate) async fn run_voice_slot_scheduler(state: Arc<AppState>) {
 mod tests {
     use super::*;
 
+    fn t0() -> Instant {
+        use std::sync::OnceLock;
+        static T0: OnceLock<Instant> = OnceLock::new();
+        *T0.get_or_init(Instant::now)
+    }
+
+    fn at(ms: u64) -> Instant {
+        t0() + Duration::from_millis(ms)
+    }
+
     fn activity(user_id: &str, level: u8, last_voice_ms: u64) -> SpeakerActivity {
         SpeakerActivity {
             user_id: user_id.to_string(),
@@ -542,7 +588,7 @@ mod tests {
     #[test]
     fn restamp_starts_a_new_run_with_the_marker_set() {
         let mut state = SlotRestamp::default();
-        let (seq, ts, discontinuity) = restamp(&mut state, 40_000, 900_000).unwrap();
+        let (seq, ts, discontinuity) = restamp(&mut state, 40_000, 900_000, t0()).unwrap();
         assert_eq!((seq, ts), (1, OPUS_FRAME_SAMPLES));
         assert!(discontinuity);
     }
@@ -556,6 +602,7 @@ mod tests {
                 &mut state,
                 100 + i,
                 48_000 + u32::from(i) * OPUS_FRAME_SAMPLES,
+                at(u64::from(i) * 40),
             )
             .unwrap();
         }
@@ -563,7 +610,7 @@ mod tests {
         // Slot changes hands: the new speaker's own numbering is unrelated and
         // in this case runs far behind the old one.
         state.prev_in = None;
-        let (seq, ts, discontinuity) = restamp(&mut state, 7, 12).unwrap();
+        let (seq, ts, discontinuity) = restamp(&mut state, 7, 12, at(120)).unwrap();
         assert!(discontinuity, "a handover must reset the decoder");
         assert_eq!(
             seq,
@@ -576,10 +623,10 @@ mod tests {
     #[test]
     fn restamp_carries_gaps_through_so_loss_is_still_visible() {
         let mut state = SlotRestamp::default();
-        restamp(&mut state, 100, 48_000).unwrap();
+        restamp(&mut state, 100, 48_000, t0()).unwrap();
         // Three packets lost in flight.
         let (seq, _, discontinuity) =
-            restamp(&mut state, 104, 48_000 + 4 * OPUS_FRAME_SAMPLES).unwrap();
+            restamp(&mut state, 104, 48_000 + 4 * OPUS_FRAME_SAMPLES, at(160)).unwrap();
         assert_eq!(seq, 5);
         assert!(!discontinuity);
     }
@@ -587,17 +634,23 @@ mod tests {
     #[test]
     fn restamp_drops_duplicates_and_reordered_packets() {
         let mut state = SlotRestamp::default();
-        restamp(&mut state, 100, 48_000).unwrap();
-        restamp(&mut state, 101, 48_960).unwrap();
-        assert!(restamp(&mut state, 101, 48_960).is_none(), "duplicate");
-        assert!(restamp(&mut state, 99, 47_040).is_none(), "reordered");
+        restamp(&mut state, 100, 48_000, t0()).unwrap();
+        restamp(&mut state, 101, 48_960, at(20)).unwrap();
+        assert!(
+            restamp(&mut state, 101, 48_960, at(40)).is_none(),
+            "duplicate"
+        );
+        assert!(
+            restamp(&mut state, 99, 47_040, at(60)).is_none(),
+            "reordered"
+        );
     }
 
     #[test]
     fn restamp_survives_sequence_wraparound() {
         let mut state = SlotRestamp::default();
-        restamp(&mut state, u16::MAX, 48_000).unwrap();
-        let (seq, _, discontinuity) = restamp(&mut state, 0, 48_960).unwrap();
+        restamp(&mut state, u16::MAX, 48_000, t0()).unwrap();
+        let (seq, _, discontinuity) = restamp(&mut state, 0, 48_960, at(20)).unwrap();
         assert_eq!(seq, 2);
         assert!(!discontinuity);
     }
@@ -605,13 +658,45 @@ mod tests {
     #[test]
     fn restamp_distrusts_an_absurd_timestamp_jump() {
         let mut state = SlotRestamp::default();
-        restamp(&mut state, 100, 48_000).unwrap();
+        restamp(&mut state, 100, 48_000, t0()).unwrap();
         let (_, ts, _) = restamp(
             &mut state,
             101,
             48_000u32.wrapping_add(VOICE_MAX_TS_DELTA + 1),
+            at(40),
         )
         .unwrap();
         assert_eq!(ts, OPUS_FRAME_SAMPLES * 2);
+    }
+
+    #[test]
+    fn restamp_advances_by_real_time_when_a_slot_changes_hands_after_a_silence() {
+        let mut state = SlotRestamp::default();
+        restamp(&mut state, 100, 48_000, t0()).unwrap();
+        let before_ts = state.out_ts;
+        // Three seconds later somebody else takes the slot.
+        state.prev_in = None;
+        let (_, ts, discontinuity) = restamp(&mut state, 9, 77, at(3_000)).unwrap();
+        assert!(discontinuity);
+        assert_eq!(
+            ts.wrapping_sub(before_ts),
+            3 * 48_000,
+            "the receiver must see the three seconds that passed, or it reads them as jitter"
+        );
+    }
+
+    #[test]
+    fn restamp_trusts_real_time_over_an_absurd_jump() {
+        let mut state = SlotRestamp::default();
+        restamp(&mut state, 100, 48_000, t0()).unwrap();
+        let before_ts = state.out_ts;
+        let (_, ts, _) = restamp(
+            &mut state,
+            101,
+            48_000u32.wrapping_add(VOICE_MAX_TS_DELTA * 10),
+            at(2_000),
+        )
+        .unwrap();
+        assert_eq!(ts.wrapping_sub(before_ts), 2 * 48_000);
     }
 }

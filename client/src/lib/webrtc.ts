@@ -39,6 +39,64 @@ export const VOICE_PUBLISH_MAX_BACKOFF_MS = 5_000;
 export const VOICE_SUB_STUCK_NEW_MS = 2500;
 export const VOICE_SUB_STUCK_CONNECTING_MS = 10_000;
 
+// A connection with no answer, or one that never reaches "connected", is
+// given this long before it is rebuilt. Covers the answer going missing and
+// ICE stalling alike; a relay over TCP is the slowest honest path and settles
+// well inside it.
+export const VOICE_CONNECT_TIMEOUT_MS = 15_000;
+// How long "disconnected" may last before the connection is rebuilt. Browsers
+// report a blip there and usually recover on their own, but one that does not
+// only reaches "failed" after ICE consent runs out — around thirty seconds of
+// silence in a call nobody can tell is broken.
+export const VOICE_DISCONNECTED_GRACE_MS = 4_000;
+
+// ─── Remote ICE candidates ──────────────────────────────────────────────────
+// The SFU trickles its candidates as it gathers them, and they can overtake
+// the answer on the socket. A candidate added before the remote description
+// is rejected — and was silently dropped, so whether a call connected came
+// down to which message the server happened to send first. Candidates for a
+// connection still waiting on its answer are held here and added once it lands.
+const heldCandidates = new WeakMap<object, RTCIceCandidateInit[]>();
+
+/** Start holding remote candidates for `pc` until its answer is applied. */
+export function holdCandidatesUntilAnswer(pc: object): void {
+  heldCandidates.set(pc, []);
+}
+
+/** Whether `pc` has sent an offer and not yet had an answer applied. */
+export function isAwaitingAnswer(pc: object): boolean {
+  return heldCandidates.has(pc);
+}
+
+export async function addRemoteCandidate(
+  pc: Pick<VoicePeer, "addIceCandidate">,
+  candidate: RTCIceCandidateInit,
+): Promise<void> {
+  const held = heldCandidates.get(pc);
+  if (held) {
+    held.push(candidate);
+    return;
+  }
+  try {
+    await pc.addIceCandidate(candidate);
+  } catch {
+    // A candidate for a connection that has since closed.
+  }
+}
+
+/** The answer is applied: add everything that arrived ahead of it. */
+export async function releaseHeldCandidates(pc: Pick<VoicePeer, "addIceCandidate">): Promise<void> {
+  const held = heldCandidates.get(pc);
+  heldCandidates.delete(pc);
+  for (const candidate of held ?? []) {
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch {
+      // As above.
+    }
+  }
+}
+
 export interface PeerStats {
   rtt: number | null;
   bitrate: number | null;

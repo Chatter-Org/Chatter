@@ -242,8 +242,53 @@ class BrowserVoiceBackend implements VoiceMediaBackend {
       this.master.gain.value = this.output.volume;
       this.master.connect(this.ctx.destination);
       this.applySink();
+      this.keepRunning(this.ctx);
     }
     return { ctx: this.ctx, master: this.master };
+  }
+
+  /**
+   * Every speaker plays through this context, so a suspended one is a call
+   * with no sound at all.
+   *
+   * A context built without a user gesture starts suspended — which is exactly
+   * how one is built when a refresh rejoins the call, or a subscription is
+   * rebuilt after a dropped connection. iOS also suspends ("interrupted") on a
+   * phone call or a trip to the lock screen and does not resume on its own.
+   * The mic graph already waited for a gesture; playout never did, so those
+   * people sat in a call hearing nothing until they left and joined again.
+   */
+  private keepRunning(ctx: AudioContext): void {
+    let armed = false;
+    const resume = () => {
+      if (this.ctx !== ctx || ctx.state === "closed") return;
+      void ctx.resume().catch(() => {});
+    };
+    const onGesture = () => {
+      armed = false;
+      window.removeEventListener("pointerdown", onGesture);
+      window.removeEventListener("keydown", onGesture);
+      resume();
+    };
+    const check = () => {
+      if (this.ctx !== ctx || ctx.state === "closed") {
+        document.removeEventListener("visibilitychange", onVisible);
+        return;
+      }
+      if (ctx.state === "running") return;
+      resume();
+      if (!armed) {
+        armed = true;
+        window.addEventListener("pointerdown", onGesture);
+        window.addEventListener("keydown", onGesture);
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") check();
+    };
+    ctx.addEventListener("statechange", check);
+    document.addEventListener("visibilitychange", onVisible);
+    check();
   }
 
   private applySink(): void {
