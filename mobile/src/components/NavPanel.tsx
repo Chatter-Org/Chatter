@@ -175,7 +175,7 @@ export function CountBadge({ count, className }: { count: number; className?: st
 
 function ChannelList({ roomId }: { roomId: string }) {
   const state = useChatter();
-  const { selectChannel } = useChatterActions();
+  const { selectChannel, voice } = useChatterActions();
   const { close } = usePanels();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const room = state.roomInfoMap[roomId];
@@ -198,6 +198,12 @@ function ChannelList({ roomId }: { roomId: string }) {
 
   const open = (channel: Channel) => {
     tick();
+    // A voice channel is a call: tapping it walks in (as on the web), and
+    // the conversation on screen stays where it was.
+    if (channel.channel_type === "voice" || channel.channel_type === "spatial") {
+      if (state.voiceChannelId !== channel.channel_id) void voice.join(channel.channel_id);
+      return;
+    }
     if (channel.channel_id !== state.currentChannelId) void selectChannel(channel.channel_id).catch(() => {});
     close();
   };
@@ -237,7 +243,11 @@ function ChannelList({ roomId }: { roomId: string }) {
                   <ChannelRow
                     key={channel.channel_id}
                     channel={channel}
-                    active={channel.channel_id === state.currentChannelId}
+                    active={
+                      channel.channel_type === "voice" || channel.channel_type === "spatial"
+                        ? channel.channel_id === state.voiceChannelId
+                        : channel.channel_id === state.currentChannelId
+                    }
                     unread={(state.channelUnreadCounts[channel.channel_id] ?? 0) > 0}
                     mentions={state.channelMentions[channel.channel_id] ?? 0}
                     voiceMembers={state.voiceChannelMembers[channel.channel_id]}

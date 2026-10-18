@@ -6,6 +6,7 @@ import { NavPanel, type RailSelection } from "@/components/NavPanel";
 import { MembersPanel } from "@/components/MembersPanel";
 import { ChatHeader } from "@/components/ChatHeader";
 import { ChatView } from "@/components/ChatView";
+import { CallBar } from "@/components/CallBar";
 
 /** The signed-in shell: panels around the open conversation. */
 export default function Home() {
@@ -48,6 +49,7 @@ function Conversation() {
   return (
     <View className="flex-1 bg-background" style={leftDocked ? { borderLeftWidth: 0 } : undefined}>
       <ChatHeader />
+      <CallBar />
       <ChatView />
     </View>
   );

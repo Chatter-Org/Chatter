@@ -20,6 +20,12 @@ import { reducer } from "@chatter/core/store/reducer";
 import { initialState, type AppState } from "@chatter/core/store/types";
 import { createWsMessageHandler } from "@chatter/core/store/wsHandler";
 import { decideResumeAction } from "@chatter/core/wsResume";
+import { VoiceEngine } from "@chatter/core/voice/engine";
+import { decideVoiceRejoin } from "@chatter/core/voice/rejoin";
+import { subscribeVoiceSettings } from "@chatter/core/voice/settings";
+import { showToast } from "@/platform/toast";
+import { createNativeVoiceBackend } from "@/voice/nativeBackend";
+import { clearSpeaking, noteSpeakingFrame } from "@/voice/speaking";
 import { signOutThisDevice } from "@/platform/signOut";
 import { socketUrl } from "@/platform/server";
 import { hasStoredSession } from "@/platform/tokenStore";
@@ -50,6 +56,18 @@ const RESTORE_MAX_MS = 30_000;
 export interface ChatterActions extends StoreActions {
   signIn(username: string, password: string, totpCode?: string): Promise<{ requiresTotp?: boolean }>;
   signOut(): Promise<void>;
+  /** Voice, through the shared engine (@chatter/core/voice/engine). */
+  voice: {
+    join(channelId: string): Promise<void>;
+    leave(): Promise<void>;
+    toggleMute(): void;
+    toggleDeafen(): void;
+    toggleInputMode(): void;
+    setTransmitting(on: boolean): void;
+    setUserVolume(userId: string, volume: number): void;
+    /** Whether this device's microphone is picking up speech, for the ring. */
+    isSpeaking(): boolean;
+  };
 }
 
 const StateContext = createContext<AppState | null>(null);
@@ -95,6 +113,39 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
   const [handleFrame] = useState(() =>
     createWsMessageHandler(dispatch, stateRef, typingTimeoutsRef, loadRoomsRef, loadPresenceRef),
   );
+
+  // ─── Voice ─────────────────────────────────────────────────────────────────
+
+  const [voice] = useState(() => {
+    let reconnecting = false;
+    return new VoiceEngine({
+      dispatch,
+      getState: () => stateRef.current,
+      socket: () => socketRef.current,
+      loadVoiceMembers: () => shared.loadVoiceMembers(),
+      selectBackend: createNativeVoiceBackend,
+      notices: {
+        reconnecting() {
+          reconnecting = true;
+          showToast({ message: "Reconnecting to voice…" });
+        },
+        recovered() {
+          if (!reconnecting) return;
+          reconnecting = false;
+          showToast({ message: "Voice reconnected" });
+        },
+        failed: (message) => showToast({ message, tone: "error" }),
+        info: (message) => showToast({ message }),
+        error: (message) => showToast({ message, tone: "error" }),
+      },
+    });
+  });
+  // The engine keeps its own copy of what it needs; let it catch up.
+  useEffect(() => voice.sync(), [voice, state]);
+  useEffect(() => {
+    if (!state.inVoiceChannel) clearSpeaking();
+  }, [state.inVoiceChannel]);
+  useEffect(() => subscribeVoiceSettings(() => voice.applySettings()), [voice]);
 
   // ─── Session ───────────────────────────────────────────────────────────────
 
@@ -145,6 +196,8 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
   // ─── Socket ────────────────────────────────────────────────────────────────
 
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** When the socket last went down, for deciding whether a call survives it. */
+  const droppedAt = useRef<number | null>(null);
 
   const closeSocket = (reason: string) => {
     if (retryTimer.current) clearTimeout(retryTimer.current);
@@ -176,7 +229,8 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         return;
       }
     }
-    if (socketRef.current || RNAppState.currentState !== "active") return;
+    // In the background only a call may open one (to repair itself).
+    if (socketRef.current || (RNAppState.currentState !== "active" && !stateRef.current.inVoiceChannel)) return;
 
     const ws = new WebSocket(socketUrl());
     socketRef.current = ws;
@@ -193,22 +247,49 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
       if (hasConnectedRef.current) {
         void shared.recoverMissedMessages();
         dispatch({ type: "CLEAR_SCREEN_VIEWERS" });
+        rejoinVoice();
       }
+      droppedAt.current = null;
       hasConnectedRef.current = true;
     };
     ws.onmessage = (event) => {
       if (typeof event.data !== "string") return;
       try {
-        handleFrame(JSON.parse(event.data));
+        const frame = JSON.parse(event.data);
+        handleFrame(frame);
+        void voice.handleFrame(frame);
+        noteSpeakingFrame(frame);
       } catch (e) {
         console.warn("socket: could not handle a frame", e);
       }
     };
     ws.onclose = () => {
       if (socketRef.current === ws) socketRef.current = null;
+      droppedAt.current ??= Date.now();
       dispatch({ type: "SET_WS_CONNECTED", payload: false });
       retryTimer.current = setTimeout(() => void connect(), SOCKET_RETRY_MS);
     };
+  };
+
+  // The server drops a call with the socket that carried it, so a socket that
+  // comes back puts the call back together, unless it was gone so long that
+  // reappearing would surprise the room (see voice/rejoin.ts).
+  const rejoinVoice = () => {
+    const current = stateRef.current;
+    const decision = decideVoiceRejoin({
+      inVoiceChannel: current.inVoiceChannel,
+      voiceRoomId: current.voiceRoomId,
+      downForMs: droppedAt.current === null ? 0 : Date.now() - droppedAt.current,
+    });
+    if (decision === "nothing-to-restore") return;
+    if (decision === "release") {
+      void voice.release();
+      showToast({ message: "You were disconnected for too long — rejoin the call to come back." });
+      return;
+    }
+    // Let the socket's own hello be processed before rejoining on it.
+    const channelId = current.voiceChannelId;
+    setTimeout(() => void voice.join(channelId ?? undefined), 500);
   };
 
   // Signed in: load what the shell shows, and open the socket.
@@ -234,7 +315,11 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
     const sub = RNAppState.addEventListener("change", (next) => {
       if (next === "background") {
         backgroundedAt = Date.now();
-        closeTimer = setTimeout(() => closeSocket("app in background"), BACKGROUND_CLOSE_MS);
+        // A call keeps its socket: it carries the call's signalling, and the
+        // call's foreground service keeps the app running for it.
+        closeTimer = setTimeout(() => {
+          if (!stateRef.current.inVoiceChannel) closeSocket("app in background");
+        }, BACKGROUND_CLOSE_MS);
         return;
       }
       if (next !== "active") return;
@@ -286,6 +371,20 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
   const actions = useMemo<ChatterActions>(
     () => ({
       ...shared,
+      voice: {
+        async join(channelId) {
+          const channel = stateRef.current.channels.find((c) => c.channel_id === channelId);
+          if (channel) dispatch({ type: "SET_VOICE_STATE", payload: { voiceChannelName: channel.name } });
+          await voice.join(channelId);
+        },
+        leave: () => voice.leave(),
+        toggleMute: () => voice.toggleMute(),
+        toggleDeafen: () => voice.toggleDeafen(),
+        toggleInputMode: () => voice.toggleInputMode(),
+        setTransmitting: (on) => voice.setTransmitting(on),
+        setUserVolume: (userId, volume) => voice.setUserVolume(userId, volume),
+        isSpeaking: () => voice.connections.mic?.isSpeaking() ?? false,
+      },
       async signIn(username, password, totpCode) {
         const data = await apiLogin(username, password, totpCode);
         if (data.requires_totp) return { requiresTotp: true };
@@ -299,6 +398,7 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         return {};
       },
       async signOut() {
+        if (stateRef.current.inVoiceChannel) await voice.leave();
         closeSocket("signed out");
         // This device only: the account stays signed in everywhere else.
         await signOutThisDevice();
@@ -311,7 +411,7 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
       },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [shared],
+    [shared, voice],
   );
 
   return (
