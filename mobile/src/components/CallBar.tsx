@@ -4,13 +4,27 @@ import { GestureDetector, usePanGesture, useTapGesture, useSimultaneousGestures 
 import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import * as Haptics from "expo-haptics";
-import { ChevronDown, HeadphoneOff, Headphones, Mic, MicOff, PhoneOff, Volume2, VolumeX } from "lucide-react-native";
+import {
+  Bluetooth,
+  ChevronDown,
+  HeadphoneOff,
+  Headphones,
+  Hand,
+  Mic,
+  MicOff,
+  PhoneOff,
+  Smartphone,
+  Volume2,
+  VolumeX,
+} from "lucide-react-native";
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react-native";
 import { displayUserId } from "@chatter/core/utils";
 import { readProfileAccent, speakingStyle } from "@chatter/core/profileTheme";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { useSpeaking } from "@/voice/speaking";
+import { useAudioRoutes } from "@/voice/useCallService";
+import { callService, type AudioRoute } from "../../modules/chatter-call";
 import { Avatar } from "@/components/Avatar";
 import { Sheet } from "@/ui/Sheet";
 import { Icon, T } from "@/ui/primitives";
@@ -65,13 +79,17 @@ export function CallBar() {
           </View>
           <Icon as={ChevronDown} size={16} />
         </Pressable>
-        <BarButton
-          icon={silenced ? MicOff : Mic}
-          label={silenced ? "Unmute" : "Mute"}
-          danger={silenced}
-          disabled={state.isDeafened}
-          onPress={voice.toggleMute}
-        />
+        {state.voiceInputMode === "ptt" ? (
+          <TalkButton disabled={state.isDeafened} talking={!state.isMuted} onTalk={voice.setTransmitting} />
+        ) : (
+          <BarButton
+            icon={silenced ? MicOff : Mic}
+            label={silenced ? "Unmute" : "Mute"}
+            danger={silenced}
+            disabled={state.isDeafened}
+            onPress={voice.toggleMute}
+          />
+        )}
         <BarButton
           icon={state.isDeafened ? HeadphoneOff : Headphones}
           label={state.isDeafened ? "Undeafen" : "Deafen"}
@@ -156,6 +174,30 @@ function BarButton({
   );
 }
 
+/** Push-to-talk: the mic is open for as long as this is held. */
+function TalkButton({ talking, disabled, onTalk }: { talking: boolean; disabled?: boolean; onTalk(on: boolean): void }) {
+  return (
+    <Pressable
+      onPressIn={() => {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onTalk(true);
+      }}
+      onPressOut={() => onTalk(false)}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel="Hold to talk"
+      className={cn(
+        "h-11 flex-row items-center gap-1.5 rounded-md px-3",
+        talking ? "bg-success/20" : "bg-secondary",
+        disabled && "opacity-40",
+      )}
+    >
+      <Icon as={talking ? Mic : MicOff} size={18} tone={talking ? "success" : "secondary-foreground"} />
+      <T className={cn("text-xs", talking ? "text-success" : "text-secondary-foreground")}>Talk</T>
+    </Pressable>
+  );
+}
+
 // ─── The sheet ───────────────────────────────────────────────────────────────
 
 function CallSheet({ open, onClose, onGoToCall }: { open: boolean; onClose(): void; onGoToCall(): void }) {
@@ -168,6 +210,16 @@ function CallSheet({ open, onClose, onGoToCall }: { open: boolean; onClose(): vo
   const room = state.voiceRoomId ? state.roomInfoMap[state.voiceRoomId] : undefined;
   const members = (state.voiceChannelId && state.voiceChannelMembers[state.voiceChannelId]?.map((m) => m.userId)) || state.voiceMembers;
   const silenced = state.isMuted || state.isDeafened;
+  const routes = useAudioRoutes(open);
+  const route = routes.find((r) => r.active) ?? routes[0];
+
+  // One tap moves to the next way of hearing the call; with only a speaker
+  // and an earpiece that is the familiar speakerphone toggle.
+  const nextRoute = () => {
+    if (routes.length < 2 || !route) return;
+    const next = routes[(routes.indexOf(route) + 1) % routes.length];
+    callService.setRoute(next.id);
+  };
 
   const setVolume = (userId: string, volume: number) => {
     setVolumes((v) => ({ ...v, [userId]: volume }));
@@ -215,19 +267,36 @@ function CallSheet({ open, onClose, onGoToCall }: { open: boolean; onClose(): vo
       </ScrollView>
 
       <View className="flex-row items-start gap-1 border-t border-border px-3 pt-3">
-        <CallAction
-          icon={silenced ? MicOff : Mic}
-          label={silenced ? "Unmute" : "Mute"}
-          tone={silenced ? "danger" : "neutral"}
-          disabled={state.isDeafened}
-          onPress={voice.toggleMute}
-        />
+        {state.voiceInputMode === "ptt" ? null : (
+          <CallAction
+            icon={silenced ? MicOff : Mic}
+            label={silenced ? "Unmute" : "Mute"}
+            tone={silenced ? "danger" : "neutral"}
+            disabled={state.isDeafened}
+            onPress={voice.toggleMute}
+          />
+        )}
         <CallAction
           icon={state.isDeafened ? HeadphoneOff : Headphones}
           label={state.isDeafened ? "Undeafen" : "Deafen"}
           tone={state.isDeafened ? "danger" : "neutral"}
           onPress={voice.toggleDeafen}
         />
+        <CallAction
+          icon={state.voiceInputMode === "ptt" ? Hand : Mic}
+          label={state.voiceInputMode === "ptt" ? "Push to talk" : "Open mic"}
+          tone="neutral"
+          onPress={voice.toggleInputMode}
+        />
+        {route ? (
+          <CallAction
+            icon={ROUTE_ICON[route.id]}
+            label={route.label}
+            tone="neutral"
+            disabled={routes.length < 2}
+            onPress={nextRoute}
+          />
+        ) : null}
         <CallAction
           icon={PhoneOff}
           label="Leave"
@@ -241,6 +310,13 @@ function CallSheet({ open, onClose, onGoToCall }: { open: boolean; onClose(): vo
     </Sheet>
   );
 }
+
+const ROUTE_ICON: Record<AudioRoute["id"], ComponentType<LucideProps>> = {
+  speaker: Volume2,
+  earpiece: Smartphone,
+  wired: Headphones,
+  bluetooth: Bluetooth,
+};
 
 const Participant = memo(function Participant({
   userId,
