@@ -8,7 +8,11 @@ import { toast } from "sonner";
 import { configureHost } from "@chatter/core/platform";
 import type { GifFavoritesPayload } from "@/lib/api";
 import { adoptGifFavorites } from "@/hooks/useFavoriteGifs";
-import { closeReadNotifications, showDesktopNotification } from "@/lib/notifications";
+import {
+  closeNotificationsReadElsewhere,
+  closeReadNotifications,
+  showDesktopNotification,
+} from "@/lib/notifications";
 import { deferArrivalSound, playSound, playSoundUrl, prewarmSounds } from "@/lib/sounds";
 
 configureHost({
@@ -19,6 +23,7 @@ configureHost({
   toastError: (message) => toast.error(message),
   notify: showDesktopNotification,
   closeReadNotifications,
+  closeNotificationsReadElsewhere,
   playSound,
   playSoundUrl,
   deferArrivalSound,

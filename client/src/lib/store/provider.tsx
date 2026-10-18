@@ -4,22 +4,14 @@ import {
   useMemo,
   useRef,
   useEffect,
+  useState,
   type ReactNode,
 } from "react";
 import { decideResumeAction } from "@/lib/wsResume";
 import { useVersionCheck } from "@/hooks/useVersionCheck";
-import { displayUserId } from "@/lib/utils";
-import {
-  channelNotificationTag,
-  closeNotificationsReadElsewhere,
-  settingsKey,
-  type NotificationLevel,
-  type NotificationSettings,
-} from "@/lib/notifications";
 import { desktop, hasDesktopFeature } from "@/lib/desktop/bridge";
 import {
   setAccessToken,
-  setRefreshToken,
   clearTokens,
   getAccessToken,
   refreshSession,
@@ -32,29 +24,14 @@ import {
   apiRegister,
   apiLogout,
   apiDeleteAccount,
-  apiGetJoinedRooms,
-  apiGetUnreads,
   apiMarkRead,
-  apiGetNotificationSettings,
   apiGetMessagesAfter,
-  apiGetContinuity,
-  apiSetDraft,
-  apiSetResumePoint,
-  apiSetNotificationLevel,
-  apiSync,
   apiCreateRoom,
   apiJoinRoom,
   apiLeaveRoom,
-  apiGetMessages,
   apiSearchMessages,
   apiGetRoomThreads,
-  apiSendMessage,
-  apiDeleteMessage,
-  apiHardDeleteNotification,
-  apiEditMessage,
-  apiAddReaction,
   apiGetPins,
-  apiListEvents,
   apiCreateEvent,
   apiUpdateEvent,
   apiDeleteEvent,
@@ -66,11 +43,8 @@ import {
   type EventDraft,
   type PollDraft,
   type RsvpStatus,
-  apiGetMyPermissions,
   apiPinMessage,
   apiUnpinMessage,
-  apiGetVoiceMembers,
-  apiGetPresence,
   apiGetAllRooms,
   apiCreateDM,
   apiAddToDM,
@@ -100,21 +74,15 @@ import {
   apiSendThreadMessage,
   apiSetThreadName,
   apiDeleteThread,
-  apiGetChannels,
-  apiGetRoomMembers,
   apiCreateChannel,
   apiUpdateChannel,
   apiDeleteChannel,
-  apiCreateCategory,
-  apiUpdateCategory,
-  apiDeleteCategory,
   apiGetRoles,
   apiCreateRole,
   apiUpdateRole,
   apiDeleteRole,
   apiGetAllMemberRoles,
   apiAssignMemberRoles,
-  type RoomInfo,
   PAGE_SIZE,
 } from "../api";
 import { clearMediaBlobs } from "@/lib/mediaBlobs";
@@ -123,19 +91,12 @@ import { fetchIceServers } from "../webrtc";
 import { AppActionsContext, AppStateContext, type AppActions } from "./context";
 import {
   initialState,
-  resumePointsMap,
-  THREAD_ACTIVE_WINDOW_MS,
-  THREAD_PREVIEW_LIMIT,
-  type MessageTarget,
-  type ThreadPreview,
-  type VoiceChannelMember,
 } from "./types";
 import type { ProfileTheme } from "../profileTheme";
 import { reducer } from "./reducer";
 import { createWsMessageHandler } from "./wsHandler";
-import { loadLastChannels, pickLandingChannel, saveLastChannels } from "../lastChannel";
-
-
+import { createStoreActions } from "@chatter/core/store/actions";
+import { saveLastChannels } from "../lastChannel";
 
 /** How long to wait before opening the socket again after it closed. */
 const WS_RECONNECT_MS = 3000;
@@ -168,7 +129,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useVersionCheck();
   const [state, dispatch] = useReducer(reducer, initialState);
   const wsRef = useRef<WebSocket | null>(null);
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -177,6 +137,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  // The actions shared with the mobile app (@chatter/core/store/actions).
+  // Created once, so each keeps one identity for the provider's lifetime.
+  const [shared] = useState(() =>
+    createStoreActions({
+      dispatch,
+      getState: () => stateRef.current,
+      send: (frame) => {
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        ws.send(JSON.stringify(frame));
+        return true;
+      },
+    }),
+  );
 
   // Fetch public server settings on mount
   useEffect(() => {
@@ -755,138 +730,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "LOGOUT" });
   }, []);
 
-  const loadRooms = useCallback(async () => {
-    const data = await apiGetJoinedRooms();
-    const syncData = await apiSync();
-    const roomInfoMap: Record<string, RoomInfo> = {};
-    for (const roomId of data.joined_rooms) {
-      const roomData = syncData.rooms?.join?.[roomId];
-      if (roomData) {
-        const nameEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.name"
-        );
-        const topicEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.topic"
-        );
-        const directEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.direct"
-        );
-        const tagsEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.tags"
-        );
-        const iconEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.icon"
-        );
-        const customEmojisEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.custom_emojis"
-        );
-        const emojiAliasesEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.emoji_aliases"
-        );
-        const nameColorsEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.name_colors"
-        );
-        const unlistedEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.unlisted"
-        );
-        const hasPasswordEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.has_password"
-        );
-        const roomTypeEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.type"
-        );
-        const readOnlyEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.read_only"
-        );
-        const bannerEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.banner"
-        );
-        const streakEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.dm_streak"
-        );
-        const soundsEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.sounds"
-        );
-        const themeEvent = roomData.state.events.find(
-          (e: any) => e.type === "m.room.theme"
-        );
-        roomInfoMap[roomId] = {
-          room_id: roomId,
-          name: nameEvent?.content?.name || "Unnamed Room",
-          topic: topicEvent?.content?.topic || "",
-          is_direct: directEvent?.content?.is_direct || false,
-          tags: tagsEvent?.content?.tags || [],
-          icon_url: iconEvent?.content?.icon_url || "",
-          creator: nameEvent?.sender || "",
-          custom_emojis: customEmojisEvent?.content?.custom_emojis || [],
-          emoji_aliases: emojiAliasesEvent?.content?.emoji_aliases || {},
-          owner_name_color: nameColorsEvent?.content?.owner_name_color || "",
-          mod_name_color: nameColorsEvent?.content?.mod_name_color || "",
-          unlisted: unlistedEvent?.content?.unlisted || false,
-          has_password: hasPasswordEvent?.content?.has_password || false,
-          room_type: roomTypeEvent?.content?.room_type || "text",
-          read_only: readOnlyEvent?.content?.read_only || false,
-          banner_url: bannerEvent?.content?.banner_url || "",
-          dm_streak_count: streakEvent?.content?.streak_count || 0,
-          dm_streak_last_ts: streakEvent?.content?.last_message_ts || 0,
-          // Prefer the explicit list, fall back to the room's membership. The
-          // member events have always been in this payload, so a DM resolves
-          // its peer whatever the server is running — the explicit field only
-          // saves the client from filtering.
-          dm_user_ids:
-            directEvent?.content?.dm_user_ids?.length
-              ? directEvent.content.dm_user_ids
-              : (roomData.state.events as { type?: string; state_key?: string }[])
-                  .filter((e) => e.type === "m.room.member" && !!e.state_key)
-                  .map((e) => e.state_key as string),
-          dm_avatars: directEvent?.content?.dm_avatars || {},
-          dm_voice_count: directEvent?.content?.dm_voice_count || 0,
-          sounds: soundsEvent?.content?.sounds || {},
-          // Rooms that predate the field, and any room whose state event is
-          // missing, keep entrance sounds on — the field's default.
-          entrance_sounds_enabled:
-            soundsEvent?.content?.entrance_sounds_enabled !== false,
-          suggested_theme: themeEvent?.content?.suggested_theme || "",
-        };
-      } else {
-        roomInfoMap[roomId] = {
-          room_id: roomId,
-          name: "Unnamed Room",
-          topic: "",
-        };
-      }
-    }
-    dispatch({
-      type: "SET_ROOMS",
-      payload: { roomIds: data.joined_rooms, roomInfoMap },
-    });
-  }, []);
+  const loadRooms = shared.loadRooms;
   loadRoomsRef.current = loadRooms;
 
   // Unread counts are derived server-side from stored read markers, so they
   // survive a refresh; the reducer's own tallies only cover the live session.
-  const loadUnreads = useCallback(async () => {
-    try {
-      const data = await apiGetUnreads();
-      dispatch({ type: "SET_UNREADS", payload: data.unreads || [] });
-      dispatch({ type: "SET_THREAD_MENTIONS", payload: data.thread_mentions || [] });
-      // What was read on another device while this one was not listening.
-      void closeNotificationsReadElsewhere(
-        new Set(
-          (data.unreads || [])
-            .filter((u) => u.count > 0)
-            .map((u) => channelNotificationTag(u.room_id, u.channel_id || "")),
-        ),
-      );
-    } catch {
-      // Leave whatever the session has accumulated.
-    }
-  }, []);
+  const loadUnreads = shared.loadUnreads;
   loadUnreadsRef.current = loadUnreads;
 
-  const markChannelRead = useCallback((roomId: string, channelId?: string) => {
-    void apiMarkRead(roomId, channelId).catch(() => {});
-  }, []);
+  const markChannelRead = shared.markChannelRead;
 
   const moderateVoice = useCallback(
     (
@@ -910,31 +762,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const loadNotificationSettings = useCallback(async () => {
-    try {
-      const data = await apiGetNotificationSettings();
-      const map: NotificationSettings = {};
-      for (const entry of data.settings || []) {
-        map[settingsKey(entry.room_id, entry.channel_id)] = entry.level;
-      }
-      dispatch({ type: "SET_NOTIFICATION_SETTINGS", payload: map });
-    } catch {
-      // Fall back to the default level for everything.
-    }
-  }, []);
+  const loadNotificationSettings = shared.loadNotificationSettings;
 
-  const setNotificationLevel = useCallback(
-    async (roomId: string, level: NotificationLevel | "default", channelId?: string) => {
-      // Optimistic: the control should respond immediately, and a failed write
-      // only costs the user a re-click.
-      dispatch({
-        type: "SET_NOTIFICATION_LEVEL",
-        payload: { roomId, channelId: channelId ?? "", level },
-      });
-      await apiSetNotificationLevel(roomId, level, channelId);
-    },
-    [],
-  );
+  const setNotificationLevel = shared.setNotificationLevel;
 
   /**
    * The recently active threads a room's channel list previews.
@@ -942,83 +772,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
    * One request for the room rather than one per channel: the server already
    * sorts by activity, so grouping the answer is cheaper than asking N times.
    */
-  const loadActiveThreads = useCallback(async (roomId: string) => {
-    try {
-      const data = await apiGetRoomThreads(
-        roomId,
-        undefined,
-        undefined,
-        false,
-        0,
-        // Enough to fill several channels' previews from one call.
-        50,
-        THREAD_ACTIVE_WINDOW_MS,
-      );
-      const grouped: Record<string, ThreadPreview[]> = {};
-      for (const root of data.items || []) {
-        const channelId = root.channel_id ?? "";
-        const list = (grouped[channelId] ??= []);
-        if (list.length >= THREAD_PREVIEW_LIMIT) continue;
-        list.push({
-          threadId: root.event_id,
-          channelId,
-          name: root.thread_name || root.content?.body || "Thread",
-          replyCount: root.thread_reply_count ?? 0,
-          lastActivityTs: root.thread_last_activity_ts ?? root.origin_server_ts,
-        });
-      }
-      dispatch({ type: "SET_CHANNEL_THREADS", payload: grouped });
-    } catch {
-      // The channel list simply shows no threads.
-    }
-  }, []);
+  const loadActiveThreads = shared.loadActiveThreads;
   loadActiveThreadsRef.current = loadActiveThreads;
 
-  const loadContinuity = useCallback(async () => {
-    try {
-      const data = await apiGetContinuity();
-      const drafts: Record<string, string> = {};
-      for (const entry of data.drafts || []) {
-        drafts[`${entry.room_id}|${entry.channel_id}`] = entry.text;
-      }
-      resumePointsMap.clear();
-      for (const entry of data.resume || []) {
-        resumePointsMap.set(entry.url, {
-          positionSecs: entry.position_secs,
-          durationSecs: entry.duration_secs,
-        });
-      }
-      dispatch({ type: "SET_CONTINUITY", payload: { drafts } });
-    } catch {
-      // Nothing carried over; the composer just starts empty.
-    }
-  }, []);
+  const loadContinuity = shared.loadContinuity;
 
-  const saveDraft = useCallback(
-    async (roomId: string, channelId: string, text: string) => {
-      // Optimistic, and deliberately not awaited by the composer: typing must
-      // never wait on a round trip.
-      dispatch({ type: "SET_DRAFT", payload: { roomId, channelId, text } });
-      try {
-        await apiSetDraft(roomId, channelId, text);
-      } catch {
-        // The local draft still stands; it just will not reach another device.
-      }
-    },
-    [],
-  );
+  const saveDraft = shared.saveDraft;
 
-  const saveResumePoint = useCallback(
-    async (url: string, positionSecs: number, durationSecs: number) => {
-      resumePointsMap.set(url, { positionSecs, durationSecs });
-      try {
-        await apiSetResumePoint(url, positionSecs, durationSecs);
-      } catch {
-        // Playback is unaffected by a failed bookmark.
-      }
-    },
-    [],
-  );
+  const saveResumePoint = shared.saveResumePoint;
 
   /** Open a room.
    *
@@ -1029,180 +790,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
    *  channel to land on comes out of the channel list, and messages, pins and
    *  permissions are all scoped to it. Everything else now runs alongside.
    */
-  const selectRoom = useCallback(
-    async (roomId: string) => {
-      dispatch({ type: "SELECT_ROOM", payload: roomId });
-      void loadActiveThreadsRef.current(roomId);
+  const selectRoom = shared.selectRoom;
 
-      // Whether this switch is still the one on screen. Requests that are no
-      // longer awaited in order can land after the next switch has started, and
-      // the roster or pins of the room someone just left must not paint over
-      // the room they are now in.
-      const stillCurrent = () => stateRef.current.currentRoomId === roomId;
-
-      // Started first and never waited on: it depends on nothing else here.
-      void apiGetRoomMembers(roomId)
-        .then((data) => {
-          if (!stillCurrent()) return;
-          dispatch({
-            type: "SET_ROOM_MEMBERS",
-            payload: data.members.map((m) => ({
-              userId: m.user_id,
-              displayName: m.display_name || displayUserId(m.user_id),
-              role: m.role || "member",
-              joinedAt: m.joined_at || undefined,
-            })),
-          });
-        })
-        .catch(() => {});
-
-      // Load channels for non-DM rooms and auto-select default text channel
-      const roomInfo = stateRef.current.roomInfoMap[roomId];
-      const isDm = roomInfo?.is_direct;
-      let selectedChannelId: string | undefined;
-      if (!isDm) {
-        // Custom roles and their assignments decide which controls render, not
-        // what the timeline contains, so they run alongside it.
-        void Promise.all([apiGetRoles(roomId), apiGetAllMemberRoles(roomId)])
-          .then(([rolesData, memberRolesData]) => {
-            if (!stillCurrent()) return;
-            dispatch({ type: "SET_CUSTOM_ROLES", payload: rolesData.roles || [] });
-            dispatch({ type: "SET_MEMBER_CUSTOM_ROLES", payload: memberRolesData.member_roles || {} });
-          })
-          .catch(() => {
-            if (!stillCurrent()) return;
-            dispatch({ type: "SET_CUSTOM_ROLES", payload: [] });
-            dispatch({ type: "SET_MEMBER_CUSTOM_ROLES", payload: {} });
-          });
-
-        try {
-          const channelsData = await apiGetChannels(roomId);
-          dispatch({ type: "SET_CHANNELS", payload: channelsData.channels || [] });
-          dispatch({ type: "SET_CHANNEL_CATEGORIES", payload: channelsData.categories || [] });
-          // Land where the reader last was in this room — this session, or
-          // before a reload (lib/lastChannel.ts) — not on whichever channel
-          // the room happens to list first. A remembered channel that is gone
-          // falls back to the first text channel.
-          const remembered =
-            stateRef.current.lastChannelByRoom[roomId] ??
-            loadLastChannels(stateRef.current.userId)[roomId];
-          const landing = pickLandingChannel(channelsData.channels || [], remembered);
-          if (landing) {
-            selectedChannelId = landing.channel_id;
-            dispatch({ type: "SELECT_CHANNEL", payload: selectedChannelId });
-          }
-        } catch {
-          dispatch({ type: "SET_CHANNELS", payload: [] });
-        }
-
-        // Fetched on the room switch rather than when the panel opens: the
-        // header badge has to know about an event starting soon before anyone
-        // thinks to look for one.
-        void loadEventsRef.current(roomId);
-      }
-
-      // All three are scoped to the channel just landed on, so they go out
-      // together. Only the messages are awaited, because they are what the
-      // room is.
-      //
-      // The server computes effective permissions; the client only mirrors them
-      // to decide which controls to show.
-      void apiGetMyPermissions(roomId, selectedChannelId)
-        .then((permsData) => {
-          if (!stillCurrent()) return;
-          dispatch({ type: "SET_MY_PERMISSIONS", payload: permsData.permissions });
-        })
-        .catch(() => {
-          if (!stillCurrent()) return;
-          dispatch({ type: "SET_MY_PERMISSIONS", payload: null });
-        });
-      void apiGetPins(roomId, selectedChannelId)
-        .then((page) => {
-          if (!stillCurrent()) return;
-          dispatch({
-            type: "SET_PINNED_MESSAGES",
-            payload: { pins: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset },
-          });
-        })
-        .catch(() => {
-          if (!stillCurrent()) return;
-          dispatch({
-            type: "SET_PINNED_MESSAGES",
-            payload: { pins: [], hasMore: false, nextOffset: 0 },
-          });
-        });
-
-      const msgData = await apiGetMessages(roomId, 50, undefined, undefined, selectedChannelId);
-      const messages = msgData.chunk.filter((m) => m.type === "m.room.message");
-      dispatch({
-        type: "SET_MESSAGES",
-        payload: {
-          messages,
-          hasMore: msgData.has_more,
-        },
-      });
-      // Populate reactions from loaded messages
-      for (const msg of messages) {
-        if (msg.reactions && Object.keys(msg.reactions).length > 0) {
-          dispatch({
-            type: "SET_REACTIONS",
-            payload: { eventId: msg.event_id, reactions: msg.reactions },
-          });
-        }
-      }
-      // Load presence. The same call the poll makes, rather than a second copy
-      // of the mapping that could drift from it — this one dropped `is_mobile`,
-      // so opening a room took the phone badge off everyone in it until the
-      // poll next ran.
-      void loadPresenceRef.current(roomId);
-      // Who is in this room's voice channels. Opening a room used to load the
-      // flat member list and nothing per channel, so the channel list showed
-      // empty voice channels however many people were sitting in them — and it
-      // skipped the load entirely while a call was running in another room,
-      // which is the case where the client is furthest behind. The snapshot
-      // covers every room at once, so neither is a reason to ask for less.
-      void loadVoiceMembersRef.current(roomId);
-    },
-    []
-  );
-
-  const loadOlderMessages = useCallback(async () => {
-    const cur = stateRef.current;
-    if (!cur.currentRoomId || cur.loadingOlderMessages || !cur.hasMoreMessages) return;
-    // The cursor is the oldest message on screen, so nothing separate has to
-    // be tracked — and it stays correct even if messages arrive meanwhile.
-    const oldest = cur.messages[0];
-    if (!oldest) return;
-    dispatch({ type: "SET_LOADING_OLDER", payload: true });
-    try {
-      const msgData = await apiGetMessages(
-        cur.currentRoomId,
-        50,
-        { ts: oldest.origin_server_ts, eventId: oldest.event_id },
-        undefined,
-        cur.currentChannelId || undefined,
-      );
-      const olderMessages = msgData.chunk.filter((m) => m.type === "m.room.message");
-      dispatch({
-        type: "PREPEND_MESSAGES",
-        payload: {
-          messages: olderMessages,
-          hasMore: msgData.has_more,
-        },
-      });
-      // Populate reactions from older messages
-      for (const msg of olderMessages) {
-        if (msg.reactions && Object.keys(msg.reactions).length > 0) {
-          dispatch({
-            type: "SET_REACTIONS",
-            payload: { eventId: msg.event_id, reactions: msg.reactions },
-          });
-        }
-      }
-    } catch {
-      dispatch({ type: "SET_LOADING_OLDER", payload: false });
-    }
-  }, []);
+  const loadOlderMessages = shared.loadOlderMessages;
 
   /** Open a room on one of its messages.
    *
@@ -1211,93 +801,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
    *  on a message needs the room's channels and timeline, which exist only
    *  once selecting the room has finished, and the caller is a row on another
    *  page that this very switch is about to unmount. */
-  const openMessage = useCallback(
-    async (target: MessageTarget) => {
-      dispatch({ type: "SET_PENDING_JUMP", payload: target });
-      // Already here: nothing to load, and `ChatArea` acts on the target as
-      // soon as it sees it.
-      if (stateRef.current.currentRoomId === target.roomId) return;
-      await selectRoom(target.roomId);
-    },
-    [selectRoom],
-  );
+  const openMessage = shared.openMessage;
 
-  const loadMessagesAround = useCallback(async (roomId: string, ts: number) => {
-    const msgData = await apiGetMessages(roomId, 50, undefined, ts, stateRef.current.currentChannelId || undefined);
-    const messages = msgData.chunk.filter((m) => m.type === "m.room.message");
-    dispatch({
-      type: "SET_MESSAGES",
-      payload: {
-        messages,
-        hasMore: msgData.has_more,
-      },
-    });
-    for (const msg of messages) {
-      if (msg.reactions && Object.keys(msg.reactions).length > 0) {
-        dispatch({
-          type: "SET_REACTIONS",
-          payload: { eventId: msg.event_id, reactions: msg.reactions },
-        });
-      }
-    }
-  }, []);
+  const loadMessagesAround = shared.loadMessagesAround;
 
-  const sendMessage = useCallback(
-    async (body: string, inReplyTo?: string, spoiler?: boolean) => {
-      if (!stateRef.current.currentRoomId) return;
-      await apiSendMessage(stateRef.current.currentRoomId, body, inReplyTo, spoiler, stateRef.current.currentChannelId || undefined);
-    },
-    []
-  );
+  const sendMessage = shared.sendMessage;
 
-  const deleteMessage = useCallback(
-    async (eventId: string, deleteFiles?: boolean) => {
-      if (!stateRef.current.currentRoomId) return;
-      // Throws unless the server actually deleted it, so what follows only
-      // runs on a success.
-      await apiDeleteMessage(stateRef.current.currentRoomId, eventId, deleteFiles);
-      // The broadcast tells the rest of the room, and it used to be the only
-      // thing that told this client too — so the message stayed on the screen
-      // of the person who had just deleted it until the socket came back with
-      // the news. Applied here as well, against the success they already
-      // waited for. The reducer removes by filtering, so the broadcast
-      // arriving after this changes nothing.
-      dispatch({ type: "REDACT_MESSAGE", payload: eventId });
-    },
-    []
-  );
+  const deleteMessage = shared.deleteMessage;
 
-  const hardDeleteNotification = useCallback(
-    async (roomId: string, eventId: string) => {
-      await apiHardDeleteNotification(roomId, eventId);
-      dispatch({ type: "REMOVE_MESSAGE", payload: eventId });
-    },
-    []
-  );
+  const hardDeleteNotification = shared.hardDeleteNotification;
 
-  const editMessage = useCallback(
-    async (eventId: string, newBody: string) => {
-      if (!stateRef.current.currentRoomId) return;
-      await apiEditMessage(stateRef.current.currentRoomId, eventId, newBody);
-    },
-    []
-  );
+  const editMessage = shared.editMessage;
 
   // ─── Pinned messages ──────────────────────────────────────────────────
-  const loadEvents = useCallback(async (roomId?: string) => {
-    const target = roomId ?? stateRef.current.currentRoomId;
-    if (!target) return;
-    try {
-      const { events } = await apiListEvents(target);
-      // A slow answer for a room the user has already left must not land.
-      if (stateRef.current.currentRoomId !== target) return;
-      dispatch({ type: "SET_ROOM_EVENTS", payload: events });
-    } catch {
-      if (stateRef.current.currentRoomId === target) {
-        dispatch({ type: "SET_ROOM_EVENTS", payload: [] });
-      }
-    }
-  }, []);
+  const loadEvents = shared.loadEvents;
   const loadEventsRef = useRef(loadEvents);
   useEffect(() => { loadEventsRef.current = loadEvents; }, [loadEvents]);
 
@@ -1616,34 +1133,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "DELETE_THREAD", payload: cur.activeThreadEventId });
   }, []);
 
-  const addReaction = useCallback(
-    async (eventId: string, emoji: string) => {
-      if (!stateRef.current.currentRoomId || !stateRef.current.userId) return;
-      // Optimistic update: toggle locally before the server round-trip
-      const current = stateRef.current.messageReactions[eventId] ?? {};
-      const users = current[emoji] ?? [];
-      const userId = stateRef.current.userId;
-      let optimistic: Record<string, string[]>;
-      if (users.includes(userId)) {
-        const next = users.filter((u) => u !== userId);
-        if (next.length === 0) {
-          const { [emoji]: _removed, ...rest } = current;
-          optimistic = rest;
-        } else {
-          optimistic = { ...current, [emoji]: next };
-        }
-      } else {
-        optimistic = { ...current, [emoji]: [...users, userId] };
-      }
-      dispatch({ type: "SET_REACTIONS", payload: { eventId, reactions: optimistic } });
-      // Fire-and-forget; server WS broadcast will confirm with authoritative state
-      apiAddReaction(stateRef.current.currentRoomId, eventId, emoji).catch(() => {
-        // On failure, revert to previous state
-        dispatch({ type: "SET_REACTIONS", payload: { eventId, reactions: current } });
-      });
-    },
-    []
-  );
+  const addReaction = shared.addReaction;
 
   const createRoom = useCallback(
     async (name: string, topic: string, tags?: string[], iconUrl?: string, unlisted?: boolean, password?: string, roomType?: string) => {
@@ -1682,63 +1172,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
    * room that is not on screen still has a sidebar row and a DM bar to keep
    * right. Answers false when there is no open socket to ask on.
    */
-  const requestVoiceSync = useCallback(() => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    ws.send(JSON.stringify({ type: "voice_state_request" }));
-    return true;
-  }, []);
 
-  const loadVoiceMembers = useCallback(async (forRoomId?: string) => {
-    if (requestVoiceSync()) return;
-    // No socket: fall back to the one room the REST endpoint can describe.
-    // A caller mid-room-switch names it, since the store may not have caught up.
-    const roomId = forRoomId ?? stateRef.current.currentRoomId;
-    if (!roomId) return;
-    try {
-      const voiceData = await apiGetVoiceMembers(roomId);
-      const channels: Record<string, { roomId: string; occupiedSince: number | null; members: VoiceChannelMember[] }> = {};
-      for (const [channelId, members] of Object.entries(voiceData.voice_channels || {})) {
-        channels[channelId] = {
-          roomId,
-          occupiedSince: voiceData.occupied_since?.[channelId] ?? null,
-          members: (members as any[]).map((m: any) => ({
-            userId: m.user_id || m.userId,
-            muted: !!m.muted,
-            deafened: m.deafened ?? false,
-            screen_sharing: !!m.screen_sharing,
-            webcam_sharing: !!m.webcam_sharing,
-            force_muted: m.force_muted ?? false,
-            clipping: m.clipping ?? false,
-            x: typeof m.x === "number" ? m.x : undefined,
-            y: typeof m.y === "number" ? m.y : undefined,
-          })),
-        };
-      }
-      // Scoped to this room: the endpoint was told nothing about the others, so
-      // it must not be read as saying their calls have ended.
-      dispatch({ type: "SYNC_VOICE_STATE", payload: { roomId, channels } });
-    } catch {}
-  }, [requestVoiceSync]);
+  const loadVoiceMembers = shared.loadVoiceMembers;
   loadVoiceMembersRef.current = loadVoiceMembers;
 
   /** Presence for everyone in the room on screen.
    *
    *  Polled, and asked for again whenever the socket has been away: a status
    *  that changed while it was down was broadcast to nobody. */
-  const loadPresence = useCallback(async (forRoomId?: string) => {
-    const roomId = forRoomId ?? stateRef.current.currentRoomId;
-    if (!roomId) return;
-    try {
-      const data = await apiGetPresence(roomId);
-      const mapped: Record<string, { status: string; customStatus?: string; avatarUrl?: string; about?: string; bannerUrl?: string; displayName?: string; nameFontUrl?: string; profileTheme?: unknown; isMobile?: boolean; steamGame?: string; steamAppId?: string; gameSessionStart?: number }> = {};
-      for (const [uid, p] of Object.entries(data.presence)) {
-        const pAny = p as any;
-        mapped[uid] = { status: pAny.status, customStatus: pAny.custom_status || undefined, avatarUrl: pAny.avatar_url || undefined, about: pAny.about || undefined, bannerUrl: pAny.banner_url || undefined, displayName: pAny.display_name || undefined, nameFontUrl: pAny.name_font_url || undefined, profileTheme: pAny.profile_theme || undefined, isMobile: pAny.is_mobile || false, steamGame: pAny.steam_game || undefined, steamAppId: pAny.steam_appid || undefined, gameSessionStart: pAny.game_session_start || undefined };
-      }
-      dispatch({ type: "SET_PRESENCE", payload: mapped });
-    } catch {}
-  }, []);
+  const loadPresence = shared.loadPresence;
   loadPresenceRef.current = loadPresence;
 
   /** Open a channel.
@@ -1748,63 +1190,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
    *  together and only the messages are awaited. Run one after another — which
    *  is what this did — the timeline waited on two answers it never reads.
    */
-  const selectChannel = useCallback(async (channelId: string) => {
-    dispatch({ type: "SELECT_CHANNEL", payload: channelId });
-    const cur = stateRef.current;
-    const roomId = cur.currentRoomId;
-    if (!roomId) return;
-
-    // Whether this switch is still the one on screen, as in `selectRoom`: these
-    // no longer finish in order, and a slow answer for the channel someone just
-    // left must not paint over the one they are now in.
-    const stillCurrent = () =>
-      stateRef.current.currentRoomId === roomId &&
-      stateRef.current.currentChannelId === channelId;
-
-    // Overwrites make permissions channel-scoped, so they follow the channel.
-    void apiGetMyPermissions(roomId, channelId)
-      .then((permsData) => {
-        if (!stillCurrent()) return;
-        dispatch({ type: "SET_MY_PERMISSIONS", payload: permsData.permissions });
-      })
-      .catch(() => {
-        if (!stillCurrent()) return;
-        dispatch({ type: "SET_MY_PERMISSIONS", payload: null });
-      });
-    void apiGetPins(roomId, channelId)
-      .then((page) => {
-        if (!stillCurrent()) return;
-        dispatch({
-          type: "SET_PINNED_MESSAGES",
-          payload: { pins: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset },
-        });
-      })
-      .catch(() => {
-        if (!stillCurrent()) return;
-        dispatch({
-          type: "SET_PINNED_MESSAGES",
-          payload: { pins: [], hasMore: false, nextOffset: 0 },
-        });
-      });
-
-    const msgData = await apiGetMessages(roomId, 50, undefined, undefined, channelId);
-    const messages = msgData.chunk.filter((m) => m.type === "m.room.message");
-    dispatch({
-      type: "SET_MESSAGES",
-      payload: {
-        messages,
-        hasMore: msgData.has_more,
-      },
-    });
-    for (const msg of messages) {
-      if (msg.reactions && Object.keys(msg.reactions).length > 0) {
-        dispatch({
-          type: "SET_REACTIONS",
-          payload: { eventId: msg.event_id, reactions: msg.reactions },
-        });
-      }
-    }
-  }, []);
+  const selectChannel = shared.selectChannel;
 
   const createChannel = useCallback(async (roomId: string, name: string, channelType: string, topic?: string, categoryId?: string) => {
     await apiCreateChannel(roomId, { name, channel_type: channelType, topic, category_id: categoryId });
@@ -1849,23 +1235,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await apiAssignMemberRoles(roomId, userId, roleIds);
   }, []);
 
-  const sendTyping = useCallback(() => {
-    if (!stateRef.current.currentRoomId) return;
-    if (typingTimeoutRef.current) return;
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          type: "typing",
-          room_id: stateRef.current.currentRoomId,
-          ...(stateRef.current.currentChannelId ? { channel_id: stateRef.current.currentChannelId } : {}),
-        })
-      );
-    }
-    typingTimeoutRef.current = setTimeout(() => {
-      typingTimeoutRef.current = null;
-    }, 1000);
-  }, []);
+  const sendTyping = shared.sendTyping;
 
   const getAllRooms = useCallback(async () => {
     const data = await apiGetAllRooms();

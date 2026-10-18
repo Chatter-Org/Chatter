@@ -40,6 +40,9 @@ export interface Host {
   notify(notification: DesktopNotification): boolean;
   /** Close notifications under `tag` covering messages at or before `lastReadTs`. */
   closeReadNotifications(tag: string, lastReadTs: number): Promise<void>;
+  /** Close channel notifications whose channel has nothing unread left —
+   *  `stillUnread` holds `channelNotificationTag` keys that do. */
+  closeNotificationsReadElsewhere(stillUnread: Set<string>): Promise<void>;
 
   playSound(event: SoundEvent, pack?: SoundPack): void;
   playSoundUrl(url: string, gain?: number): void;
@@ -63,6 +66,7 @@ const inert: Host = {
   toastError: () => {},
   notify: () => false,
   closeReadNotifications: async () => {},
+  closeNotificationsReadElsewhere: async () => {},
   playSound: () => {},
   playSoundUrl: () => {},
   deferArrivalSound: () => {},
