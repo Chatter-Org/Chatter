@@ -20,7 +20,7 @@ import { useScreenContentMode } from "./useScreenContentMode";
 import { toast } from "sonner";
 import { selectDisplayCapture } from "@/lib/media";
 import { apiPutScreenThumbnail } from "@/lib/api";
-import { captureScreenThumbnail } from "@/lib/screenThumbnail";
+import { captureScreenThumbnail, releaseScreenThumbnailCapture } from "@/lib/screenThumbnail";
 
 /** How often the sharer posts a still of its own screen, so a member outside
  *  the call can hover a name and see what is on screen. Slow on purpose: it is
@@ -471,7 +471,10 @@ export function useWebRTCScreen() {
       const thumbnail = captureScreenThumbnail(stream);
       if (thumbnail) void apiPutScreenThumbnail(roomId, userId, thumbnail);
     }, SCREEN_THUMBNAIL_INTERVAL_MS);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      releaseScreenThumbnailCapture();
+    };
   }, [state.isScreenSharing, state.voiceRoomId, state.userId]);
 
   // Method to update external stats for frozen detection

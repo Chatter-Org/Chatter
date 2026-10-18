@@ -31,19 +31,30 @@ export function captureScreenThumbnail(stream: MediaStream): string | null {
   if (!videoTrack) return null;
 
   if (!captureElement) {
+    // No `autoplay`: Chrome pauses a muted *autoplaying* video that is not
+    // visible, and this one is never in the document. An explicit play() is
+    // not subject to that.
     const element = document.createElement("video");
     element.muted = true;
-    element.autoplay = true;
     element.playsInline = true;
     element.disablePictureInPicture = true;
     captureElement = element;
   }
 
-  captureElement.srcObject = stream;
-  try {
-    captureElement.play().catch(() => {});
-  } catch {
-    // A live MediaStream is already advancing; play() is only to be sure.
+  // Only on a new stream. Assigning `srcObject` — even the same one — reruns
+  // the element's load algorithm, which drops it back to no frame at all, so
+  // reassigning per tick read `videoWidth` as 0 every time and no still was
+  // ever posted. The first tick after attaching usually has no frame yet; the
+  // next one does.
+  if (captureElement.srcObject !== stream) {
+    captureElement.srcObject = stream;
+  }
+  if (captureElement.paused) {
+    try {
+      captureElement.play().catch(() => {});
+    } catch {
+      // A live MediaStream is already advancing; play() is only to be sure.
+    }
   }
 
   const naturalWidth = captureElement.videoWidth;
@@ -62,6 +73,14 @@ export function captureScreenThumbnail(stream: MediaStream): string | null {
 
   context.drawImage(captureElement, 0, 0, width, height);
   return canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+}
+
+/** Let go of the capture when the share ends, so the hidden element does not
+ *  keep the finished stream's tracks referenced until the next share. */
+export function releaseScreenThumbnailCapture() {
+  if (!captureElement) return;
+  captureElement.pause();
+  captureElement.srcObject = null;
 }
 
 /** Everything drawing a still re-reads it when the set changes. The map is a
