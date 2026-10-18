@@ -45,6 +45,15 @@ import {
   apiPinMessage,
   apiUnpinMessage,
   apiSearchMessages,
+  apiCreateDM,
+  apiAddToDM,
+  apiGetFriends,
+  apiSendFriendRequest,
+  apiAcceptFriendRequest,
+  apiRejectFriendRequest,
+  apiRemoveFriend,
+  apiBlockUser,
+  apiUnblockUser,
   PAGE_SIZE,
   type MatrixMessage,
   type RoomInfo,
@@ -52,6 +61,7 @@ import {
 import { loadLastChannels, pickLandingChannel } from "../lastChannel";
 import { channelNotificationTag, settingsKey, type NotificationLevel, type NotificationSettings } from "../notifications";
 import { host } from "../platform";
+import type { ProfileTheme } from "../profileTheme";
 import { displayUserId } from "../utils";
 import {
   resumePointsMap,
@@ -976,6 +986,105 @@ export function createStoreActions(ctx: StoreContext) {
     }
   };
 
+
+  // ─── People: DMs, friends, your own profile ──────────────────────────────
+
+  /** Open (or create) a DM with one person, or a group DM with several. */
+  const openDM = async (targetUserIds: string | string[]) => {
+    const data = await apiCreateDM(targetUserIds);
+    await loadRooms();
+    await selectRoom(data.room_id);
+  };
+
+  const addToGroupDM = async (roomId: string, userId: string) => {
+    await apiAddToDM(roomId, userId);
+  };
+
+  const loadFriends = async () => {
+    try {
+      const data = await apiGetFriends();
+      dispatch({
+        type: "SET_FRIENDS_DATA",
+        payload: {
+          friends: data.friends,
+          incomingRequests: data.incoming_requests,
+          outgoingRequests: data.outgoing_requests,
+          blocked: data.blocked,
+        },
+      });
+    } catch {
+      // Keep whatever is shown.
+    }
+  };
+
+  const sendFriendRequest = async (userId: string) => {
+    const result = await apiSendFriendRequest(userId);
+    if (result.auto_accepted) {
+      dispatch({ type: "ADD_FRIEND", payload: userId });
+    } else {
+      dispatch({ type: "ADD_OUTGOING_REQUEST", payload: { userId, requestId: "" } });
+    }
+  };
+
+  const acceptFriendRequest = async (userId: string) => {
+    await apiAcceptFriendRequest(userId);
+    dispatch({ type: "REMOVE_INCOMING_REQUEST", payload: userId });
+    dispatch({ type: "ADD_FRIEND", payload: userId });
+  };
+
+  const rejectFriendRequest = async (userId: string) => {
+    await apiRejectFriendRequest(userId);
+    dispatch({ type: "REMOVE_INCOMING_REQUEST", payload: userId });
+  };
+
+  const removeFriend = async (userId: string) => {
+    await apiRemoveFriend(userId);
+    dispatch({ type: "REMOVE_FRIEND", payload: userId });
+  };
+
+  const blockUser = async (userId: string) => {
+    await apiBlockUser(userId);
+    dispatch({ type: "REMOVE_FRIEND", payload: userId });
+    dispatch({ type: "REMOVE_INCOMING_REQUEST", payload: userId });
+    dispatch({ type: "REMOVE_OUTGOING_REQUEST", payload: userId });
+    dispatch({ type: "ADD_BLOCKED_USER", payload: userId });
+  };
+
+  const unblockUser = async (userId: string) => {
+    await apiUnblockUser(userId);
+    dispatch({ type: "REMOVE_BLOCKED_USER", payload: userId });
+  };
+
+  const setCustomStatus = (status: string) => {
+    send({ type: "set_custom_status", custom_status: status });
+  };
+
+  const setManualStatus = (status: string) => {
+    send({ type: "set_status", status });
+  };
+
+  const updateProfile = (profile: {
+    avatarUrl?: string;
+    bannerUrl?: string;
+    about?: string;
+    customStatus?: string;
+    displayName?: string;
+    nameFontUrl?: string;
+    profileTheme?: ProfileTheme;
+    entranceSoundUrl?: string;
+  }) => {
+    const payload: Record<string, unknown> = { type: "set_profile" };
+    if (profile.avatarUrl !== undefined) payload.avatar_url = profile.avatarUrl;
+    if (profile.bannerUrl !== undefined) payload.banner_url = profile.bannerUrl;
+    if (profile.about !== undefined) payload.about = profile.about;
+    if (profile.customStatus !== undefined) payload.custom_status = profile.customStatus;
+    if (profile.displayName !== undefined) payload.display_name = profile.displayName;
+    if (profile.nameFontUrl !== undefined) payload.name_font_url = profile.nameFontUrl;
+    if (profile.profileTheme !== undefined) payload.profile_theme = profile.profileTheme;
+    if (profile.entranceSoundUrl !== undefined) payload.entrance_sound_url = profile.entranceSoundUrl;
+    send(payload);
+  };
+
   return {
     loadRooms,
     loadUnreads,
@@ -1010,6 +1119,18 @@ export function createStoreActions(ctx: StoreContext) {
     loadMoreSearchResults,
     updateSearch,
     closeSearch,
+    openDM,
+    addToGroupDM,
+    loadFriends,
+    sendFriendRequest,
+    acceptFriendRequest,
+    rejectFriendRequest,
+    removeFriend,
+    blockUser,
+    unblockUser,
+    setCustomStatus,
+    setManualStatus,
+    updateProfile,
     loadMessagesAround,
     selectChannel,
     sendMessage,

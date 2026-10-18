@@ -39,8 +39,6 @@ import {
   type PollDraft,
   type RsvpStatus,
   apiGetAllRooms,
-  apiCreateDM,
-  apiAddToDM,
   apiUpdateTopic,
   apiUpdateRoomSettings,
   apiKickMember,
@@ -55,13 +53,6 @@ import {
   apiUpdateRoomGroup,
   apiSetGroupRooms,
   apiSetGroupCollapsed,
-  apiGetFriends,
-  apiSendFriendRequest,
-  apiAcceptFriendRequest,
-  apiRejectFriendRequest,
-  apiRemoveFriend,
-  apiBlockUser,
-  apiUnblockUser,
   apiGetServerInfo,
   apiCreateChannel,
   apiUpdateChannel,
@@ -80,7 +71,6 @@ import { AppActionsContext, AppStateContext, type AppActions } from "./context";
 import {
   initialState,
 } from "./types";
-import type { ProfileTheme } from "../profileTheme";
 import { reducer } from "./reducer";
 import { createWsMessageHandler } from "./wsHandler";
 import { createStoreActions } from "@chatter/core/store/actions";
@@ -910,21 +900,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return data.rooms;
   }, []);
 
-  const openDM = useCallback(
-    async (targetUserIds: string | string[]) => {
-      const data = await apiCreateDM(targetUserIds);
-      await loadRooms();
-      await selectRoom(data.room_id);
-    },
-    [loadRooms, selectRoom]
-  );
+  const openDM = shared.openDM;
 
-  const addToGroupDM = useCallback(
-    async (roomId: string, userId: string) => {
-      await apiAddToDM(roomId, userId);
-    },
-    []
-  );
+  const addToGroupDM = shared.addToGroupDM;
 
   const updateTopic = useCallback(
     async (roomId: string, topic: string) => {
@@ -940,19 +918,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     []
   );
 
-  const setCustomStatus = useCallback((status: string) => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "set_custom_status", custom_status: status }));
-    }
-  }, []);
+  const setCustomStatus = shared.setCustomStatus;
 
-  const setManualStatus = useCallback((status: string) => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "set_status", status }));
-    }
-  }, []);
+  const setManualStatus = shared.setManualStatus;
 
   const kickMember = useCallback(async (roomId: string, userId: string) => {
     await apiKickMember(roomId, userId);
@@ -1020,74 +988,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [loadRoomGroups]);
 
-  const loadFriends = useCallback(async () => {
-    try {
-      const data = await apiGetFriends();
-      dispatch({
-        type: "SET_FRIENDS_DATA",
-        payload: {
-          friends: data.friends,
-          incomingRequests: data.incoming_requests,
-          outgoingRequests: data.outgoing_requests,
-          blocked: data.blocked,
-        },
-      });
-    } catch {}
-  }, []);
+  const loadFriends = shared.loadFriends;
 
-  const sendFriendRequest = useCallback(async (userId: string) => {
-    const result = await apiSendFriendRequest(userId);
-    if (result.auto_accepted) {
-      dispatch({ type: "ADD_FRIEND", payload: userId });
-    } else {
-      dispatch({ type: "ADD_OUTGOING_REQUEST", payload: { userId, requestId: "" } });
-    }
-  }, []);
+  const sendFriendRequest = shared.sendFriendRequest;
 
-  const acceptFriendRequest = useCallback(async (userId: string) => {
-    await apiAcceptFriendRequest(userId);
-    dispatch({ type: "REMOVE_INCOMING_REQUEST", payload: userId });
-    dispatch({ type: "ADD_FRIEND", payload: userId });
-  }, []);
+  const acceptFriendRequest = shared.acceptFriendRequest;
 
-  const rejectFriendRequest = useCallback(async (userId: string) => {
-    await apiRejectFriendRequest(userId);
-    dispatch({ type: "REMOVE_INCOMING_REQUEST", payload: userId });
-  }, []);
+  const rejectFriendRequest = shared.rejectFriendRequest;
 
-  const removeFriend = useCallback(async (userId: string) => {
-    await apiRemoveFriend(userId);
-    dispatch({ type: "REMOVE_FRIEND", payload: userId });
-  }, []);
+  const removeFriend = shared.removeFriend;
 
-  const blockUser = useCallback(async (userId: string) => {
-    await apiBlockUser(userId);
-    dispatch({ type: "REMOVE_FRIEND", payload: userId });
-    dispatch({ type: "REMOVE_INCOMING_REQUEST", payload: userId });
-    dispatch({ type: "REMOVE_OUTGOING_REQUEST", payload: userId });
-    dispatch({ type: "ADD_BLOCKED_USER", payload: userId });
-  }, []);
+  const blockUser = shared.blockUser;
 
-  const unblockUser = useCallback(async (userId: string) => {
-    await apiUnblockUser(userId);
-    dispatch({ type: "REMOVE_BLOCKED_USER", payload: userId });
-  }, []);
+  const unblockUser = shared.unblockUser;
 
-  const updateProfile = useCallback((profile: { avatarUrl?: string; bannerUrl?: string; about?: string; customStatus?: string; displayName?: string; nameFontUrl?: string; profileTheme?: ProfileTheme; entranceSoundUrl?: string }) => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      const payload: any = { type: "set_profile" };
-      if (profile.avatarUrl !== undefined) payload.avatar_url = profile.avatarUrl;
-      if (profile.bannerUrl !== undefined) payload.banner_url = profile.bannerUrl;
-      if (profile.about !== undefined) payload.about = profile.about;
-      if (profile.customStatus !== undefined) payload.custom_status = profile.customStatus;
-      if (profile.displayName !== undefined) payload.display_name = profile.displayName;
-      if (profile.nameFontUrl !== undefined) payload.name_font_url = profile.nameFontUrl;
-      if (profile.profileTheme !== undefined) payload.profile_theme = profile.profileTheme;
-      if (profile.entranceSoundUrl !== undefined) payload.entrance_sound_url = profile.entranceSoundUrl;
-      ws.send(JSON.stringify(payload));
-    }
-  }, []);
+  const updateProfile = shared.updateProfile;
 
   // Stable across state changes so action-only consumers never re-render.
   const actions = useMemo<AppActions>(
