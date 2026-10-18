@@ -26,9 +26,11 @@ export function useCallService(state: AppState, voice: { leave(): Promise<void>;
     if (!running.current) {
       running.current = true;
       // The call's notification is how it is reached from outside the app;
-      // Android 13 asks before showing any. The call runs either way.
+      // Android 13 asks before showing any. The call runs either way. (Before
+      // the first prompt Android reports "denied" with canAskAgain, not
+      // "undetermined".)
       void Notifications.getPermissionsAsync()
-        .then((p) => (p.status === "undetermined" ? Notifications.requestPermissionsAsync() : p))
+        .then((p) => (p.status !== "granted" && p.canAskAgain ? Notifications.requestPermissionsAsync() : p))
         .catch(() => {})
         .finally(() => {
           if (running.current) callService.start(title, text, muted);
