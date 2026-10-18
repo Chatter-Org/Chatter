@@ -87,12 +87,12 @@ FCM push notifications are deliberately **last**: everything else first.
 
 ### Settings (native screens)
 - [x] Appearance: Match phone + the 8 web themes
-- [ ] Custom themes (sync from web; editor)
-- [ ] Notifications per server/channel (same levels as the web)
-- [ ] Voice: input/output, push-to-talk, noise suppression
+- [x] Custom themes: synced with the account both ways (the web's appearance settings), editor with palette picker, derived-colour overrides, contrast check and live preview; import and share codes
+- [x] Notifications: every server's and DM's level in one place (channels from their bell); sound effects on/off and volume, played with expo-audio
+- [x] Voice: voice activity or push to talk, output volume, mic test (processing and the audio route are Android's / the call bar's)
 - [x] Profile: name, status, about, avatar and banner, availability
-- [ ] Account: sessions, 2FA status, password
-- [ ] Data: media autoplay, image quality, cache
+- [x] Account: 2FA status and set-up (opens the authenticator), recovery codes, password, sessions, delete account
+- [x] Data: animated pictures, link previews, cache size and clearing
 
 ### Notifications
 - [ ] In-app banners while the app is open (host.notify)

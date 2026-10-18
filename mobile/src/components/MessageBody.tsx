@@ -1,4 +1,5 @@
 import { Fragment, memo, useMemo } from "react";
+import { useDevicePrefs } from "@/state/devicePrefs";
 import { Linking, ScrollView, View } from "react-native";
 import { Image } from "expo-image";
 import { parseBody, type FormatOptions, type InlineNode } from "@chatter/core/messageFormat";
@@ -47,6 +48,7 @@ export const MessageBody = memo(function MessageBody({
 });
 
 function Inline({ nodes }: { nodes: InlineNode[] }) {
+  const { autoplayAnimated: autoplay } = useDevicePrefs();
   const { colors } = useTheme();
   return (
     <>
@@ -106,7 +108,7 @@ function Inline({ nodes }: { nodes: InlineNode[] }) {
           case "emoji": {
             const source = serverImage(node.url);
             return source ? (
-              <Image key={i} source={source} style={{ width: 20, height: 20 }} contentFit="contain" accessibilityLabel={node.alias ? `:${node.alias}:` : "emoji"} />
+              <Image key={i} source={source} style={{ width: 20, height: 20 }} contentFit="contain" autoplay={autoplay} accessibilityLabel={node.alias ? `:${node.alias}:` : "emoji"} />
             ) : null;
           }
         }

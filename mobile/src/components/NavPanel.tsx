@@ -3,7 +3,7 @@ import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { router, type Href } from "expo-router";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
   Bot,
@@ -144,8 +144,10 @@ export function NavPanel({ rail, onRail }: { rail: RailSelection; onRail(selecti
           })}
         </ScrollView>
         <View className="h-px w-8 bg-border" />
-        {/* "You": the web rail's account tile, here the way into settings. */}
-        <RailTile label="Settings and profile" active={false} onPress={() => router.push("/settings")}>
+        {/* "You": the web rail's account tile, here the way into settings.
+            (The route types name the settings folder's index /settings/index;
+            it is served at /settings.) */}
+        <RailTile label="Settings and profile" active={false} onPress={() => router.push("/settings" as Href)}>
           {() => (
             <Avatar
               userId={state.userId ?? undefined}

@@ -17,10 +17,23 @@ const LEVELS: { value: NotificationLevel; label: string; hint: string; icon: Com
  * NotificationSettingsPopover as a sheet. A channel can also follow the room,
  * which is the absence of a setting rather than one of the three.
  */
-export function NotificationSheet({ open, onClose, channelId }: { open: boolean; onClose(): void; channelId?: string }) {
+export function NotificationSheet({
+  open,
+  onClose,
+  channelId,
+  roomId: forRoom,
+  title,
+}: {
+  open: boolean;
+  onClose(): void;
+  channelId?: string;
+  /** Another room than the one on screen (Settings → Notifications). */
+  roomId?: string;
+  title?: string;
+}) {
   const state = useChatter();
   const { setNotificationLevel } = useChatterActions();
-  const roomId = state.currentRoomId;
+  const roomId = forRoom ?? state.currentRoomId;
   if (!roomId) return null;
   const effective = resolveNotificationLevel(state.notificationSettings, roomId, channelId);
   const hasOverride = state.notificationSettings[settingsKey(roomId, channelId ?? "")] !== undefined;
@@ -30,7 +43,7 @@ export function NotificationSheet({ open, onClose, channelId }: { open: boolean;
   };
 
   return (
-    <Sheet open={open} onClose={onClose} title={channelId ? "Channel notifications" : "Room notifications"}>
+    <Sheet open={open} onClose={onClose} title={title ?? (channelId ? "Channel notifications" : "Room notifications")}>
       <View className="pb-2 pt-1">
         {channelId ? <Choice label="Use room default" selected={!hasOverride} onPress={() => apply("default")} /> : null}
         {LEVELS.map(({ value, label, hint, icon }) => (

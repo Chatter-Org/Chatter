@@ -8,6 +8,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ChatterProvider, useChatter } from "@/state/ChatterProvider";
 import { ThemeProvider, useTheme } from "@/theme/ThemeProvider";
+import { AppearanceSync } from "@/theme/AppearanceSync";
 import { ToastHost } from "@/components/ToastHost";
 import { SessionGate } from "@/components/SessionGate";
 import { ProfileProvider } from "@/components/ProfileSheet";
@@ -35,6 +36,7 @@ function Root() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar style={mode === "light" ? "dark" : "light"} />
+      <AppearanceSync />
       <SessionGate>
         <ProfileProvider>
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background }, animation: "default" }}>

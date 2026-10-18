@@ -11,6 +11,7 @@ import { serverImage } from "@/ui/media";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { ImageViewer } from "./ImageViewer";
+import { useDevicePrefs } from "@/state/devicePrefs";
 import { ForumLinkCard, LinkPreviewCard, MessageLinkCard } from "./LinkCards";
 import { saveServerFile } from "@/platform/files";
 
@@ -35,6 +36,7 @@ function fileName(url: string): string {
  * pictures, video, audio, files, YouTube — each in a form a thumb can use.
  */
 export const MessageMedia = memo(function MessageMedia({ media, spoiler }: { media: BodyMedia; spoiler?: boolean }) {
+  const { linkPreviews } = useDevicePrefs();
   const [viewing, setViewing] = useState<number | null>(null);
   const hasAny =
     media.images.length +
@@ -72,7 +74,7 @@ export const MessageMedia = memo(function MessageMedia({ media, spoiler }: { med
         <ForumLinkCard key={url} url={url} />
       ))}
       {/* One page preview, for the first link, as on the web. */}
-      {media.links.length > 0 ? <LinkPreviewCard url={media.links[0]} /> : null}
+      {media.links.length > 0 && linkPreviews ? <LinkPreviewCard url={media.links[0]} /> : null}
       <ImageViewer urls={media.images} index={viewing} onClose={() => setViewing(null)} />
     </View>
   );
@@ -82,6 +84,7 @@ function ImageGrid({ urls, onOpen, blurred }: { urls: string[]; onOpen(i: number
   const [revealed, setRevealed] = useState(!blurred);
   // The picture's own shape, as the web draws it: as wide as the message
   // allows, no taller than max-h-80 (352px).
+  const { autoplayAnimated: autoplay } = useDevicePrefs();
   const [aspect, setAspect] = useState(4 / 3);
   const [room, setRoom] = useState(0);
   if (urls.length === 1) {
@@ -97,6 +100,7 @@ function ImageGrid({ urls, onOpen, blurred }: { urls: string[]; onOpen(i: number
           transition={150}
           recyclingKey={urls[0]}
           blurRadius={revealed ? 0 : 40}
+          autoplay={autoplay}
         />
         </Pressable>
       </View>
@@ -112,6 +116,7 @@ function ImageGrid({ urls, onOpen, blurred }: { urls: string[]; onOpen(i: number
             contentFit="cover"
             recyclingKey={url}
             blurRadius={revealed ? 0 : 40}
+            autoplay={autoplay}
           />
         </Pressable>
       ))}

@@ -3,6 +3,8 @@ import { AppState as RNAppState } from "react-native";
 import Constants from "expo-constants";
 import {
   apiLogin,
+  apiVerifyTotp,
+  apiDeleteAccount,
   clearTokens,
   getAccessToken,
   getIsAdmin,
@@ -58,6 +60,11 @@ const RESTORE_MAX_MS = 30_000;
 export interface ChatterActions extends StoreActions {
   signIn(username: string, password: string, totpCode?: string): Promise<{ requiresTotp?: boolean }>;
   signOut(): Promise<void>;
+  /** Turn two-factor on with the first code from the authenticator: the
+   *  server answers with fresh tokens, and the recovery codes to keep. */
+  enrollTotp(code: string): Promise<{ recoveryCodes: string[] }>;
+  /** Delete the account, then end the session here as signing out does. */
+  deleteAccount(totpCode: string): Promise<void>;
   /** Voice, through the shared engine (@chatter/core/voice/engine). */
   voice: {
     join(channelId: string): Promise<void>;
@@ -408,6 +415,28 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "SET_TOTP_VERIFIED", payload: !!data.totp_verified });
         dispatch({ type: "SET_SESSION_RESTORE", payload: "restored" });
         return {};
+      },
+      async enrollTotp(code) {
+        const userId = stateRef.current.userId;
+        if (!userId) throw new Error("Not signed in");
+        const data = await apiVerifyTotp(userId, code);
+        setAccessToken(data.access_token);
+        if (data.is_admin !== undefined) setIsAdmin(!!data.is_admin);
+        setTotpVerified(true);
+        dispatch({ type: "LOGIN", payload: { accessToken: data.access_token, userId: data.user_id ?? userId } });
+        if (data.is_admin !== undefined) dispatch({ type: "SET_IS_ADMIN", payload: !!data.is_admin });
+        dispatch({ type: "SET_TOTP_VERIFIED", payload: true });
+        return { recoveryCodes: data.recovery_codes ?? [] };
+      },
+      async deleteAccount(totpCode) {
+        await apiDeleteAccount(totpCode);
+        if (stateRef.current.inVoiceChannel) await voice.leave();
+        closeSocket("account deleted");
+        clearTokens();
+        clearMessagePreviews();
+        hasConnectedRef.current = false;
+        dispatch({ type: "LOGOUT" });
+        dispatch({ type: "SET_SESSION_RESTORE", payload: "absent" });
       },
       async signOut() {
         if (stateRef.current.inVoiceChannel) await voice.leave();
