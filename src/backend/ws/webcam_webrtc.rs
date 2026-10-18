@@ -5,7 +5,7 @@ use crate::backend::{
     state::{AppState, WebcamPublisherState, WebcamSubscriberState},
     webrtc::{
         create_peer_connection, ice_candidate_to_json, parse_ice_candidate,
-        rewrite_rtcp_feedback_for_publisher,
+        rewrite_rtcp_feedback_for_publisher, CandidateGate,
     },
 };
 use rtcp::{
@@ -17,7 +17,7 @@ use tokio::{sync::broadcast, task::JoinHandle};
 use webrtc::{
     peer_connection::{
         peer_connection_state::RTCPeerConnectionState,
-        sdp::session_description::RTCSessionDescription,
+        sdp::session_description::RTCSessionDescription, RTCPeerConnection,
     },
     rtp_transceiver::rtp_codec::RTCRtpCodecCapability,
     track::{
@@ -65,10 +65,28 @@ pub(crate) async fn teardown_webcam_subscriber_pair(
     viewer_user_id: &str,
     sharer_user_id: &str,
 ) {
+    teardown_webcam_subscriber_pair_on(state, viewer_user_id, sharer_user_id, None).await;
+}
+
+/// Tear down one viewer's subscription — with `only`, just when it is still
+/// that connection. Checked under the same lock as the removal: a connection
+/// reporting itself closed after a resubscribe has replaced it must not take
+/// the replacement down with it.
+async fn teardown_webcam_subscriber_pair_on(
+    state: &AppState,
+    viewer_user_id: &str,
+    sharer_user_id: &str,
+    only: Option<&Arc<RTCPeerConnection>>,
+) {
     let key = subscriber_key(viewer_user_id, sharer_user_id);
     let subscriber = {
         let mut subs = state.webcam_subscribers.write().await;
-        subs.remove(&key)
+        match subs.get(&key) {
+            Some(s) if only.is_none_or(|pc| Arc::ptr_eq(&s.peer_connection, pc)) => {
+                subs.remove(&key)
+            }
+            _ => None,
+        }
     };
 
     if let Some(subscriber) = subscriber {
@@ -141,9 +159,23 @@ pub(crate) async fn teardown_webcam_publisher(
     state: &AppState,
     sharer_user_id: &str,
 ) -> Option<String> {
+    teardown_webcam_publisher_on(state, sharer_user_id, None).await
+}
+
+/// As `teardown_webcam_subscriber_pair_on`, for the sharer's own connection.
+async fn teardown_webcam_publisher_on(
+    state: &AppState,
+    sharer_user_id: &str,
+    only: Option<&Arc<RTCPeerConnection>>,
+) -> Option<String> {
     let publisher = {
         let mut publishers = state.webcam_publishers.write().await;
-        publishers.remove(sharer_user_id)
+        match publishers.get(sharer_user_id) {
+            Some(p) if only.is_none_or(|pc| Arc::ptr_eq(&p.peer_connection, pc)) => {
+                publishers.remove(sharer_user_id)
+            }
+            _ => None,
+        }
     };
 
     let publisher = match publisher {
@@ -218,12 +250,16 @@ pub(crate) async fn handle_webcam_webrtc_publish_offer(
         );
     }
 
+    // Held back until the answer is out; see `CandidateGate`.
+    let candidate_gate = Arc::new(CandidateGate::default());
     {
         let state_clone = state.clone();
         let room_id = room_id.to_string();
         let user_id = user_id.to_string();
+        let gate = candidate_gate.clone();
         peer_connection.on_ice_candidate(Box::new(move |candidate| {
             let state = state_clone.clone();
+            let gate = gate.clone();
             let room_id = room_id.clone();
             let user_id = user_id.clone();
             Box::pin(async move {
@@ -238,7 +274,9 @@ pub(crate) async fn handle_webcam_webrtc_publish_offer(
                     "room_id": room_id,
                     "candidate": ice_candidate_to_json(&candidate_init)
                 });
-                send_to_user(&state, &user_id, &response).await;
+                if let Some(response) = gate.pass(response) {
+                    send_to_user(&state, &user_id, &response).await;
+                }
             })
         }));
     }
@@ -258,14 +296,12 @@ pub(crate) async fn handle_webcam_webrtc_publish_offer(
                     pc_state,
                     RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed
                 ) {
+                    // Only this connection: an old one reporting itself
+                    // closed must not end a share that has replaced it.
+                    if teardown_webcam_publisher_on(&state, &user_id, Some(&this_pc))
+                        .await
+                        .is_some()
                     {
-                        let publishers = state.webcam_publishers.read().await;
-                        match publishers.get(&user_id) {
-                            Some(p) if !Arc::ptr_eq(&p.peer_connection, &this_pc) => return,
-                            _ => {}
-                        }
-                    }
-                    if teardown_webcam_publisher(&state, &user_id).await.is_some() {
                         let event = json!({
                             "type": "webcam_share_stopped",
                             "room_id": room_id,
@@ -392,6 +428,9 @@ pub(crate) async fn handle_webcam_webrtc_publish_offer(
             "sdp": local_desc.sdp
         });
         send_to_user(&state, user_id, &response).await;
+        for candidate in candidate_gate.open() {
+            send_to_user(&state, user_id, &candidate).await;
+        }
     } else {
         let _ = teardown_webcam_publisher(&state, user_id).await;
         let error = json!({
@@ -564,13 +603,17 @@ pub(crate) async fn handle_webcam_webrtc_subscribe_offer(
         }
     };
 
+    // Held back until the answer is out; see `CandidateGate`.
+    let candidate_gate = Arc::new(CandidateGate::default());
     {
         let state_clone = state.clone();
         let room_id = room_id.to_string();
         let viewer_user_id = viewer_user_id.to_string();
         let sharer_user_id = sharer_user_id.to_string();
+        let gate = candidate_gate.clone();
         peer_connection.on_ice_candidate(Box::new(move |candidate| {
             let state = state_clone.clone();
+            let gate = gate.clone();
             let room_id = room_id.clone();
             let viewer_user_id = viewer_user_id.clone();
             let sharer_user_id = sharer_user_id.clone();
@@ -587,7 +630,9 @@ pub(crate) async fn handle_webcam_webrtc_subscribe_offer(
                     "sharer_user_id": sharer_user_id,
                     "candidate": ice_candidate_to_json(&candidate_init)
                 });
-                send_to_user(&state, &viewer_user_id, &response).await;
+                if let Some(response) = gate.pass(response) {
+                    send_to_user(&state, &viewer_user_id, &response).await;
+                }
             })
         }));
     }
@@ -607,15 +652,15 @@ pub(crate) async fn handle_webcam_webrtc_subscribe_offer(
                     pc_state,
                     RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed
                 ) {
-                    {
-                        let key = subscriber_key(&viewer_user_id, &sharer_user_id);
-                        let subs = state.webcam_subscribers.read().await;
-                        match subs.get(&key) {
-                            Some(s) if !Arc::ptr_eq(&s.peer_connection, &this_pc) => return,
-                            _ => {}
-                        }
-                    }
-                    teardown_webcam_subscriber_pair(&state, &viewer_user_id, &sharer_user_id).await;
+                    // Only this connection, never a subscription that has
+                    // since replaced it.
+                    teardown_webcam_subscriber_pair_on(
+                        &state,
+                        &viewer_user_id,
+                        &sharer_user_id,
+                        Some(&this_pc),
+                    )
+                    .await;
                 }
             })
         }));
@@ -695,9 +740,14 @@ pub(crate) async fn handle_webcam_webrtc_subscribe_offer(
             }
 
             match rtp_receiver.recv().await {
+                // A failed write is not the end of this viewer's stream: stopping
+                // here froze their picture for the rest of the share, and with no
+                // packets arriving the client's frozen-video check never fired. The
+                // task ends when the subscription is torn down, which aborts it, or
+                // when the sharer stops.
                 Ok(rtp_packet) => match local_track.write_rtp(&rtp_packet).await {
                     Ok(bytes) => METRICS.record_out(MediaKind::Webcam, bytes),
-                    Err(_) => break,
+                    Err(_) => continue,
                 },
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
                     METRICS.record_lagged(MediaKind::Webcam, skipped);
@@ -800,6 +850,9 @@ pub(crate) async fn handle_webcam_webrtc_subscribe_offer(
             "sdp": local_desc.sdp
         });
         send_to_user(&state, viewer_user_id, &response).await;
+        for candidate in candidate_gate.open() {
+            send_to_user(&state, viewer_user_id, &candidate).await;
+        }
     } else {
         teardown_webcam_subscriber_pair(&state, viewer_user_id, sharer_user_id).await;
         let error = json!({

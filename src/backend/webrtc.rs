@@ -58,6 +58,53 @@ pub(crate) fn parse_ice_candidate(value: &Value) -> Option<RTCIceCandidateInit> 
     })
 }
 
+/// Holds the server's ICE candidates back until the answer they belong to has
+/// been sent.
+///
+/// Gathering starts inside `set_local_description`, and `on_ice_candidate`
+/// sends from its own task, so candidates used to reach the client ahead of the
+/// answer. A client cannot add a candidate before it has a remote description,
+/// so it dropped them — and one that ended up with none of the server's
+/// candidates never sent a connectivity check. Behind a NAT that is a
+/// connection that never comes up and never reports failing either: someone in
+/// the call who simply hears nothing, or is heard by nobody, until they rejoin.
+#[derive(Default)]
+pub(crate) struct CandidateGate {
+    state: std::sync::Mutex<CandidateGateState>,
+}
+
+#[derive(Default)]
+struct CandidateGateState {
+    open: bool,
+    held: Vec<Value>,
+}
+
+impl CandidateGate {
+    /// Hand back a candidate message if it may go out now; otherwise keep it
+    /// until `open`.
+    pub(crate) fn pass(&self, message: Value) -> Option<Value> {
+        let Ok(mut state) = self.state.lock() else {
+            return Some(message);
+        };
+        if state.open {
+            Some(message)
+        } else {
+            state.held.push(message);
+            None
+        }
+    }
+
+    /// Call once the answer has been queued to the client. Everything held
+    /// comes back, to be sent in order; later candidates pass straight through.
+    pub(crate) fn open(&self) -> Vec<Value> {
+        let Ok(mut state) = self.state.lock() else {
+            return Vec::new();
+        };
+        state.open = true;
+        std::mem::take(&mut state.held)
+    }
+}
+
 pub(crate) fn ice_candidate_to_json(candidate: &RTCIceCandidateInit) -> Value {
     json!({
         "candidate": candidate.candidate,
@@ -382,10 +429,20 @@ pub(crate) fn rewrite_rtcp_feedback_for_publisher(
 mod tests {
     use super::{
         client_turn_urls, ice_candidate_to_json, parse_ice_candidate,
-        rewrite_rtcp_feedback_for_publisher,
+        rewrite_rtcp_feedback_for_publisher, CandidateGate,
     };
     use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
     use serde_json::json;
+
+    #[test]
+    fn candidate_gate_holds_until_the_answer_then_passes_through() {
+        let gate = CandidateGate::default();
+        assert!(gate.pass(json!(1)).is_none());
+        assert!(gate.pass(json!(2)).is_none());
+        assert_eq!(gate.open(), vec![json!(1), json!(2)], "held in order");
+        assert_eq!(gate.pass(json!(3)), Some(json!(3)));
+        assert!(gate.open().is_empty(), "nothing is released twice");
+    }
 
     #[test]
     fn ice_candidate_round_trip_preserves_fields() {

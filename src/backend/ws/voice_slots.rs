@@ -196,85 +196,114 @@ fn elapsed_samples(last_out: Option<Instant>, now: Instant) -> u32 {
 
 /// Pump one speaker's RTP into one slot until the speaker stops publishing or
 /// the slot is handed to somebody else.
+///
+/// If it stops on its own — the speaker's stream ended under it — it gives the
+/// slot back. That happens when a sweep hands out a speaker's stream in the
+/// same moment their publisher is replaced (a rejoin, a retry): the slot is
+/// fed from the old stream, which then closes. Left assigned, the slot would
+/// look occupied to the sweep forever while carrying nothing, and since the
+/// sweep keeps anyone still wanted where they are, the listener would never
+/// hear that speaker again.
 fn spawn_slot_forwarder(
     slot: Arc<VoiceSlot>,
     mut rtp: broadcast::Receiver<rtp::packet::Packet>,
+    token: Arc<()>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        loop {
-            match rtp.recv().await {
-                Ok(packet) => {
-                    let stamped = {
-                        let Ok(mut restamp_state) = slot.restamp.lock() else {
-                            break;
-                        };
-                        restamp(
-                            &mut restamp_state,
-                            packet.header.sequence_number,
-                            packet.header.timestamp,
-                            Instant::now(),
-                        )
-                    };
-                    let Some((sequence_number, timestamp, discontinuity)) = stamped else {
-                        continue;
-                    };
-
-                    // Built rather than cloned and then emptied. Every
-                    // publisher packet carries the audio-level extension, so
-                    // `packet.clone()` heap-allocated an extension vector once
-                    // per packet *per listener* purely for the next few lines
-                    // to throw away — and this is the hottest loop the server
-                    // has. `payload` is `Bytes`, so carrying it over is a
-                    // refcount bump rather than a copy.
-                    //
-                    // Extension ids are negotiated per connection, so the
-                    // publisher's numbering means nothing on this leg. Speaking
-                    // state reaches clients over the websocket instead.
-                    let out = rtp::packet::Packet {
-                        header: rtp::header::Header {
-                            version: packet.header.version,
-                            padding: packet.header.padding,
-                            extension: false,
-                            marker: discontinuity,
-                            payload_type: packet.header.payload_type,
-                            sequence_number,
-                            timestamp,
-                            // Both are overwritten per binding inside
-                            // `write_rtp`; carried anyway so the packet is
-                            // coherent on its own.
-                            ssrc: packet.header.ssrc,
-                            // Empty in practice — nothing upstream mixes — so
-                            // this clone does not allocate either.
-                            csrc: packet.header.csrc.clone(),
-                            extension_profile: 0,
-                            extensions: Vec::new(),
-                            extensions_padding: 0,
-                        },
-                        payload: packet.payload.clone(),
-                    };
-
-                    // A failed write is not the end of the slot. The forwarder
-                    // used to stop on the first one, while the assignment it
-                    // served stayed in place — and since the sweep keeps a
-                    // speaker who is still wanted exactly where they are, one
-                    // transient send error (a network blip, a write during an
-                    // ICE consent hiccup) silenced that speaker for that
-                    // listener for the rest of the call. The task ends when
-                    // the slot is reassigned or the listener is torn down,
-                    // both of which abort it, or when the publisher goes.
-                    match slot.track.write_rtp(&out).await {
-                        Ok(bytes) => METRICS.record_out(MediaKind::Voice, bytes),
-                        Err(_) => continue,
-                    }
+        forward_into_slot(&slot, &mut rtp).await;
+        if let Ok(mut assignment) = slot.assignment.lock() {
+            let still_ours = assignment
+                .as_ref()
+                .is_some_and(|a| Arc::ptr_eq(&a.token, &token));
+            if still_ours {
+                if let Some(gone) = assignment.take() {
+                    eprintln!(
+                        "[voice] slot forwarder for {} stopped; freeing the slot",
+                        gone.speaker_user_id
+                    );
                 }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    METRICS.record_lagged(MediaKind::Voice, skipped);
-                    continue;
+                if let Ok(mut restamp_state) = slot.restamp.lock() {
+                    restamp_state.prev_in = None;
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     })
+}
+
+async fn forward_into_slot(slot: &VoiceSlot, rtp: &mut broadcast::Receiver<rtp::packet::Packet>) {
+    loop {
+        match rtp.recv().await {
+            Ok(packet) => {
+                let stamped = {
+                    let Ok(mut restamp_state) = slot.restamp.lock() else {
+                        break;
+                    };
+                    restamp(
+                        &mut restamp_state,
+                        packet.header.sequence_number,
+                        packet.header.timestamp,
+                        Instant::now(),
+                    )
+                };
+                let Some((sequence_number, timestamp, discontinuity)) = stamped else {
+                    continue;
+                };
+
+                // Built rather than cloned and then emptied. Every
+                // publisher packet carries the audio-level extension, so
+                // `packet.clone()` heap-allocated an extension vector once
+                // per packet *per listener* purely for the next few lines
+                // to throw away — and this is the hottest loop the server
+                // has. `payload` is `Bytes`, so carrying it over is a
+                // refcount bump rather than a copy.
+                //
+                // Extension ids are negotiated per connection, so the
+                // publisher's numbering means nothing on this leg. Speaking
+                // state reaches clients over the websocket instead.
+                let out = rtp::packet::Packet {
+                    header: rtp::header::Header {
+                        version: packet.header.version,
+                        padding: packet.header.padding,
+                        extension: false,
+                        marker: discontinuity,
+                        payload_type: packet.header.payload_type,
+                        sequence_number,
+                        timestamp,
+                        // Both are overwritten per binding inside
+                        // `write_rtp`; carried anyway so the packet is
+                        // coherent on its own.
+                        ssrc: packet.header.ssrc,
+                        // Empty in practice — nothing upstream mixes — so
+                        // this clone does not allocate either.
+                        csrc: packet.header.csrc.clone(),
+                        extension_profile: 0,
+                        extensions: Vec::new(),
+                        extensions_padding: 0,
+                    },
+                    payload: packet.payload.clone(),
+                };
+
+                // A failed write is not the end of the slot. The forwarder
+                // used to stop on the first one, while the assignment it
+                // served stayed in place — and since the sweep keeps a
+                // speaker who is still wanted exactly where they are, one
+                // transient send error (a network blip, a write during an
+                // ICE consent hiccup) silenced that speaker for that
+                // listener for the rest of the call. The task ends when
+                // the slot is reassigned or the listener is torn down,
+                // both of which abort it, or when the publisher goes.
+                match slot.track.write_rtp(&out).await {
+                    Ok(bytes) => METRICS.record_out(MediaKind::Voice, bytes),
+                    Err(_) => continue,
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                METRICS.record_lagged(MediaKind::Voice, skipped);
+                continue;
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
 }
 
 /// Hand a slot to `speaker`, or clear it when `speaker` is `None`.
@@ -295,10 +324,13 @@ fn set_slot(
         restamp_state.prev_in = None;
     }
     if let Some((speaker_user_id, rtp_sender)) = speaker {
-        let forward_task = spawn_slot_forwarder(slot.clone(), rtp_sender.subscribe());
+        let token = Arc::new(());
+        let forward_task =
+            spawn_slot_forwarder(slot.clone(), rtp_sender.subscribe(), token.clone());
         *assignment = Some(VoiceSlotAssignment {
             speaker_user_id,
             forward_task,
+            token,
         });
     }
 }
@@ -583,6 +615,67 @@ mod tests {
         let current = vec![Some("a".into()), Some("a".into()), None];
         let next = assign_slots(&current, &["a".to_string()]);
         assert_eq!(next.iter().flatten().filter(|u| *u == "a").count(), 1);
+    }
+
+    fn test_slot() -> Arc<VoiceSlot> {
+        use webrtc::{
+            api::media_engine::MIME_TYPE_OPUS, rtp_transceiver::rtp_codec::RTCRtpCodecCapability,
+            track::track_local::track_local_static_rtp::TrackLocalStaticRTP,
+        };
+        Arc::new(VoiceSlot {
+            track: Arc::new(TrackLocalStaticRTP::new(
+                RTCRtpCodecCapability {
+                    mime_type: MIME_TYPE_OPUS.to_string(),
+                    clock_rate: 48_000,
+                    channels: 2,
+                    ..Default::default()
+                },
+                "voice-slot-0".to_string(),
+                "test".to_string(),
+            )),
+            assignment: std::sync::Mutex::new(None),
+            restamp: std::sync::Mutex::new(Default::default()),
+        })
+    }
+
+    async fn wait_until_empty(slot: &VoiceSlot) -> bool {
+        for _ in 0..100 {
+            if slot.assignment.lock().unwrap().is_none() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    /// A slot whose speaker's stream has ended must be given back, or the
+    /// sweep goes on believing the listener hears them.
+    #[tokio::test]
+    async fn a_slot_is_freed_when_its_speakers_stream_ends() {
+        let slot = test_slot();
+        let (tx, _) = broadcast::channel::<rtp::packet::Packet>(8);
+        set_slot(&slot, Some(("@a:localhost".to_string(), tx.clone())));
+        assert!(slot.assignment.lock().unwrap().is_some());
+
+        drop(tx);
+        assert!(wait_until_empty(&slot).await, "slot should have been freed");
+    }
+
+    /// A forwarder that was replaced must not free the slot from under the
+    /// speaker who took it over.
+    #[tokio::test]
+    async fn a_replaced_forwarder_leaves_the_new_assignment_alone() {
+        let slot = test_slot();
+        let (old_tx, _) = broadcast::channel::<rtp::packet::Packet>(8);
+        let (new_tx, _) = broadcast::channel::<rtp::packet::Packet>(8);
+        set_slot(&slot, Some(("@a:localhost".to_string(), old_tx.clone())));
+        set_slot(&slot, Some(("@b:localhost".to_string(), new_tx.clone())));
+        drop(old_tx);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            current_occupants(std::slice::from_ref(&slot)),
+            vec![Some("@b:localhost".to_string())]
+        );
     }
 
     #[test]

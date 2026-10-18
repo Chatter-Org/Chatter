@@ -21,7 +21,7 @@ use webrtc::{
     api::media_engine::MIME_TYPE_OPUS,
     peer_connection::{
         peer_connection_state::RTCPeerConnectionState,
-        sdp::session_description::RTCSessionDescription,
+        sdp::session_description::RTCSessionDescription, RTCPeerConnection,
     },
     rtp_transceiver::{rtp_codec::RTCRtpCodecCapability, rtp_receiver::RTCRtpReceiver},
     track::{
@@ -48,9 +48,26 @@ fn slot_codec() -> RTCRtpCodecCapability {
 }
 
 pub(crate) async fn teardown_voice_listener(state: &AppState, listener_user_id: &str) {
+    teardown_voice_listener_on(state, listener_user_id, None).await;
+}
+
+/// Tear down a listener's subscription — with `only`, just when it is still
+/// that connection. Checked under the same lock as the removal: a connection
+/// reporting itself closed after a resubscribe has replaced it must not take
+/// the replacement down with it.
+async fn teardown_voice_listener_on(
+    state: &AppState,
+    listener_user_id: &str,
+    only: Option<&Arc<RTCPeerConnection>>,
+) {
     let listener = {
         let mut listeners = state.voice_listeners.write().await;
-        listeners.remove(listener_user_id)
+        match listeners.get(listener_user_id) {
+            Some(l) if only.is_none_or(|pc| Arc::ptr_eq(&l.peer_connection, pc)) => {
+                listeners.remove(listener_user_id)
+            }
+            _ => None,
+        }
     };
 
     let Some(listener) = listener else {
@@ -73,9 +90,23 @@ pub(crate) async fn teardown_voice_publisher(
     state: &AppState,
     speaker_user_id: &str,
 ) -> Option<String> {
+    teardown_voice_publisher_on(state, speaker_user_id, None).await
+}
+
+/// As `teardown_voice_listener_on`, for a publisher.
+async fn teardown_voice_publisher_on(
+    state: &AppState,
+    speaker_user_id: &str,
+    only: Option<&Arc<RTCPeerConnection>>,
+) -> Option<String> {
     let publisher = {
         let mut publishers = state.voice_publishers.write().await;
-        publishers.remove(speaker_user_id)
+        match publishers.get(speaker_user_id) {
+            Some(p) if only.is_none_or(|pc| Arc::ptr_eq(&p.peer_connection, pc)) => {
+                publishers.remove(speaker_user_id)
+            }
+            _ => None,
+        }
     };
 
     let publisher = publisher?;
@@ -265,17 +296,10 @@ pub(crate) async fn handle_voice_webrtc_publish_offer(
                     pc_state,
                     RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed
                 ) {
-                    // Guard: if a newer publisher has replaced this one, don't tear it down.
-                    // This prevents a race where the old PC's Closed callback fires after
-                    // channel-switch has already stored a new publisher for the same user.
-                    {
-                        let publishers = state.voice_publishers.read().await;
-                        match publishers.get(&user_id) {
-                            Some(p) if !Arc::ptr_eq(&p.peer_connection, &this_pc) => return,
-                            _ => {}
-                        }
-                    }
-                    let _ = teardown_voice_publisher(&state, &user_id).await;
+                    // Only this connection: the old PC's Closed callback can
+                    // fire after a channel switch or rejoin has already stored
+                    // a new publisher for the same user.
+                    let _ = teardown_voice_publisher_on(&state, &user_id, Some(&this_pc)).await;
                 }
             })
         }));
@@ -583,15 +607,9 @@ pub(crate) async fn handle_voice_webrtc_subscribe_offer(
                     pc_state,
                     RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed
                 ) {
-                    // Guard: if a newer subscription has replaced this one, don't tear it down.
-                    {
-                        let listeners = state.voice_listeners.read().await;
-                        match listeners.get(&listener_user_id) {
-                            Some(l) if !Arc::ptr_eq(&l.peer_connection, &this_pc) => return,
-                            _ => {}
-                        }
-                    }
-                    teardown_voice_listener(&state, &listener_user_id).await;
+                    // Only this connection, never a subscription that has
+                    // since replaced it.
+                    teardown_voice_listener_on(&state, &listener_user_id, Some(&this_pc)).await;
                 }
             })
         }));
@@ -733,15 +751,13 @@ pub(crate) async fn handle_voice_webrtc_subscribe_offer(
     )
     .await;
 
-    // Slots start empty; the sweep fills them within a tick.
-    send_slot_map(
-        &state,
-        listener_user_id,
-        room_id,
-        &channel_id,
-        &vec![None; slot_count],
-    )
-    .await;
+    // No slot map here. Slots start empty, which is what the client assumes
+    // of a new subscription, and the sweep announces them as they fill. An
+    // empty map sent from here could land after the sweep's first real one —
+    // the listener is already in the map the sweep reads — and the sweep,
+    // believing the client up to date, would not send it again until a slot
+    // changed hands: a listener who heard nobody until someone left or
+    // rejoined.
 }
 
 pub(crate) async fn handle_voice_webrtc_subscribe_candidate(

@@ -5,7 +5,9 @@ import {
   SCREEN_SUBSCRIBE_RETRY_MS,
   VOICE_SUB_STUCK_NEW_MS,
   VOICE_SUB_STUCK_CONNECTING_MS,
+  VOICE_CONNECT_TIMEOUT_MS,
   canSignal,
+  candidatesAfterOffer,
   getScreenSharePublishProfile,
   formatScreenBitrate,
   preferScreenVideoCodecs,
@@ -252,6 +254,10 @@ export function useWebRTCScreen() {
       });
     }
   }, [state.currentRoomId, state.userId, state.voiceChannelId, state.voiceChannelMembers, dispatch, wsRef]);
+  // For callbacks that outlive the render they were made in, like the
+  // publisher's connection watch.
+  const stopScreenShareRef = useRef(stopScreenShare);
+  stopScreenShareRef.current = stopScreenShare;
 
   // ─── WS Message handler for Screen WebRTC signaling ────────────────────────
   useEffect(() => {
@@ -620,10 +626,32 @@ export function useWebRTCScreen() {
         }
         pc.addTrack(screenAudioTrack, new MediaStream([screenAudioTrack]));
       }
+      // None before the offer; see `candidatesAfterOffer`.
+      const trickle = candidatesAfterOffer<RTCIceCandidate>((c) => {
+        if (!canSignal(wsRef)) return;
+        wsRef.current!.send(JSON.stringify({ type: "screen_webrtc_publish_candidate", room_id: state.currentRoomId, channel_id: state.voiceChannelId || undefined, candidate: c.toJSON() }));
+      });
       pc.onicecandidate = (ev) => {
-        if (!ev.candidate || !canSignal(wsRef)) return;
-        wsRef.current!.send(JSON.stringify({ type: "screen_webrtc_publish_candidate", room_id: state.currentRoomId, channel_id: state.voiceChannelId || undefined, candidate: ev.candidate.toJSON() }));
+        if (ev.candidate) trickle.add(ev.candidate);
       };
+      // Nobody can tell the sharer their share isn't reaching anyone: their
+      // own preview looks fine either way. A connection that fails, or never
+      // comes up, ends the share and says so rather than leaving them
+      // presenting to an empty room.
+      const giveUp = (message: string) => {
+        if (screenPubPcRef.current !== pc) return;
+        console.warn(`[screen-share] ${message} (connection ${pc.connectionState})`);
+        toast.error(message);
+        void stopScreenShareRef.current();
+      };
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "failed") giveUp("Your screen share lost its connection. Try sharing again.");
+      };
+      setTimeout(() => {
+        if (pc.connectionState === "new" || pc.connectionState === "connecting") {
+          giveUp("Your screen share couldn't connect. Try sharing again.");
+        }
+      }, VOICE_CONNECT_TIMEOUT_MS);
       const offer = await pc.createOffer();
       const mungedSdp = mungeScreenAudioSdp(offer.sdp!, {
         maxAverageBitrate: profile.audioMaxAverageBitrate,
@@ -633,6 +661,7 @@ export function useWebRTCScreen() {
 
       if (canSignal(wsRef)) {
         wsRef.current!.send(JSON.stringify({ type: "screen_webrtc_publish_offer", room_id: state.currentRoomId, channel_id: state.voiceChannelId || undefined, sdp: mungedSdp }));
+        trickle.offerSent();
       }
     } catch (err: unknown) {
       dispatch({ type: "SET_VOICE_STATE", payload: { isScreenSharing: false } });
