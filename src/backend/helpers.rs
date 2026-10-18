@@ -41,6 +41,15 @@ pub(crate) struct Claims {
     /// within a quarter of an hour of the client doing anything at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) typ: Option<String>,
+    /// A random id, so two tokens are never the same string.
+    ///
+    /// Everything else here is the user and the second the token was made, so
+    /// two sign-ins — or two refreshes — for one account inside the same second
+    /// used to mint identical refresh tokens. Revoking or rotating either one
+    /// then ended the other device's session too. Absent on older tokens,
+    /// which decode as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) jti: Option<String>,
 }
 
 impl Claims {
@@ -63,6 +72,7 @@ fn encode_token(user_id: &str, secret: &str, typ: &str, ttl_secs: usize) -> Stri
         iat: now,
         exp: now + ttl_secs,
         typ: Some(typ.to_string()),
+        jti: Some(hex::encode(rand::random::<[u8; 16]>())),
     };
     encode(
         &Header::default(),
@@ -1927,10 +1937,22 @@ mod tests {
                 iat: now,
                 exp: now + 900,
                 typ: None,
+                jti: None,
             },
             &EncodingKey::from_secret(secret.as_bytes()),
         )
         .unwrap();
         assert!(decode_token(&legacy, secret).unwrap().is_usable_as_access());
+    }
+
+    #[test]
+    fn two_tokens_minted_in_the_same_second_differ() {
+        // Identical refresh tokens let one device's sign-out or rotation end
+        // another device's session.
+        let secret = "test-secret-value";
+        let a = create_refresh_token("@buck:localhost", secret);
+        let b = create_refresh_token("@buck:localhost", secret);
+        assert_ne!(a, b);
+        assert_eq!(decode_token(&a, secret).unwrap().sub, "@buck:localhost");
     }
 }
