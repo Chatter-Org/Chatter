@@ -102,6 +102,11 @@ export class VoiceEngine {
   private publishRetries = 0;
   private forceMuted = false;
   private bitrate = VOICE_BITRATE_DEFAULT_BPS;
+  /** Peers whose answer is being applied. "Awaiting an answer" stays true
+   *  until it has been, so a second copy arriving meanwhile — one per open
+   *  socket of the account — would otherwise be applied to a peer that
+   *  already has one, fail, and take a working connection down with it. */
+  private answering = new WeakSet<VoicePeer>();
   /** Push-to-talk's current state, so a repeat press does nothing. */
   private transmitting = false;
 
@@ -462,7 +467,8 @@ export class VoiceEngine {
     switch (msg.type) {
       case "voice_webrtc_publish_answer": {
         const pc = this.publisher;
-        if (!pc || !isAwaitingAnswer(pc)) return;
+        if (!pc || !isAwaitingAnswer(pc) || this.answering.has(pc)) return;
+        this.answering.add(pc);
         try {
           await pc.setRemoteDescription({ type: "answer", sdp: mungeVoiceAudioSdp(msg.sdp, this.bitrate) });
           await releaseHeldCandidates(pc);
@@ -478,7 +484,8 @@ export class VoiceEngine {
         return;
       case "voice_webrtc_subscribe_answer": {
         const pc = this.subscriber;
-        if (pc && msg.sdp && isAwaitingAnswer(pc)) {
+        if (pc && msg.sdp && isAwaitingAnswer(pc) && !this.answering.has(pc)) {
+          this.answering.add(pc);
           try {
             await pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
             await releaseHeldCandidates(pc);

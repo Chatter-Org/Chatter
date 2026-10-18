@@ -125,6 +125,27 @@ describe("VoiceEngine", () => {
     expect(t.gains.get(2)).toBe(0);
   });
 
+  it("applies an answer once when it arrives twice", async () => {
+    const t = setup();
+    await t.engine.join("voice1");
+    const [publisher, subscriber] = t.peers;
+    let applied = 0;
+    publisher.setRemoteDescription = async () => {
+      applied += 1;
+      if (applied > 1) throw new Error("Called in wrong state: stable");
+    };
+    // Two sockets on one account each deliver the answer.
+    await Promise.all([
+      t.engine.handleFrame({ type: "voice_webrtc_publish_answer", sdp: "v=0\r\n" }),
+      t.engine.handleFrame({ type: "voice_webrtc_publish_answer", sdp: "v=0\r\n" }),
+      t.engine.handleFrame({ type: "voice_webrtc_subscribe_answer", sdp: "v=0\r\n" }),
+      t.engine.handleFrame({ type: "voice_webrtc_subscribe_answer", sdp: "v=0\r\n" }),
+    ]);
+    expect(applied).toBe(1);
+    expect(publisher.closed).toBe(false);
+    expect(subscriber.closed).toBe(false);
+  });
+
   it("mutes and deafens the mic and tells the server", async () => {
     const t = setup();
     await t.engine.join("voice1");

@@ -26,6 +26,7 @@ import { subscribeVoiceSettings } from "@chatter/core/voice/settings";
 import { showToast } from "@/platform/toast";
 import { createNativeVoiceBackend } from "@/voice/nativeBackend";
 import { clearSpeaking, noteSpeakingFrame } from "@/voice/speaking";
+import { useCallService } from "@/voice/useCallService";
 import { signOutThisDevice } from "@/platform/signOut";
 import { socketUrl } from "@/platform/server";
 import { hasStoredSession } from "@/platform/tokenStore";
@@ -146,6 +147,7 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
     if (!state.inVoiceChannel) clearSpeaking();
   }, [state.inVoiceChannel]);
   useEffect(() => subscribeVoiceSettings(() => voice.applySettings()), [voice]);
+  useCallService(state, voice);
 
   // ─── Session ───────────────────────────────────────────────────────────────
 
@@ -204,7 +206,12 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
     retryTimer.current = null;
     const ws = socketRef.current;
     if (!ws) return;
+    // Let go of it entirely. A socket still connecting would otherwise finish
+    // opening, say hello and deliver every frame beside its replacement —
+    // the server sends to each of them, so each voice answer arrived twice.
     ws.onclose = null; // a deliberate close does not schedule a reconnect
+    ws.onmessage = null;
+    ws.onopen = () => ws.close(1000, reason);
     try {
       ws.close(1000, reason);
     } catch {
