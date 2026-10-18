@@ -1,3 +1,4 @@
+import type { ReadMarkerUpdate } from "../unreads";
 import type { MatrixMessage, PinnedMessage, RoomInfo, RoomGroup, Channel, ChannelCategory, CustomRole, RolePermissions, Embed, PollState, RoomEvent, RsvpStatus } from "../api";
 import type { Dispatch } from "react";
 import type { NotificationLevel, NotificationSettings } from "../notifications";
@@ -411,6 +412,9 @@ export type Action =
   | { type: "SET_NOTIFICATION_LEVEL"; payload: { roomId: string; channelId: string; level: NotificationLevel | "default" } }
   | { type: "SET_UNREADS"; payload: ServerUnread[] }
   | { type: "SET_THREAD_MENTIONS"; payload: { thread_id: string; mentions: number }[] }
+  /** A read marker moved on one of this user's devices: what is left unread
+   *  in that one bucket — a channel, a room's channel-less bucket, or a thread. */
+  | { type: "APPLY_READ_MARKER"; payload: ReadMarkerUpdate }
   | { type: "CLEAR_CHANNEL_UNREAD"; payload: string }
   | { type: "UPDATE_DM_STREAK"; payload: { roomId: string; streakCount: number; lastMessageTs: number } }
   | { type: "INCREMENT_ROOM_UNREAD"; payload: string }

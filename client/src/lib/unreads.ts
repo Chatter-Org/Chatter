@@ -68,6 +68,18 @@ export interface ServerUnread {
   latest_ts?: number;
 }
 
+/** The `read_marker` broadcast: one bucket's remaining unread after a read on
+ *  any of the user's devices. A thread names `threadId` and only mentions. */
+export type ReadMarkerUpdate =
+  | {
+      roomId: string;
+      channelId: string;
+      count: number;
+      mentions: number;
+      latestTs: number;
+    }
+  | { roomId: string; threadId: string; mentions: number };
+
 /**
  * The buckets the server's counts describe. They replace the session's tallies
  * wholesale — they are authoritative, and a merge would double-count anything

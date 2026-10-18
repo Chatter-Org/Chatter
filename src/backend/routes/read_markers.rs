@@ -7,7 +7,7 @@
 use super::super::{
     helpers::{
         error_response, extract_token, get_allowed_channel_ids, get_user_from_token, mention_token,
-        now_millis, regex_escape,
+        now_millis, regex_escape, send_to_user,
     },
     push::role_names_by_user,
     state::{AppState, ChannelRecord, RoomRecord, ThreadRecord},
@@ -116,6 +116,12 @@ pub(crate) async fn mark_read(
         .upsert(true)
         .await;
 
+    // The device that read it already knows; every other one learns here. Sent
+    // to all of the user's connections, the reader's included, since a socket
+    // is not tied to the request that moved the marker — and applying it is
+    // harmless where the bucket is already clear.
+    broadcast_read_marker(&state, &user_id, &room_id, &channel_id, &thread_id, ts).await;
+
     Ok(Json(json!({ "last_read_ts": ts })))
 }
 
@@ -154,6 +160,186 @@ fn mention_expr(mention: &str, user_id: &str, roles: &[String], is_dm: bool) -> 
         ]}));
     }
     Bson::Document(doc! { "$or": any })
+}
+
+/// What is still unread in one channel bucket after `since`.
+#[derive(Default)]
+struct Tally {
+    count: i32,
+    mentions: i32,
+    latest_ts: i64,
+}
+
+/// Count one channel's (or a channel-less room's, for `channel_id` "") unread
+/// messages after `since`. Shared by the full scan and by the `read_marker`
+/// broadcast, so a device told what is left after a read elsewhere is told
+/// exactly what a reload would say.
+async fn channel_tally(
+    messages_coll: &mongodb::Collection<Document>,
+    room_id: &str,
+    channel_id: &str,
+    user_id: &str,
+    since: i64,
+    is_mention: &Bson,
+) -> Tally {
+    let mut match_doc = doc! {
+        "room_id": room_id,
+        "type": "m.room.message",
+        "origin_server_ts": { "$gt": since },
+        "sender": { "$ne": user_id },
+        "content.msgtype": { "$ne": "m.system" },
+        // A deleted message keeps its row, and was counted.
+        "redacted": { "$ne": true },
+        // Thread replies are stored with no channel_id, so without this every
+        // one of them counted toward the channel-less bucket of whatever room
+        // it was in. A thread is unread on its own terms; see the threads
+        // listing.
+        "thread_id": { "$exists": false },
+    };
+    if channel_id.is_empty() {
+        match_doc.insert("channel_id", doc! { "$exists": false });
+    } else {
+        match_doc.insert("channel_id", channel_id);
+    }
+
+    let pipeline = vec![
+        doc! { "$match": match_doc },
+        doc! { "$group": {
+            "_id": Value::Null.to_string(),
+            "count": { "$sum": 1 },
+            "mentions": { "$sum": { "$cond": [is_mention.clone(), 1, 0] } },
+            // Newest unread message in this channel, so a client can answer
+            // "which channel saw the most recent unread" and land on it rather
+            // than only counting how many.
+            "latest_ts": { "$max": "$origin_server_ts" },
+        }},
+    ];
+
+    let Ok(mut cursor) = messages_coll.aggregate(pipeline).await else {
+        return Tally::default();
+    };
+    match cursor.try_next().await {
+        Ok(Some(row)) => Tally {
+            count: row.get_i32("count").unwrap_or(0),
+            mentions: row.get_i32("mentions").unwrap_or(0),
+            latest_ts: row.get_i64("latest_ts").unwrap_or(0),
+        },
+        _ => Tally::default(),
+    }
+}
+
+/// Unread mentions of `user_id` in each of `thread_ids` after `since`, as
+/// (thread id, count). Threads with none are absent.
+async fn thread_mention_tally(
+    messages_coll: &mongodb::Collection<Document>,
+    room_id: &str,
+    thread_ids: &[String],
+    user_id: &str,
+    since: i64,
+) -> Vec<(String, i32)> {
+    let mention = mention_token(user_id);
+    let pipeline = vec![
+        doc! { "$match": doc! {
+            "room_id": room_id,
+            "type": "m.room.message",
+            "thread_id": { "$in": thread_ids },
+            "origin_server_ts": { "$gt": since },
+            "sender": { "$ne": user_id },
+            "content.msgtype": { "$ne": "m.system" },
+            "redacted": { "$ne": true },
+        }},
+        doc! { "$group": {
+            "_id": "$thread_id",
+            "mentions": { "$sum": {
+                "$cond": [
+                    { "$regexMatch": {
+                        "input": { "$ifNull": ["$content.body", ""] },
+                        "regex": regex_escape(&mention),
+                    }},
+                    1,
+                    0,
+                ]
+            }},
+        }},
+    ];
+
+    let mut out = Vec::new();
+    let Ok(mut cursor) = messages_coll.aggregate(pipeline).await else {
+        return out;
+    };
+    while let Ok(Some(row)) = cursor.try_next().await {
+        out.push((
+            row.get_str("_id").unwrap_or("").to_string(),
+            row.get_i32("mentions").unwrap_or(0),
+        ));
+    }
+    out
+}
+
+/// Tell every one of the user's connections that a marker moved, and what is
+/// left unread behind it.
+///
+/// Counts are of what is *still* unread, not a "clear": a message that landed
+/// after the point read on this device must stay unread on the others. The
+/// timestamp travels too, so a device closes only the notifications raised by
+/// messages at or before it.
+async fn broadcast_read_marker(
+    state: &AppState,
+    user_id: &str,
+    room_id: &str,
+    channel_id: &str,
+    thread_id: &str,
+    ts: i64,
+) {
+    let messages_coll = state.db.collection::<Document>("messages");
+    let mut msg = json!({
+        "type": "read_marker",
+        "room_id": room_id,
+        "last_read_ts": ts,
+    });
+    if thread_id.is_empty() {
+        let is_dm = state
+            .db
+            .collection::<RoomRecord>("rooms")
+            .find_one(doc! { "_id": room_id })
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|r| r.is_dm);
+        let roles = role_names_by_user(state, room_id, &[user_id.to_string()])
+            .await
+            .remove(user_id)
+            .unwrap_or_default();
+        let is_mention = mention_expr(&mention_token(user_id), user_id, &roles, is_dm);
+        let tally = channel_tally(
+            &messages_coll,
+            room_id,
+            channel_id,
+            user_id,
+            ts,
+            &is_mention,
+        )
+        .await;
+        msg["channel_id"] = json!(channel_id);
+        msg["count"] = json!(tally.count);
+        msg["mentions"] = json!(tally.mentions);
+        msg["latest_ts"] = json!(tally.latest_ts);
+    } else {
+        let mentions = thread_mention_tally(
+            &messages_coll,
+            room_id,
+            std::slice::from_ref(&thread_id.to_string()),
+            user_id,
+            ts,
+        )
+        .await
+        .into_iter()
+        .map(|(_, m)| m)
+        .sum::<i32>();
+        msg["thread_id"] = json!(thread_id);
+        msg["mentions"] = json!(mentions);
+    }
+    send_to_user(state, user_id, &msg).await;
 }
 
 /// Unread and mention counts for every room the caller has joined.
@@ -257,54 +443,23 @@ pub(crate) async fn get_unreads(
 
         for channel_id in channel_ids {
             let since = markers.get(&channel_id).copied().unwrap_or(0);
-            let mut match_doc = doc! {
-                "room_id": room_id,
-                "type": "m.room.message",
-                "origin_server_ts": { "$gt": since },
-                "sender": { "$ne": &user_id },
-                "content.msgtype": { "$ne": "m.system" },
-                // A deleted message keeps its row, and was counted.
-                "redacted": { "$ne": true },
-                // Thread replies are stored with no channel_id, so without
-                // this every one of them counted toward the channel-less
-                // bucket of whatever room it was in. A thread is unread on its
-                // own terms; see the threads listing.
-                "thread_id": { "$exists": false },
-            };
-            if channel_id.is_empty() {
-                match_doc.insert("channel_id", doc! { "$exists": false });
-            } else {
-                match_doc.insert("channel_id", &channel_id);
-            }
-
-            let pipeline = vec![
-                doc! { "$match": match_doc },
-                doc! { "$group": {
-                    "_id": Value::Null.to_string(),
-                    "count": { "$sum": 1 },
-                    "mentions": { "$sum": { "$cond": [is_mention.clone(), 1, 0] } },
-                    // Newest unread message in this channel, so a client can
-                    // answer "which channel saw the most recent unread" and
-                    // land on it rather than only counting how many.
-                    "latest_ts": { "$max": "$origin_server_ts" },
-                }},
-            ];
-
-            let Ok(mut cursor) = messages_coll.aggregate(pipeline).await else {
-                continue;
-            };
-            if let Ok(Some(row)) = cursor.try_next().await {
-                let count = row.get_i32("count").unwrap_or(0);
-                let mentions = row.get_i32("mentions").unwrap_or(0);
-                if count > 0 {
-                    unreads.push(json!({
-                        "room_id": room_id,
-                        "channel_id": channel_id,
-                        "count": count,
-                        "mentions": mentions,
-                        "latest_ts": row.get_i64("latest_ts").unwrap_or(0),
-                    }));
-                }
+            let tally = channel_tally(
+                &messages_coll,
+                room_id,
+                &channel_id,
+                &user_id,
+                since,
+                &is_mention,
+            )
+            .await;
+            if tally.count > 0 {
+                unreads.push(json!({
+                    "room_id": room_id,
+                    "channel_id": channel_id,
+                    "count": tally.count,
+                    "mentions": tally.mentions,
+                    "latest_ts": tally.latest_ts,
+                }));
             }
         }
 
@@ -336,40 +491,12 @@ pub(crate) async fn get_unreads(
         }
 
         for (since, thread_ids) in &by_since {
-            let pipeline = vec![
-                doc! { "$match": doc! {
-                    "room_id": room_id,
-                    "type": "m.room.message",
-                    "thread_id": { "$in": &thread_ids },
-                    "origin_server_ts": { "$gt": since },
-                    "sender": { "$ne": &user_id },
-                    "content.msgtype": { "$ne": "m.system" },
-                    "redacted": { "$ne": true },
-                }},
-                doc! { "$group": {
-                    "_id": "$thread_id",
-                    "mentions": { "$sum": {
-                        "$cond": [
-                            { "$regexMatch": {
-                                "input": { "$ifNull": ["$content.body", ""] },
-                                "regex": regex_escape(&mention),
-                            }},
-                            1,
-                            0,
-                        ]
-                    }},
-                }},
-            ];
-
-            let Ok(mut cursor) = messages_coll.aggregate(pipeline).await else {
-                continue;
-            };
-            while let Ok(Some(row)) = cursor.try_next().await {
-                let mentions = row.get_i32("mentions").unwrap_or(0);
+            for (thread_id, mentions) in
+                thread_mention_tally(&messages_coll, room_id, thread_ids, &user_id, *since).await
+            {
                 if mentions == 0 {
                     continue;
                 }
-                let thread_id = row.get_str("_id").unwrap_or("").to_string();
                 thread_mentions.push(json!({
                     "thread_id": thread_id,
                     "mentions": mentions,

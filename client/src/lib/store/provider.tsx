@@ -9,7 +9,13 @@ import {
 import { decideResumeAction } from "@/lib/wsResume";
 import { useVersionCheck } from "@/hooks/useVersionCheck";
 import { displayUserId } from "@/lib/utils";
-import { settingsKey, type NotificationLevel, type NotificationSettings } from "@/lib/notifications";
+import {
+  channelNotificationTag,
+  closeNotificationsReadElsewhere,
+  settingsKey,
+  type NotificationLevel,
+  type NotificationSettings,
+} from "@/lib/notifications";
 import { desktop, hasDesktopFeature } from "@/lib/desktop/bridge";
 import {
   setAccessToken,
@@ -864,6 +870,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const data = await apiGetUnreads();
       dispatch({ type: "SET_UNREADS", payload: data.unreads || [] });
       dispatch({ type: "SET_THREAD_MENTIONS", payload: data.thread_mentions || [] });
+      // What was read on another device while this one was not listening.
+      void closeNotificationsReadElsewhere(
+        new Set(
+          (data.unreads || [])
+            .filter((u) => u.count > 0)
+            .map((u) => channelNotificationTag(u.room_id, u.channel_id || "")),
+        ),
+      );
     } catch {
       // Leave whatever the session has accumulated.
     }

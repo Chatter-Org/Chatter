@@ -109,3 +109,56 @@ describe("oldestUnreadEventId", () => {
     expect(oldestUnreadEventId([msg("$1", "@bob")], 0, "@me")).toBeNull();
   });
 });
+
+describe("APPLY_READ_MARKER", () => {
+  const lit: AppState = {
+    ...initialState,
+    currentRoomId: "!elsewhere",
+    currentChannelId: "#x",
+    channelUnreadCounts: { "#a": 5, "#b": 2 },
+    channelMentions: { "#a": 2, "#b": 1 },
+    channelRoomIds: { "#a": "!r", "#b": "!r" },
+    roomLooseUnreads: { "!dm": 3 },
+    roomLooseMentions: { "!dm": 3 },
+    threadMentions: { $t: 2, $u: 1 },
+  };
+  const apply = (state: AppState, payload: Parameters<typeof reducer>[1] & { type: "APPLY_READ_MARKER" }) =>
+    reducer(state, payload);
+
+  it("keeps what arrived after the point read, and touches no other bucket", () => {
+    const next = apply(lit, {
+      type: "APPLY_READ_MARKER",
+      payload: { roomId: "!r", channelId: "#a", count: 1, mentions: 0, latestTs: 10 },
+    });
+    expect(next.channelUnreadCounts).toEqual({ "#a": 1, "#b": 2 });
+    expect(next.channelMentions).toEqual({ "#a": 0, "#b": 1 });
+    expect(next.roomUnreadCounts["!r"]).toBe(3);
+    expect(next.roomMentions["!r"]).toBe(1);
+  });
+
+  it("clears a DM's loose bucket", () => {
+    const next = apply(lit, {
+      type: "APPLY_READ_MARKER",
+      payload: { roomId: "!dm", channelId: "", count: 0, mentions: 0, latestTs: 0 },
+    });
+    expect(next.roomUnreadCounts["!dm"] ?? 0).toBe(0);
+    expect(next.channelUnreadCounts).toEqual(lit.channelUnreadCounts);
+  });
+
+  it("clears one thread's mentions and leaves the others", () => {
+    const next = apply(lit, {
+      type: "APPLY_READ_MARKER",
+      payload: { roomId: "!r", threadId: "$t", mentions: 0 },
+    });
+    expect(next.threadMentions).toEqual({ $t: 0, $u: 1 });
+  });
+
+  it("leaves the channel on screen alone", () => {
+    const viewing = { ...lit, currentRoomId: "!r", currentChannelId: "#a" };
+    const next = apply(viewing, {
+      type: "APPLY_READ_MARKER",
+      payload: { roomId: "!r", channelId: "#a", count: 4, mentions: 1, latestTs: 10 },
+    });
+    expect(next).toBe(viewing);
+  });
+});

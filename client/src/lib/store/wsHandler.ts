@@ -7,10 +7,13 @@ import { forgetForumPreview } from "@/lib/forumLinks";
 import { adoptGifFavorites } from "@/hooks/useFavoriteGifs";
 import { toast } from "sonner";
 import {
+  channelNotificationTag,
+  closeReadNotifications,
   notificationBody,
   resolveNotificationLevel,
   shouldNotify,
   showDesktopNotification,
+  threadNotificationTag,
 } from "@/lib/notifications";
 import {
   arrivalSound,
@@ -176,6 +179,7 @@ function notifyThreadReply(
     thread_id: string;
     thread_name?: string;
     thread_participants?: string[];
+    origin_server_ts?: number;
     content?: { body?: string };
   },
   stateRef: MutableRefObject<AppState>,
@@ -219,7 +223,8 @@ function notifyThreadReply(
     title: `${senderName} · ${threadLabel}`,
     body: notificationBody(body),
     icon: roomInfo?.icon_url || undefined,
-    tag: `${msg.room_id}|thread|${msg.thread_id}`,
+    tag: threadNotificationTag(msg.room_id, msg.thread_id),
+    ts: msg.origin_server_ts,
     onClick: () =>
       window.dispatchEvent(
         new CustomEvent("notification-navigate", {
@@ -371,6 +376,7 @@ export function createWsMessageHandler(
     room_id: string;
     sender: string;
     channel_id?: string;
+    origin_server_ts?: number;
     /** Stamped on the broadcast by the server. The room list is the fallback
      *  for a server that predates it, but it cannot be relied on alone: the
      *  first message of a new conversation can arrive before the room that
@@ -441,7 +447,8 @@ export function createWsMessageHandler(
       body: notificationBody(bodyText),
       icon: roomInfo?.icon_url || undefined,
       // One notification per channel — a burst collapses instead of stacking.
-      tag: `${roomId}|${channelId}`,
+      tag: channelNotificationTag(roomId, channelId),
+      ts: msg.origin_server_ts,
       onClick: () =>
         window.dispatchEvent(
           new CustomEvent("notification-navigate", { detail: { roomId, channelId } }),
@@ -911,6 +918,34 @@ export function createWsMessageHandler(
       // Deliberately nothing. The reply's own `m.room.message` carries
       // `reply_to_sender` and is counted, pinged and sounded there, on the
       // channel it was said in; acting here as well would ring twice.
+    }
+    // One of the user's devices — possibly this one — read a channel or a
+    // thread. The counts are what is still unread past that point, and only
+    // the notifications for messages at or before it are closed: a newer
+    // message is still news.
+    else if (msg.type === "read_marker") {
+      const roomId: string = msg.room_id;
+      const lastReadTs: number = msg.last_read_ts;
+      if (msg.thread_id) {
+        dispatch({
+          type: "APPLY_READ_MARKER",
+          payload: { roomId, threadId: msg.thread_id, mentions: msg.mentions ?? 0 },
+        });
+        void closeReadNotifications(threadNotificationTag(roomId, msg.thread_id), lastReadTs);
+      } else {
+        const channelId: string = msg.channel_id || "";
+        dispatch({
+          type: "APPLY_READ_MARKER",
+          payload: {
+            roomId,
+            channelId,
+            count: msg.count ?? 0,
+            mentions: msg.mentions ?? 0,
+            latestTs: msg.latest_ts ?? 0,
+          },
+        });
+        void closeReadNotifications(channelNotificationTag(roomId, channelId), lastReadTs);
+      }
     }
     // The user's own favourite GIFs, changed on this or another device.
     else if (msg.type === "gif_favorites") {

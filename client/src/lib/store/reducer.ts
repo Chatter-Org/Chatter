@@ -1165,6 +1165,38 @@ export function reducer(state: AppState, action: Action): AppState {
       }
       return { ...state, threadMentions };
     }
+    // Another device (or this one) read a bucket. The counts are what is
+    // *left* after the point read, so a message that landed since stays
+    // unread, and they replace only that one bucket — the rest of the
+    // user's unreads are untouched. Like SET_UNREADS, the bucket on screen
+    // is left alone: it is being read here, whatever the marker says.
+    case "APPLY_READ_MARKER": {
+      const u = action.payload;
+      if ("threadId" in u) {
+        if (state.activeThreadEventId === u.threadId) return state;
+        return {
+          ...state,
+          threadMentions: { ...state.threadMentions, [u.threadId]: u.mentions },
+        };
+      }
+      const viewing =
+        u.roomId === state.currentRoomId && (u.channelId || null) === state.currentChannelId;
+      if (viewing) return state;
+      if (!u.channelId) {
+        return withRoomUnreads({
+          ...state,
+          roomLooseUnreads: { ...state.roomLooseUnreads, [u.roomId]: u.count },
+          roomLooseMentions: { ...state.roomLooseMentions, [u.roomId]: u.mentions },
+        });
+      }
+      return withRoomUnreads({
+        ...state,
+        channelRoomIds: { ...state.channelRoomIds, [u.channelId]: u.roomId },
+        channelUnreadCounts: { ...state.channelUnreadCounts, [u.channelId]: u.count },
+        channelMentions: { ...state.channelMentions, [u.channelId]: u.mentions },
+        channelLatestUnreadTs: { ...state.channelLatestUnreadTs, [u.channelId]: u.latestTs },
+      });
+    }
     case "CLEAR_CHANNEL_UNREAD":
       return withRoomUnreads({
         ...state,

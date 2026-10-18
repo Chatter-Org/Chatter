@@ -68,6 +68,9 @@ self.addEventListener("push", (event) => {
           postId: payload.post_id,
           // A thread reply opens the thread, not the channel it hangs off.
           threadId: payload.thread_id,
+          // Server time of the message, so a read on another device can close
+          // this notification without closing one for a newer message.
+          ts: payload.ts,
         },
       });
     })(),

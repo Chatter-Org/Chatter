@@ -12,7 +12,7 @@
 //! channel stays muted on a phone; the two must be changed together.
 
 use super::{
-    helpers::{get_allowed_channel_ids, mention_token, now_secs, IDLE_AFTER_SECS},
+    helpers::{get_allowed_channel_ids, mention_token, now_millis, now_secs, IDLE_AFTER_SECS},
     state::{AppState, CustomRoleRecord, MemberCustomRoleRecord, UserRecord},
     webpush,
 };
@@ -314,8 +314,12 @@ pub(crate) fn spawn_message_push(state: Arc<AppState>, notification: MessageNoti
     if state.vapid.is_none() {
         return;
     }
+    // Taken now, beside the message's own timestamp, rather than when delivery
+    // gets round to it: a device compares it with a read marker to decide
+    // whether a read elsewhere covered this notification.
+    let sent_ts = now_millis();
     tokio::spawn(async move {
-        deliver_message(&state, &notification).await;
+        deliver_message(&state, &notification, sent_ts).await;
     });
 }
 
@@ -344,7 +348,7 @@ async fn attended_users(state: &AppState) -> std::collections::HashSet<String> {
 }
 
 /// Who, of a room's members, should be woken for this message.
-async fn deliver_message(state: &Arc<AppState>, n: &MessageNotification) {
+async fn deliver_message(state: &Arc<AppState>, n: &MessageNotification, sent_ts: i64) {
     let Some(vapid) = state.vapid.as_ref() else {
         return;
     };
@@ -402,6 +406,7 @@ async fn deliver_message(state: &Arc<AppState>, n: &MessageNotification) {
             "event_id": n.event_id,
             "post_id": n.post_id,
             "thread_id": n.thread_id,
+            "ts": sent_ts,
         })
         .to_string()
     };
