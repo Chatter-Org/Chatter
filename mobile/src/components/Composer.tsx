@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, TextInput, View } from "react-native";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -12,6 +12,16 @@ import { showToast } from "@/platform/toast";
 import { AttachSheet, MAX_ATTACHMENTS } from "./AttachSheet";
 import { EmojiPickerSheet } from "./EmojiPickerSheet";
 import { isCustomEmojiUrl } from "@chatter/core/emojiCatalog";
+import { findMentionMatches } from "@chatter/core/mentions";
+import {
+  completeToken,
+  findShortcodeMatches,
+  resolveShortcodes,
+  roomShortcodes,
+  shortcodeInsert,
+  tokenAtCaret,
+} from "@chatter/core/composerTokens";
+import { ComposerSuggestions, type Suggestion } from "./ComposerSuggestions";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { useTheme } from "@/theme/ThemeProvider";
@@ -45,6 +55,30 @@ export function Composer({
   const placeholder = channel ? `Message #${channel.name}` : "Message";
   const canSend = !!text.trim() || staged.length > 0;
 
+  // Where the caret is, for the "@" and ":" suggestions; and a caret position
+  // to put it at after a suggestion is taken (the box otherwise leaves it at
+  // the end of the new text).
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const [placeCaret, setPlaceCaret] = useState<{ start: number; end: number } | undefined>();
+  const shortcodes = useMemo(() => roomShortcodes(room?.emoji_aliases), [room?.emoji_aliases]);
+  const token = selection.start === selection.end ? tokenAtCaret(text, selection.end) : null;
+  const suggestions = useMemo<Suggestion[]>(() => {
+    if (!token) return [];
+    if (token.kind === "mention") return findMentionMatches(state, token.query).map((match) => ({ kind: "mention", match }));
+    return findShortcodeMatches(shortcodes, token.query, 5).map((m) => ({ kind: "emoji", ...m }));
+    // The token's fields, not the object, which is new on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token?.kind, token?.query, shortcodes, state.roomMembers, state.customRoles, state.currentRoomId, state.roomInfoMap]);
+
+  const takeSuggestion = (item: Suggestion) => {
+    if (!token) return;
+    const insert = item.kind === "mention" ? `@${item.match.name}` : shortcodeInsert(item.value);
+    const next = completeToken(text, token, insert);
+    onChange(next.text);
+    setPlaceCaret({ start: next.caret, end: next.caret });
+    setSelection({ start: next.caret, end: next.caret });
+  };
+
   const here: OutgoingTarget | null = state.currentRoomId
     ? { kind: "channel", roomId: state.currentRoomId, channelId: state.currentChannelId ?? "" }
     : null;
@@ -67,7 +101,8 @@ export function Composer({
   };
 
   const send = async () => {
-    const body = text.trim();
+    // A ":name:" typed out in full becomes its emoji, as on the web.
+    const body = resolveShortcodes(text.trim(), shortcodes);
     if (!canSend || sending || !state.currentRoomId) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 
@@ -154,6 +189,8 @@ export function Composer({
         </View>
       ) : null}
 
+      <ComposerSuggestions items={suggestions} onPick={takeSuggestion} />
+
       {staged.length > 0 ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-2 pb-2">
           {staged.map((file, i) => (
@@ -181,6 +218,11 @@ export function Composer({
           <TextInput
             value={text}
             onChangeText={onChange}
+            selection={placeCaret}
+            onSelectionChange={(e) => {
+              setSelection(e.nativeEvent.selection);
+              if (placeCaret) setPlaceCaret(undefined);
+            }}
             placeholder={placeholder}
             placeholderTextColor={colors["muted-foreground"]}
             multiline
