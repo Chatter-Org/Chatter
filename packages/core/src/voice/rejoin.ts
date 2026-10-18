@@ -89,3 +89,22 @@ export function parseStoredVoiceSession(
     timestamp: session.timestamp,
   };
 }
+
+/**
+ * The name a call's panel is missing, once the channel it is in is known.
+ *
+ * A refresh rejoins the call before the room's channels have arrived, so the
+ * name cannot be looked up at join time; this fills it in when they do. It
+ * never overwrites a name already shown, and a call with no matching channel
+ * (a DM's room-scoped call) stays nameless.
+ */
+export function voiceChannelNameToFill(state: {
+  inVoiceChannel: boolean;
+  voiceChannelId: string | null;
+  voiceChannelName: string | null;
+  channels: ReadonlyArray<{ channel_id: string; name: string }>;
+}): string | null {
+  if (!state.inVoiceChannel || !state.voiceChannelId || state.voiceChannelName) return null;
+  const channel = state.channels.find((c) => c.channel_id === state.voiceChannelId);
+  return channel?.name || null;
+}
