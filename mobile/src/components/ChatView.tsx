@@ -87,9 +87,12 @@ export function ChatView() {
     ({ item }: { item: Row }) => {
       if (item.kind === "day") {
         return (
-          <View className="my-3 flex-row items-center gap-3 px-4">
+          // The web's day divider: a line either side of a pill.
+          <View className="flex-row items-center justify-center gap-2 px-2 py-1.5">
             <View className="h-px flex-1 bg-border" />
-            <T className="text-[11px] text-muted-foreground">{item.label}</T>
+            <View className="rounded-full bg-muted/40 px-2 py-0.5">
+              <T className="text-xs font-medium text-muted-foreground/70">{item.label}</T>
+            </View>
             <View className="h-px flex-1 bg-border" />
           </View>
         );
@@ -152,7 +155,7 @@ export function ChatView() {
           state.loadingOlderMessages ? (
             <ActivityIndicator className="py-3" />
           ) : !state.hasMoreMessages && state.messages.length > 0 ? (
-            <T className="py-4 text-center text-xs text-muted-foreground">Beginning of conversation</T>
+            <T className="py-2 text-center text-xs text-muted-foreground">Beginning of conversation</T>
           ) : null
         }
         ListFooterComponent={<View style={{ height: 12 }} />}
@@ -161,9 +164,9 @@ export function ChatView() {
         <Pressable
           onPress={() => listRef.current?.scrollToEnd({ animated: true })}
           accessibilityLabel="Jump to newest"
-          className="absolute right-4 bottom-24 h-10 w-10 items-center justify-center rounded-full border border-border bg-popover"
+          className="absolute bottom-24 right-5 h-9 w-9 items-center justify-center rounded-full border border-border bg-secondary opacity-90 shadow-lg"
         >
-          <Icon as={ArrowDown} tone="foreground" size={18} />
+          <Icon as={ArrowDown} tone="secondary-foreground" size={17} />
         </Pressable>
       )}
       <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }}>
@@ -181,13 +184,32 @@ export function ChatView() {
   );
 }
 
+/** Who is typing, in the web's words, always holding its line's height. */
 function TypingLine({ names }: { names: string[] }) {
-  if (names.length === 0) return <View style={{ height: 18 }} />;
   const text =
-    names.length === 1 ? `${names[0]} is typing…` : names.length === 2 ? `${names[0]} and ${names[1]} are typing…` : "Several people are typing…";
+    names.length === 0
+      ? ""
+      : names.length === 1
+        ? `${names[0]} is typing...`
+        : names.length === 2
+          ? `${names[0]} and ${names[1]} are typing...`
+          : names.length === 3
+            ? `${names[0]}, ${names[1]}, and ${names[2]} are typing...`
+            : "Multiple users are yapping....";
   return (
-    <T className="h-[18px] px-4 text-[11px] text-muted-foreground" numberOfLines={1}>
-      {text}
-    </T>
+    <View className="h-5 flex-row items-center gap-1.5 px-4">
+      {text ? (
+        <>
+          <View className="flex-row gap-0.5">
+            {[0, 1, 2].map((i) => (
+              <View key={i} className="h-1 w-1 rounded-full bg-muted-foreground" />
+            ))}
+          </View>
+          <T className="flex-1 text-xs italic text-muted-foreground" numberOfLines={1}>
+            {text}
+          </T>
+        </>
+      ) : null}
+    </View>
   );
 }

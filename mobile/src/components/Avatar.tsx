@@ -6,16 +6,22 @@ import { T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { serverImage } from "@/ui/media";
 import { useTheme } from "@/theme/ThemeProvider";
+import type { ThemeToken } from "@/theme/themes.generated";
 
-const STATUS_TONE = {
+// The web's presence colours (AppSidebar / MembersPanel).
+const STATUS_TONE: Record<string, ThemeToken> = {
   online: "success",
+  active: "success",
   idle: "warning",
+  away: "warning",
   dnd: "destructive",
-} as const;
+};
 
 /**
- * Someone's picture, or their initial on a neutral circle as on the web, with
- * an optional presence dot.
+ * Someone's picture, or their initial — the web's Avatar: a circle, with the
+ * fallback in `bg-secondary` (messages, members) unless a place asks for
+ * another (the sidebar's own account uses the primary colour). A presence dot
+ * sits on the corner when given, ringed in the surface it is drawn on.
  */
 export const Avatar = memo(function Avatar({
   userId,
@@ -23,6 +29,9 @@ export const Avatar = memo(function Avatar({
   url,
   size = 36,
   status,
+  ring = "background",
+  fallbackClassName,
+  textClassName,
   className,
 }: {
   userId?: string;
@@ -30,13 +39,18 @@ export const Avatar = memo(function Avatar({
   url?: string | null;
   size?: number;
   status?: string;
+  /** The colour around the presence dot: the surface underneath. */
+  ring?: ThemeToken;
+  fallbackClassName?: string;
+  textClassName?: string;
   className?: string;
 }) {
   const { colors } = useTheme();
   const label = name || (userId ? displayUserId(userId) : "?");
   const source = serverImage(url);
-  const dot = Math.max(8, Math.round(size * 0.3));
-  const tone = status ? STATUS_TONE[status as keyof typeof STATUS_TONE] : undefined;
+  // h-2.5 on a 36px avatar, h-3 on the sidebar's 40px one.
+  const dot = Math.max(10, Math.round(size * 0.3));
+  const tone = status ? (STATUS_TONE[status] ?? "muted-foreground") : undefined;
 
   return (
     <View style={{ width: size, height: size }} className={className}>
@@ -52,25 +66,25 @@ export const Avatar = memo(function Avatar({
       ) : (
         <View
           style={{ width: size, height: size, borderRadius: size / 2 }}
-          className="items-center justify-center bg-muted"
+          className={cn("items-center justify-center bg-secondary", fallbackClassName)}
         >
-          <T className={cn("text-muted-foreground", size >= 40 ? "text-base" : "text-xs")}>
+          <T className={cn("font-semibold text-secondary-foreground", size >= 36 ? "text-xs" : "text-3xs", textClassName)}>
             {label.slice(0, 1).toUpperCase()}
           </T>
         </View>
       )}
-      {status && (
+      {tone && (
         <View
           style={{
             position: "absolute",
-            right: -1,
-            bottom: -1,
+            right: -2,
+            bottom: -2,
             width: dot,
             height: dot,
             borderRadius: dot / 2,
             borderWidth: 2,
-            borderColor: colors.sidebar,
-            backgroundColor: tone ? colors[tone] : colors["muted-foreground"],
+            borderColor: colors[ring],
+            backgroundColor: colors[tone],
           }}
         />
       )}

@@ -5,17 +5,20 @@ import Animated, { interpolate, useAnimatedStyle, useSharedValue, withSpring } f
 import { scheduleOnRN } from "react-native-worklets";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
-import { Reply } from "lucide-react-native";
+import { EyeOff, MoreHorizontal, Reply } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
 import type { FormatOptions } from "@chatter/core/messageFormat";
 import { extractMedia, isDeletedMessage } from "@chatter/core/messageFormat";
 import { Avatar } from "./Avatar";
-import { MessageBody } from "./MessageBody";
+import { BODY_TEXT, MessageBody } from "./MessageBody";
 import { MessageMedia } from "./MessageMedia";
 import { EmojiGlyph } from "./EmojiPickerSheet";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { serverImage } from "@/ui/media";
+
+/** The web's avatar size below 768px (h-7). */
+const AVATAR = 31;
 
 /** How far a row must be dragged to count as "reply". */
 const REPLY_THRESHOLD = 64;
@@ -113,13 +116,9 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
       </Animated.View>
       <GestureDetector gesture={gesture}>
         <Animated.View style={[rowStyle, pressStyle]}>
-          <View
-            className={cn(
-              "px-3",
-              grouped ? "pt-0.5" : "pt-3",
-              props.mentionsMe && "bg-mention/10 border-l-2 border-mention",
-            )}
-          >
+          {/* MessageItem's row at phone width: msg-row-mobile / -grouped,
+              and a message that names you tinted (no border, as on the web). */}
+          <View className={cn("mx-1 rounded-md px-2", grouped ? "-mt-0.5 py-1" : "pb-1 pt-2", props.mentionsMe && "bg-mention/10")}>
             <RowContent {...props} />
           </View>
         </Animated.View>
@@ -140,41 +139,57 @@ function RowContent({
   myUserId,
   formatOptions,
   onReact,
+  onLongPress,
 }: MessageRowProps) {
   const deleted = isDeletedMessage(message);
   const body = message.content.body ?? "";
   const media = extractMedia(body);
-  const time = new Date(message.origin_server_ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const time = new Date(message.origin_server_ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const isSystem = message.content.msgtype === "m.system";
 
   if (isSystem) {
-    return <T className="py-1 text-center text-xs text-muted-foreground">{body}</T>;
+    // A line across with the event in a pill, as on the web.
+    const left = /\bleft\b/i.test(body);
+    return (
+      <View className="flex-row items-center gap-2 py-0.5">
+        <View className="h-px flex-1 bg-border" />
+        <View className={cn("rounded-full px-2 py-0.5", left ? "bg-destructive/10" : "bg-success/10")}>
+          <T className={cn("text-xs font-medium", left ? "text-destructive/80" : "text-success/80")} numberOfLines={1}>
+            {body}
+          </T>
+        </View>
+        <T className="text-2xs text-muted-foreground/80">{time}</T>
+        <View className="h-px flex-1 bg-border" />
+      </View>
+    );
   }
 
   return (
-    <View className="flex-row gap-3">
-      <View style={{ width: 38 }}>
-        {!grouped && <Avatar userId={message.sender} name={senderName} url={avatarUrl} size={38} />}
+    <View className="flex-row items-start gap-1.5">
+      {/* h-7: the web's avatar below 768px; grouped rows keep its width. */}
+      <View className="mt-0.5" style={{ width: AVATAR }}>
+        {!grouped && <Avatar userId={message.sender} name={senderName} url={avatarUrl} size={AVATAR} textClassName="text-3xs" />}
       </View>
-      <View className="flex-1 pb-0.5">
+      <View className="min-w-0 flex-1">
         {message.content.in_reply_to && replySenderName ? (
-          <View className="mb-1 flex-row items-center gap-1.5 border-l-2 border-border pl-2">
-            <T className="font-mono-medium text-xs text-muted-foreground">{replySenderName}</T>
-            <T className="flex-1 text-xs text-muted-foreground" numberOfLines={1}>
-              {message.content.reply_to_spoiler ? "spoiler" : message.content.reply_to_body || "…"}
+          <View className="mb-1 flex-row items-center gap-1.5 border-l-2 border-primary/50 pl-2">
+            <T className="text-xs font-semibold text-muted-foreground">{replySenderName}</T>
+            <T className={cn("flex-1 text-xs text-muted-foreground", message.content.reply_to_spoiler && "italic")} numberOfLines={1}>
+              {message.content.reply_to_spoiler ? "Spoiler message" : message.content.reply_to_body || "…"}
             </T>
           </View>
         ) : null}
         {!grouped && (
-          <View className="mb-0.5 flex-row items-baseline gap-2">
-            <T className="font-mono-bold text-[15px]" style={senderColor ? { color: senderColor } : undefined} numberOfLines={1}>
+          <View className="flex-row items-baseline gap-2">
+            <T className="shrink text-sm font-semibold" style={senderColor ? { color: senderColor } : undefined} numberOfLines={1}>
               {senderName}
             </T>
-            <T className="text-[11px] text-muted-foreground">{time}</T>
+            <T className="text-xs text-muted-foreground">{time}</T>
           </View>
         )}
+        {!grouped ? <View className="h-0.5" /> : null}
         {deleted ? (
-          <T className="text-sm italic text-muted-foreground">message deleted</T>
+          <T className={cn(BODY_TEXT, "italic text-muted-foreground opacity-60")}>message deleted</T>
         ) : message.content.spoiler ? (
           <SpoilerBody body={body} options={formatOptions} edited={message.edited} />
         ) : (
@@ -184,7 +199,7 @@ function RowContent({
           </>
         )}
         {reactions && Object.keys(reactions).length > 0 ? (
-          <View className="mt-1.5 flex-row flex-wrap gap-1.5">
+          <View className="mt-1.5 flex-row flex-wrap gap-1">
             {Object.entries(reactions).map(([emoji, users]) => {
               const mine = !!myUserId && users.includes(myUserId);
               return (
@@ -193,16 +208,29 @@ function RowContent({
                   onPress={() => onReact(message.event_id, emoji)}
                   accessibilityRole="button"
                   accessibilityLabel={`${emoji} ${users.length}${mine ? ", you reacted" : ""}`}
-                  className={cn("flex-row items-center gap-1 rounded-full border px-2 py-0.5", mine ? "border-primary bg-primary/15" : "border-border bg-muted")}
+                  className={cn(
+                    "min-h-7 flex-row items-center gap-1 rounded-full border px-2 py-0.5 active:bg-accent",
+                    mine ? "border-primary/50 bg-primary/10" : "border-border",
+                  )}
                 >
-                  <EmojiGlyph emoji={emoji} size={18} />
-                  <T className="text-xs text-muted-foreground">{users.length}</T>
+                  <EmojiGlyph emoji={emoji} size={17} />
+                  <T className="text-sm font-medium text-muted-foreground">{users.length}</T>
                 </Pressable>
               );
             })}
           </View>
         ) : null}
       </View>
+      {/* The web's touch "…": the same actions as holding the message. */}
+      <Pressable
+        onPress={() => onLongPress(message)}
+        hitSlop={6}
+        accessibilityRole="button"
+        accessibilityLabel="Message actions"
+        className="mt-0.5 rounded-md p-1 opacity-60 active:bg-accent"
+      >
+        <Icon as={MoreHorizontal} size={17} />
+      </Pressable>
     </View>
   );
 }
@@ -211,8 +239,14 @@ function SpoilerBody({ body, options, edited }: { body: string; options: FormatO
   const [shown, setShown] = useReveal();
   if (shown) return <MessageBody body={body} options={options} edited={edited} />;
   return (
-    <Pressable onPress={setShown} accessibilityRole="button" accessibilityLabel="Spoiler, tap to reveal" className="self-start rounded-md bg-muted px-3 py-1.5">
-      <T className="text-xs text-muted-foreground">spoiler — tap to reveal</T>
+    <Pressable
+      onPress={setShown}
+      accessibilityRole="button"
+      accessibilityLabel="Spoiler, tap to reveal"
+      className="mt-0.5 flex-row items-center gap-1.5 self-start rounded-md bg-muted px-3 py-1.5 active:bg-muted/70"
+    >
+      <Icon as={EyeOff} size={15} />
+      <T className="text-xs font-medium text-muted-foreground">Spoiler — tap to reveal</T>
     </Pressable>
   );
 }

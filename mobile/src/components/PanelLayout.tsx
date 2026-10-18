@@ -33,7 +33,7 @@ export type PanelSide = "left" | "right";
 export const SIDE_BY_SIDE_MIN_WIDTH = 720;
 /** Wider than this, the member list sits beside the conversation too. */
 const MEMBERS_BESIDE_MIN_WIDTH = 1040;
-const LEFT_PANEL_WIDTH = 340;
+const LEFT_PANEL_WIDTH = 360;
 const RIGHT_PANEL_WIDTH = 280;
 /** The strip at the right edge that starts a swipe for the member list. */
 const RIGHT_EDGE = 28;
@@ -122,9 +122,10 @@ export function PanelLayout({ left, right, children }: { left: ReactNode; right:
   if (leftDocked) {
     return (
       <PanelsContext.Provider value={value}>
-        <View className="flex-1 flex-row bg-background">
+        {/* The web's desktop arrangement: cards on the page colour. */}
+        <View className="flex-1 flex-row bg-muted">
           <View style={{ width: LEFT_PANEL_WIDTH }}>{left}</View>
-          <View className="flex-1">{children}</View>
+          <View className="flex-1 overflow-hidden">{children}</View>
           {rightDocked ? (
             rightBeside ? <View style={{ width: RIGHT_PANEL_WIDTH }}>{right}</View> : null
           ) : (
@@ -242,7 +243,7 @@ function PushLayout({
   }));
 
   return (
-    <View className="flex-1 bg-sidebar">
+    <View className="flex-1 bg-muted">
       <Animated.View style={[styles.panel, { left: 0, width: leftWidth }, leftStyle]} pointerEvents={open === "left" ? "auto" : "none"}>
         {left}
       </Animated.View>

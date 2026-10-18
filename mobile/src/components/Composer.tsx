@@ -52,7 +52,8 @@ export function Composer({
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channel = state.channels.find((c) => c.channel_id === state.currentChannelId);
   const room = state.currentRoomId ? state.roomInfoMap[state.currentRoomId] : undefined;
-  const placeholder = channel ? `Message #${channel.name}` : "Message";
+  // The web's own placeholder; where it goes is in the header.
+  const placeholder = "Type your message...";
   const canSend = !!text.trim() || staged.length > 0;
 
   // Where the caret is, for the "@" and ":" suggestions; and a caret position
@@ -140,7 +141,8 @@ export function Composer({
   };
 
   return (
-    <View className="bg-background px-3 pt-1" style={{ paddingBottom: Math.max(8, bottomInset) }}>
+    // ChatArea's composer at phone width: a top border, p-2.
+    <View className="border-t border-border bg-background p-2" style={{ paddingBottom: Math.max(8, bottomInset) }}>
       {outgoing.map((batch) => {
         const elsewhere = !here || !isSameTarget(batch.target, here);
         return (
@@ -179,12 +181,18 @@ export function Composer({
       })}
 
       {replyTo ? (
-        <View className="mb-1.5 flex-row items-center gap-2 rounded-lg bg-muted px-3 py-1.5">
-          <T className="flex-1 text-xs text-muted-foreground" numberOfLines={1}>
-            Replying to <T className="font-mono-bold text-xs text-foreground">{replyName}</T>
-          </T>
+        // The web's reply bar: a primary edge, who, and what.
+        <View className="mb-2 flex-row items-center justify-between gap-2 rounded-sm border-l-2 border-l-primary bg-accent/30 px-3 py-2">
+          <View className="min-w-0 flex-1">
+            <T className="text-xs font-semibold text-primary" numberOfLines={1}>
+              Replying to {replyName}
+            </T>
+            <T className={cn("text-xs text-muted-foreground", replyTo.content.spoiler && "italic")} numberOfLines={1}>
+              {replyTo.content.spoiler ? "Spoiler message" : replyTo.content.body}
+            </T>
+          </View>
           <Pressable onPress={onClearReply} hitSlop={10} accessibilityLabel="Cancel reply">
-            <Icon as={X} size={14} />
+            <Icon as={X} size={17} />
           </Pressable>
         </View>
       ) : null}
@@ -204,17 +212,17 @@ export function Composer({
         </ScrollView>
       ) : null}
 
-      <View className="flex-row items-end gap-2">
+      <View className="flex-row items-end gap-1">
         <Pressable
           onPress={() => setAttaching(true)}
           disabled={staged.length >= MAX_ATTACHMENTS}
           accessibilityRole="button"
           accessibilityLabel="Attach"
-          className="h-11 w-11 items-center justify-center rounded-full bg-muted"
+          className="size-11 items-center justify-center rounded-md active:bg-accent"
         >
-          <Icon as={Plus} size={20} tone="foreground" />
+          <Icon as={Plus} size={22} tone="foreground" />
         </Pressable>
-        <View className="flex-1 flex-row items-end rounded-2xl border border-input bg-card pl-3.5">
+        <View className="min-h-11 flex-1 flex-row items-end rounded-lg border border-input pl-3">
           <TextInput
             value={text}
             onChangeText={onChange}
@@ -226,11 +234,11 @@ export function Composer({
             placeholder={placeholder}
             placeholderTextColor={colors["muted-foreground"]}
             multiline
-            className="max-h-36 flex-1 py-2.5 font-mono text-[15px] text-foreground"
+            className="max-h-40 flex-1 py-2 font-mono text-base leading-6 text-foreground"
             accessibilityLabel={placeholder}
           />
           <Pressable onPress={() => setPickingEmoji(true)} accessibilityLabel="Emoji" className="h-11 w-10 items-center justify-center">
-            <Icon as={Smile} size={20} />
+            <Icon as={Smile} size={22} />
           </Pressable>
         </View>
         <Pressable
@@ -238,12 +246,13 @@ export function Composer({
           disabled={!canSend || sending}
           accessibilityRole="button"
           accessibilityLabel="Send"
-          className={cn("h-11 w-11 items-center justify-center rounded-full", canSend ? "bg-primary" : "bg-muted")}
+          // The web's Send at phone width: a primary size-11 button.
+          className={cn("size-11 items-center justify-center rounded-md bg-primary active:bg-primary/90", !canSend && "opacity-50")}
         >
           {sending ? (
             <ActivityIndicator color={colors["primary-foreground"]} />
           ) : (
-            <Icon as={SendHorizontal} size={18} tone={canSend ? "primary-foreground" : "muted-foreground"} />
+            <Icon as={SendHorizontal} size={22} tone="primary-foreground" />
           )}
         </Pressable>
       </View>
@@ -282,7 +291,7 @@ function Tile({
 }) {
   const busy = status === "queued" || status === "uploading" || status === "processing";
   return (
-    <View className="h-16 w-16 overflow-hidden rounded-lg border border-border bg-muted">
+    <View className="h-16 w-16 overflow-hidden rounded-md border border-border bg-muted">
       {previewUri ? (
         <Image source={{ uri: previewUri }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
       ) : (

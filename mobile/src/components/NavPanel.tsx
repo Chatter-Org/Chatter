@@ -1,20 +1,24 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
+import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
   Bot,
   ChevronDown,
   ChevronRight,
   Film,
   Hash,
+  HeadphoneOff,
   LayoutList,
+  Lock,
   MessageCircle,
+  Mic,
+  MicOff,
   Move3d,
   PenTool,
-  Settings,
   Sparkles,
   Volume2,
   type LucideProps,
@@ -23,11 +27,21 @@ import type { ComponentType } from "react";
 import type { Channel, RoomInfo } from "@chatter/core/api";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
+import { useTheme } from "@/theme/ThemeProvider";
 import { Avatar } from "./Avatar";
 import { usePanels } from "./PanelLayout";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { serverImage } from "@/ui/media";
+import { UI_HEADING } from "@/ui/roles";
+
+/**
+ * The left panel, built from the web's own parts: the sidebar in its rail
+ * form (AppSidebar's collapsed mode) and, beside it, the server's channel
+ * list (ChannelList) — two cards on the page colour, as on the desktop. A
+ * phone has room for the rail but not the full sidebar beside the channels,
+ * which is the choice the web makes when its sidebar is collapsed.
+ */
 
 /** What the rail has picked: a server, or the direct messages list. */
 export type RailSelection = { kind: "dms" } | { kind: "server"; roomId: string };
@@ -43,12 +57,9 @@ const CHANNEL_ICON: Record<Channel["channel_type"], ComponentType<LucideProps>> 
   bot: Bot,
 };
 
+const holdsCall = (c: Channel) => c.channel_type === "voice" || c.channel_type === "spatial";
 const tick = () => void Haptics.selectionAsync().catch(() => {});
 
-/**
- * The left panel: the server rail and, beside it, the selected server's
- * channels — or the direct messages, when the rail's top button is picked.
- */
 export function NavPanel({ rail, onRail }: { rail: RailSelection; onRail(selection: RailSelection): void }) {
   const state = useChatter();
   const { selectRoom } = useChatterActions();
@@ -56,14 +67,23 @@ export function NavPanel({ rail, onRail }: { rail: RailSelection; onRail(selecti
 
   const { servers, dms } = useMemo(() => {
     const all = state.joinedRoomIds.map((id) => state.roomInfoMap[id]).filter(Boolean) as RoomInfo[];
-    return {
-      servers: all.filter((r) => !r.is_direct),
-      dms: all.filter((r) => r.is_direct),
-    };
+    return { servers: all.filter((r) => !r.is_direct), dms: all.filter((r) => r.is_direct) };
   }, [state.joinedRoomIds, state.roomInfoMap]);
+
+  // Who is in a call in each room, from the voice picture the socket keeps
+  // (AppSidebar's liveVoice).
+  const roomsInVoice = useMemo(() => {
+    const rooms = new Set<string>();
+    for (const [channelId, members] of Object.entries(state.voiceChannelMembers)) {
+      const roomId = state.voiceChannelRooms[channelId];
+      if (roomId && members.length > 0) rooms.add(roomId);
+    }
+    return rooms;
+  }, [state.voiceChannelMembers, state.voiceChannelRooms]);
 
   const dmUnread = dms.some((r) => (state.roomLooseUnreads[r.room_id] ?? 0) > 0);
   const dmMentions = dms.reduce((n, r) => n + (state.roomMentions[r.room_id] ?? 0), 0);
+  const me = state.userId ? state.userPresence[state.userId] : undefined;
 
   const pickServer = (roomId: string) => {
     tick();
@@ -72,10 +92,13 @@ export function NavPanel({ rail, onRail }: { rail: RailSelection; onRail(selecti
   };
 
   return (
-    <View className="flex-1 flex-row bg-sidebar" style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}>
-      {/* Rail */}
-      <View className="w-[72px] items-center pt-2 pb-3">
-        <RailButton
+    <View
+      className="flex-1 flex-row gap-2 bg-muted px-2"
+      style={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 8 }}
+    >
+      {/* The sidebar, as its rail (AppSidebar collapsed). */}
+      <View className="w-[4.5rem] items-center gap-2 overflow-hidden rounded-lg border border-border bg-sidebar py-3">
+        <RailTile
           label="Direct messages"
           active={rail.kind === "dms"}
           unread={dmUnread}
@@ -85,55 +108,76 @@ export function NavPanel({ rail, onRail }: { rail: RailSelection; onRail(selecti
             onRail({ kind: "dms" });
           }}
         >
-          <Icon as={MessageCircle} tone={rail.kind === "dms" ? "sidebar-primary-foreground" : "sidebar-foreground"} size={22} />
-        </RailButton>
-        <View className="my-2 h-px w-8 bg-sidebar-border" />
-        <ScrollView className="w-full" contentContainerClassName="items-center gap-2 pb-2" showsVerticalScrollIndicator={false}>
-          {servers.map((room) => (
-            <RailButton
-              key={room.room_id}
-              label={room.name}
-              active={rail.kind === "server" && rail.roomId === room.room_id}
-              unread={(state.roomUnreadCounts[room.room_id] ?? 0) > 0}
-              mentions={state.roomMentions[room.room_id] ?? 0}
-              onPress={() => pickServer(room.room_id)}
-              imageUrl={room.icon_url}
-            >
-              <T
-                className={cn(
-                  "font-mono-medium text-sm",
-                  rail.kind === "server" && rail.roomId === room.room_id ? "text-sidebar-primary-foreground" : "text-sidebar-foreground",
-                )}
+          {(on) => <Icon as={MessageCircle} size={22} tone={on ? "sidebar-primary-foreground" : "sidebar-foreground"} />}
+        </RailTile>
+        <View className="h-px w-8 bg-border" />
+        <ScrollView className="w-full flex-1" contentContainerClassName="items-center gap-2 pb-1" showsVerticalScrollIndicator={false}>
+          {servers.map((room) => {
+            const icon = serverImage(room.icon_url);
+            const inVoice = roomsInVoice.has(room.room_id);
+            return (
+              <RailTile
+                key={room.room_id}
+                label={room.name}
+                active={rail.kind === "server" && rail.roomId === room.room_id}
+                unread={(state.roomUnreadCounts[room.room_id] ?? 0) > 0}
+                mentions={state.roomMentions[room.room_id] ?? 0}
+                voice={inVoice}
+                onPress={() => pickServer(room.room_id)}
               >
-                {initials(room.name)}
-              </T>
-            </RailButton>
-          ))}
+                {(on) =>
+                  icon ? (
+                    <Image source={icon} style={{ width: TILE, height: TILE }} contentFit="cover" />
+                  ) : (
+                    <T className={cn("text-base font-semibold", on ? "text-sidebar-primary-foreground" : "text-sidebar-foreground")}>
+                      {room.name.trim().slice(0, 1).toUpperCase()}
+                    </T>
+                  )
+                }
+              </RailTile>
+            );
+          })}
         </ScrollView>
-        <RailButton label="Settings" active={false} onPress={() => router.push("/settings")}>
-          <Icon as={Settings} tone="sidebar-foreground" size={20} />
-        </RailButton>
+        <View className="h-px w-8 bg-border" />
+        {/* "You": the web rail's account tile, here the way into settings. */}
+        <RailTile label="Settings and profile" active={false} onPress={() => router.push("/settings")}>
+          {() => (
+            <Avatar
+              userId={state.userId ?? undefined}
+              name={me?.displayName}
+              url={me?.avatarUrl}
+              size={TILE}
+              fallbackClassName="bg-transparent"
+              textClassName="text-base font-bold text-sidebar-foreground"
+            />
+          )}
+        </RailTile>
       </View>
 
-      {/* Channels or conversations */}
-      <View className="flex-1 mr-2 mb-2 mt-2 overflow-hidden rounded-xl bg-card">
+      {/* The channel list, or the conversations (ChannelList / the DMs tab). */}
+      <View className="flex-1 overflow-hidden rounded-lg border border-border bg-sidebar">
         {rail.kind === "dms" ? <DmList rooms={dms} /> : <ChannelList roomId={rail.roomId} />}
       </View>
     </View>
   );
 }
 
-function initials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  return (words.length > 1 ? words[0][0] + words[1][0] : name.slice(0, 2)).toUpperCase();
-}
+// ─── Rail ────────────────────────────────────────────────────────────────────
 
-const RailButton = memo(function RailButton({
+/** --rail-icon: 2.55rem at the web's 17.6px rem. */
+const TILE = 45;
+
+/**
+ * A rail tile: a near-circle that squares off when it is the one you are in,
+ * with the pill on the rail's edge (tall for here, a stub for unread) and the
+ * mention count on its corner. A press does what a hover does on the web.
+ */
+const RailTile = memo(function RailTile({
   label,
   active,
   unread,
   mentions = 0,
-  imageUrl,
+  voice,
   onPress,
   children,
 }: {
@@ -141,37 +185,69 @@ const RailButton = memo(function RailButton({
   active: boolean;
   unread?: boolean;
   mentions?: number;
-  imageUrl?: string;
+  voice?: boolean;
   onPress(): void;
-  children?: React.ReactNode;
+  children: (on: boolean) => ReactNode;
 }) {
-  const source = serverImage(imageUrl);
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} className="relative w-full items-center">
-      {/* The pill on the rail's edge: unread, or the one you're in. */}
-      {(active || unread) && (
-        <View className={cn("absolute left-0 w-1 rounded-r-full bg-sidebar-foreground", active ? "top-1 h-10" : "top-4 h-4")} />
-      )}
-      <View
-        className={cn(
-          "h-12 w-12 items-center justify-center overflow-hidden",
-          active ? "rounded-xl bg-sidebar-primary" : "rounded-3xl bg-sidebar-accent",
-        )}
-      >
-        {source ? <Image source={source} style={{ width: 48, height: 48 }} contentFit="cover" /> : children}
-      </View>
-      {mentions > 0 && <CountBadge count={mentions} className="absolute -bottom-0.5 right-2" />}
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}${mentions ? `, ${mentions} mentions` : unread ? ", unread" : ""}`}
+      accessibilityState={{ selected: active }}
+      style={{ width: TILE, height: TILE }}
+    >
+      {({ pressed }) => {
+        const on = active || pressed;
+        const pill = active ? TILE * 0.83 : pressed ? TILE * 0.42 : unread ? TILE * 0.17 : 0;
+        return (
+          <>
+            <View
+              className="absolute w-1 rounded-r-full bg-sidebar-foreground"
+              style={{ left: -12, top: (TILE - pill) / 2, height: pill }}
+            />
+            <View
+              className={cn(
+                "items-center justify-center overflow-hidden",
+                on ? "rounded-2xl bg-sidebar-primary" : "rounded-3xl bg-sidebar-accent",
+              )}
+              style={{ width: TILE, height: TILE }}
+            >
+              {children(on)}
+            </View>
+            {voice ? (
+              <View className="absolute -right-0.5 -top-0.5 h-[18px] w-[18px] items-center justify-center rounded-full border-2 border-sidebar bg-success">
+                <Volume2 size={9} color="#fff" />
+              </View>
+            ) : null}
+            {mentions > 0 ? (
+              <CountBadge count={mentions} className="absolute -bottom-0.5 -right-0.5 h-[18px] min-w-[18px] border-2 border-sidebar" />
+            ) : null}
+          </>
+        );
+      }}
     </Pressable>
   );
 });
 
-export function CountBadge({ count, className }: { count: number; className?: string }) {
+/** The red count on a tile or row: mentions. */
+export function CountBadge({ count, tone = "destructive", className }: { count: number; tone?: "destructive" | "primary"; className?: string }) {
   return (
-    <View className={cn("min-w-5 items-center rounded-full border-2 border-sidebar bg-destructive px-1", className)}>
-      <T className="text-[10px] leading-4 text-white">{count > 99 ? "99+" : count}</T>
+    <View
+      className={cn(
+        "h-[17px] min-w-[17px] items-center justify-center rounded-full px-1",
+        tone === "destructive" ? "bg-destructive" : "bg-sidebar-primary",
+        className,
+      )}
+    >
+      <T className={cn("text-3xs font-bold leading-none", tone === "destructive" ? "text-white" : "text-sidebar-primary-foreground")}>
+        {count > 99 ? "99+" : count}
+      </T>
     </View>
   );
 }
+
+// ─── Channel list ────────────────────────────────────────────────────────────
 
 function ChannelList({ roomId }: { roomId: string }) {
   const state = useChatter();
@@ -185,9 +261,8 @@ function ChannelList({ roomId }: { roomId: string }) {
   const sections = useMemo(() => {
     const byPosition = (a: { position: number }, b: { position: number }) => a.position - b.position;
     const channels = [...state.channels].sort(byPosition);
-    const loose = channels.filter((c) => !c.category_id);
     return [
-      { id: "", name: "", channels: loose },
+      { id: "", name: "", channels: channels.filter((c) => !c.category_id) },
       ...[...state.channelCategories].sort(byPosition).map((cat) => ({
         id: cat.category_id,
         name: cat.name,
@@ -198,9 +273,9 @@ function ChannelList({ roomId }: { roomId: string }) {
 
   const open = (channel: Channel) => {
     tick();
-    // A voice channel is a call: tapping it walks in (as on the web), and
-    // the conversation on screen stays where it was.
-    if (channel.channel_type === "voice" || channel.channel_type === "spatial") {
+    // A voice channel is a call: tapping it walks in (as on the web), and the
+    // conversation on screen stays where it was.
+    if (holdsCall(channel)) {
       if (state.voiceChannelId !== channel.channel_id) void voice.join(channel.channel_id);
       return;
     }
@@ -210,32 +285,29 @@ function ChannelList({ roomId }: { roomId: string }) {
 
   return (
     <View className="flex-1">
-      <View className="px-4 pt-3 pb-2">
-        <T className="font-mono-bold text-base" numberOfLines={1}>
+      <View className="flex-row items-center justify-between border-b border-border px-3 py-2">
+        <T className="flex-1 text-sm font-semibold" numberOfLines={1}>
           {room?.name ?? "Server"}
         </T>
-        {room?.topic ? (
-          <T className="mt-0.5 text-xs text-muted-foreground" numberOfLines={1}>
-            {room.topic}
-          </T>
-        ) : null}
       </View>
-      {banner ? <Image source={banner} style={{ height: 96, marginHorizontal: 8, borderRadius: 10 }} contentFit="cover" /> : null}
+      {banner ? <Banner uri={banner} /> : null}
       {!loaded ? (
-        <T className="p-4 text-xs text-muted-foreground">Loading channels…</T>
+        <T className="px-3 py-3 text-xs text-muted-foreground">Loading channels…</T>
       ) : (
-        <ScrollView contentContainerClassName="px-2 pb-4">
+        <ScrollView className="flex-1" contentContainerClassName="py-1 pb-4">
           {sections.map((section) => (
-            <View key={section.id || "loose"} className="mt-2">
+            <View key={section.id || "loose"}>
               {section.name ? (
                 <Pressable
                   onPress={() => setCollapsed((c) => ({ ...c, [section.id]: !c[section.id] }))}
                   accessibilityRole="button"
                   accessibilityState={{ expanded: !collapsed[section.id] }}
-                  className="flex-row items-center gap-1 px-1 py-1.5"
+                  className="mt-3 flex-row items-center gap-1 px-2 py-1"
                 >
-                  <Icon as={collapsed[section.id] ? ChevronRight : ChevronDown} size={12} />
-                  <T className="text-[11px] uppercase tracking-widest text-muted-foreground">{section.name}</T>
+                  <Icon as={collapsed[section.id] ? ChevronRight : ChevronDown} size={13} />
+                  <T className={UI_HEADING} numberOfLines={1}>
+                    {section.name}
+                  </T>
                 </Pressable>
               ) : null}
               {!collapsed[section.id] &&
@@ -243,15 +315,10 @@ function ChannelList({ roomId }: { roomId: string }) {
                   <ChannelRow
                     key={channel.channel_id}
                     channel={channel}
-                    active={
-                      channel.channel_type === "voice" || channel.channel_type === "spatial"
-                        ? channel.channel_id === state.voiceChannelId
-                        : channel.channel_id === state.currentChannelId
-                    }
-                    unread={(state.channelUnreadCounts[channel.channel_id] ?? 0) > 0}
-                    mentions={state.channelMentions[channel.channel_id] ?? 0}
-                    voiceMembers={state.voiceChannelMembers[channel.channel_id]}
-                    presence={state.userPresence}
+                    selected={holdsCall(channel) ? channel.channel_id === state.voiceChannelId : channel.channel_id === state.currentChannelId}
+                    unread={holdsCall(channel) ? 0 : (state.channelUnreadCounts[channel.channel_id] ?? 0)}
+                    mentions={holdsCall(channel) ? 0 : (state.channelMentions[channel.channel_id] ?? 0)}
+                    occupiedSince={state.voiceChannelOccupiedSince[channel.channel_id]}
                     onPress={() => open(channel)}
                   />
                 ))}
@@ -263,60 +330,113 @@ function ChannelList({ roomId }: { roomId: string }) {
   );
 }
 
+/** The server banner, fading into the panel below it. */
+function Banner({ uri }: { uri: { uri: string; headers?: Record<string, string> } }) {
+  const { colors } = useTheme();
+  return (
+    <View className="h-24 overflow-hidden">
+      <Image source={uri} style={{ width: "100%", height: "100%" }} contentFit="cover" />
+      <Svg style={{ position: "absolute", inset: 0 }} width="100%" height="100%">
+        <Defs>
+          <LinearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0.5" stopColor={colors.sidebar} stopOpacity={0} />
+            <Stop offset="1" stopColor={colors.sidebar} stopOpacity={1} />
+          </LinearGradient>
+        </Defs>
+        <Rect width="100%" height="100%" fill="url(#fade)" />
+      </Svg>
+    </View>
+  );
+}
+
 const ChannelRow = memo(function ChannelRow({
   channel,
-  active,
+  selected,
   unread,
   mentions,
-  voiceMembers,
-  presence,
+  occupiedSince,
   onPress,
 }: {
   channel: Channel;
-  active: boolean;
-  unread: boolean;
+  selected: boolean;
+  unread: number;
   mentions: number;
-  voiceMembers?: { userId: string }[];
-  presence: ReturnType<typeof useChatter>["userPresence"];
+  occupiedSince?: number;
   onPress(): void;
 }) {
-  const icon = CHANNEL_ICON[channel.channel_type] ?? Hash;
+  const state = useChatter();
+  const locked = (channel.view_roles?.length ?? 0) > 0;
+  const occupants = holdsCall(channel) ? (state.voiceChannelMembers[channel.channel_id] ?? []) : [];
+  const bold = !selected && unread > 0;
   return (
-    <View>
+    <View className="mt-1">
       <Pressable
         onPress={onPress}
         accessibilityRole="button"
-        accessibilityLabel={`${channel.name}, ${channel.channel_type} channel${unread ? ", unread" : ""}`}
-        accessibilityState={{ selected: active }}
-        className={cn("flex-row items-center gap-2 rounded-lg px-3 py-2.5", active ? "bg-sidebar-primary" : "active:bg-sidebar-accent")}
+        accessibilityLabel={`${channel.name}, ${channel.channel_type} channel${unread ? `, ${unread} unread` : ""}${mentions ? `, ${mentions} mentions` : ""}`}
+        accessibilityState={{ selected }}
+        className={cn("mx-1 flex-row items-center gap-1 rounded px-2 py-1.5", selected ? "bg-accent" : "active:bg-accent/50")}
       >
-        <Icon as={icon} size={17} tone={active ? "sidebar-primary-foreground" : "muted-foreground"} />
+        {bold ? <T className="text-xs font-bold text-foreground">[{unread > 99 ? "99+" : unread}]</T> : null}
+        <Icon as={locked ? Lock : (CHANNEL_ICON[channel.channel_type] ?? Hash)} size={17} tone={locked ? "warning" : "muted-foreground"} />
         <T
           numberOfLines={1}
           className={cn(
-            "flex-1 text-[15px]",
-            active ? "text-sidebar-primary-foreground" : unread ? "font-mono-bold text-foreground" : "text-muted-foreground",
+            "flex-1 text-sm",
+            selected ? "text-accent-foreground" : bold ? "font-bold text-foreground" : "text-muted-foreground",
           )}
         >
           {channel.name}
         </T>
-        {mentions > 0 && <CountBadge count={mentions} className="border-0" />}
+        {occupants.length > 0 && occupiedSince ? <VoiceTimer since={occupiedSince} /> : null}
+        {mentions > 0 ? <CountBadge count={mentions} className="ml-auto h-4 min-w-4" /> : null}
       </Pressable>
-      {voiceMembers?.length ? (
-        <View className="ml-9 mb-1 gap-1">
-          {voiceMembers.map((m) => (
-            <View key={m.userId} className="flex-row items-center gap-2">
-              <Avatar userId={m.userId} url={presence[m.userId]?.avatarUrl} size={20} />
-              <T className="text-xs text-muted-foreground" numberOfLines={1}>
-                {presence[m.userId]?.displayName || displayUserId(m.userId)}
-              </T>
-            </View>
+      {occupants.length > 0 ? (
+        <View className="ml-7 gap-0.5 pb-1">
+          {occupants.map((m) => (
+            <Occupant key={m.userId} userId={m.userId} />
           ))}
         </View>
       ) : null}
     </View>
   );
 });
+
+/** How long a voice channel has been occupied (m:ss), beside its name. */
+function VoiceTimer({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const total = Math.max(0, Math.floor((now - since) / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = String(total % 60).padStart(2, "0");
+  return <T className="ml-1 text-3xs text-success">{h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`}</T>;
+}
+
+/** Someone in a voice channel: their mic, face and name. */
+function Occupant({ userId }: { userId: string }) {
+  const state = useChatter();
+  const flags = state.voiceMemberStates[userId];
+  const isMe = userId === state.userId;
+  const deafened = flags?.deafened || (isMe && state.isDeafened);
+  const muted = deafened || flags?.muted || (isMe && state.isMuted);
+  const presence = state.userPresence[userId];
+  return (
+    <View className="flex-row items-center gap-1.5 rounded px-1 py-0.5">
+      <Icon as={muted ? MicOff : Mic} size={13} tone={muted ? "destructive" : "success"} />
+      {deafened ? <Icon as={HeadphoneOff} size={13} tone="destructive" /> : null}
+      <Avatar userId={userId} name={presence?.displayName} url={presence?.avatarUrl} size={22} textClassName="text-2xs" />
+      <T className="flex-1 text-sm text-muted-foreground" numberOfLines={1}>
+        {presence?.displayName || displayUserId(userId)}
+      </T>
+    </View>
+  );
+}
+
+// ─── Direct messages ─────────────────────────────────────────────────────────
 
 function DmList({ rooms }: { rooms: RoomInfo[] }) {
   const state = useChatter();
@@ -325,37 +445,86 @@ function DmList({ rooms }: { rooms: RoomInfo[] }) {
   const me = state.userId;
   return (
     <View className="flex-1">
-      <T className="px-4 pt-3 pb-2 font-mono-bold text-base">Direct messages</T>
-      <ScrollView contentContainerClassName="px-2 pb-4">
+      <View className="border-b border-border px-3 py-2">
+        <T className="text-sm font-semibold">Direct Messages</T>
+      </View>
+      <ScrollView className="flex-1" contentContainerClassName="gap-px px-2 py-2">
         {rooms.length === 0 ? (
-          <T className="px-2 py-4 text-xs text-muted-foreground">No conversations yet. Start one from someone's profile.</T>
+          <T className="px-3 py-3 text-xs text-muted-foreground">No conversations yet. Start one from someone's profile.</T>
         ) : null}
         {rooms.map((room) => {
           const peer = room.dm_user_ids?.find((id) => id !== me) ?? room.dm_user_ids?.[0];
-          const name = (peer && state.userPresence[peer]?.displayName) || room.name;
-          const active = state.currentRoomId === room.room_id;
-          const unread = (state.roomLooseUnreads[room.room_id] ?? 0) > 0;
+          const name = (peer && state.userPresence[peer]?.displayName) || room.name.replace(/^DM with /, "");
+          const avatar = (peer && state.userPresence[peer]?.avatarUrl) || (peer && room.dm_avatars?.[peer]) || null;
           return (
-            <Pressable
+            <RoomRow
               key={room.room_id}
+              name={name}
+              active={state.currentRoomId === room.room_id}
+              unread={state.roomLooseUnreads[room.room_id] ?? 0}
+              mentions={state.roomMentions[room.room_id] ?? 0}
+              icon={avatar ? <Avatar userId={peer} name={name} url={avatar} size={31} /> : undefined}
               onPress={() => {
                 tick();
-                if (!active) void selectRoom(room.room_id).catch(() => {});
+                if (state.currentRoomId !== room.room_id) void selectRoom(room.room_id).catch(() => {});
                 close();
               }}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              className={cn("flex-row items-center gap-3 rounded-lg px-2 py-2", active ? "bg-sidebar-accent" : "active:bg-sidebar-accent")}
-            >
-              <Avatar userId={peer} name={name} url={(peer && state.userPresence[peer]?.avatarUrl) || (peer && room.dm_avatars?.[peer])} status={peer ? state.userPresence[peer]?.status : undefined} />
-              <T numberOfLines={1} className={cn("flex-1", unread ? "font-mono-bold" : "text-muted-foreground")}>
-                {name}
-              </T>
-              {(state.roomMentions[room.room_id] ?? 0) > 0 && <CountBadge count={state.roomMentions[room.room_id]} className="border-0" />}
-            </Pressable>
+            />
           );
         })}
       </ScrollView>
     </View>
   );
 }
+
+/**
+ * A room or conversation in a list (AppSidebar's room card): its picture or
+ * letter, its name, and on the right what is waiting there. The bar on the
+ * left marks the open one; a dot, one with something unread.
+ */
+const RoomRow = memo(function RoomRow({
+  name,
+  active,
+  unread,
+  mentions,
+  icon,
+  onPress,
+}: {
+  name: string;
+  active: boolean;
+  unread: number;
+  mentions: number;
+  icon?: ReactNode;
+  onPress(): void;
+}) {
+  const waiting = !active && (unread > 0 || mentions > 0);
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      className={cn("relative flex-row items-center gap-2 rounded-md py-1.5 pl-3 pr-1.5", active ? "bg-sidebar-accent" : "active:bg-sidebar-accent/50")}
+    >
+      {active ? (
+        <View className="absolute left-0 h-5 w-0.5 rounded-r-full bg-sidebar-primary" />
+      ) : waiting ? (
+        <View className="absolute left-1 size-1.5 rounded-full bg-sidebar-foreground" />
+      ) : null}
+      {icon ?? (
+        <View className={cn("h-[31px] w-[31px] items-center justify-center rounded-md", active ? "bg-sidebar-primary" : "bg-sidebar-accent")}>
+          <T className={cn("text-xs font-bold", active ? "text-sidebar-primary-foreground" : "text-sidebar-foreground")}>
+            {name.slice(0, 1).toUpperCase()}
+          </T>
+        </View>
+      )}
+      <T className={cn("flex-1 text-sm", active && "text-sidebar-accent-foreground")} numberOfLines={1}>
+        {name}
+      </T>
+      {!active && mentions > 0 ? (
+        <CountBadge count={mentions} />
+      ) : !active && unread > 0 ? (
+        <CountBadge count={unread} tone="primary" />
+      ) : null}
+    </Pressable>
+  );
+});

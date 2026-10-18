@@ -41,7 +41,10 @@ function readPreference(): string {
   } catch {
     // Storage unavailable: the default stands.
   }
-  return SYSTEM_THEME;
+  // The web's default (client/src/lib/theme/themes.ts DEFAULT_THEME_ID):
+  // Chatter is dark unless someone picks otherwise. "Match phone" is a choice
+  // in Appearance, not the starting point.
+  return "dark";
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {

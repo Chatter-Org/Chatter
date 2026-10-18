@@ -40,7 +40,7 @@ export const MessageMedia = memo(function MessageMedia({ media, spoiler }: { med
   if (!hasAny) return null;
 
   return (
-    <View className="mt-1.5 gap-1.5">
+    <View className="mt-2 gap-2">
       {media.images.length > 0 && (
         <ImageGrid urls={media.images} onOpen={setViewing} blurred={spoiler} />
       )}
@@ -63,18 +63,26 @@ export const MessageMedia = memo(function MessageMedia({ media, spoiler }: { med
 
 function ImageGrid({ urls, onOpen, blurred }: { urls: string[]; onOpen(i: number): void; blurred?: boolean }) {
   const [revealed, setRevealed] = useState(!blurred);
+  // The picture's own shape, as the web draws it: as wide as the message
+  // allows, no taller than max-h-80 (352px).
+  const [aspect, setAspect] = useState(4 / 3);
+  const [room, setRoom] = useState(0);
   if (urls.length === 1) {
+    const width = room ? Math.min(room, 352 * aspect) : 0;
     return (
-      <Pressable onPress={() => (revealed ? onOpen(0) : setRevealed(true))} accessibilityRole="imagebutton" accessibilityLabel="Image, tap to open">
+      <View onLayout={(e) => setRoom(e.nativeEvent.layout.width)}>
+        <Pressable onPress={() => (revealed ? onOpen(0) : setRevealed(true))} accessibilityRole="imagebutton" accessibilityLabel="Image, tap to open">
         <Image
           source={serverImage(urls[0])}
-          style={{ width: "100%", maxWidth: 320, aspectRatio: 4 / 3, borderRadius: 10 }}
+          onLoad={(e) => e.source.width && e.source.height && setAspect(e.source.width / e.source.height)}
+          style={{ width: width || "100%", aspectRatio: aspect, borderRadius: 13.4 }}
           contentFit="cover"
           transition={150}
           recyclingKey={urls[0]}
           blurRadius={revealed ? 0 : 40}
         />
-      </Pressable>
+        </Pressable>
+      </View>
     );
   }
   return (
@@ -83,7 +91,7 @@ function ImageGrid({ urls, onOpen, blurred }: { urls: string[]; onOpen(i: number
         <Pressable key={url} onPress={() => (revealed ? onOpen(i) : setRevealed(true))} accessibilityLabel={`Image ${i + 1} of ${urls.length}`}>
           <Image
             source={serverImage(url)}
-            style={{ width: 160, height: 160, borderRadius: 8 }}
+            style={{ width: 160, height: 160, borderRadius: 13.4 }}
             contentFit="cover"
             recyclingKey={url}
             blurRadius={revealed ? 0 : 40}
@@ -172,14 +180,20 @@ function FileCard({ url }: { url: string }) {
       }}
       accessibilityRole="button"
       accessibilityLabel={`File ${fileName(url)}, tap to open`}
-      className={cn("flex-row items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5", busy && "opacity-60")}
-      style={{ maxWidth: 320 }}
+      // FileAttachmentCard: the name without its extension, then the kind.
+      className={cn("mt-1 flex-row items-center gap-3 rounded-md border border-border bg-secondary/30 px-3 py-2.5 active:bg-secondary/50", busy && "opacity-60")}
+      style={{ maxWidth: 384 }}
     >
-      <Icon as={FileText} size={22} tone="foreground" />
-      <T className="flex-1 text-sm" numberOfLines={1}>
-        {fileName(url)}
-      </T>
-      <Icon as={Download} size={16} />
+      <Icon as={FileText} size={35} />
+      <View className="min-w-0 flex-1">
+        <T className="text-sm font-medium" numberOfLines={1}>
+          {fileName(url).replace(/\.[^.]+$/, "")}
+        </T>
+        <T className="text-xs text-muted-foreground" numberOfLines={1}>
+          {fileKind(url)}
+        </T>
+      </View>
+      <Icon as={Download} size={17} />
     </Pressable>
   );
 }
@@ -195,4 +209,10 @@ function YouTubeCard({ id }: { id: string }) {
       </View>
     </Pressable>
   );
+}
+
+/** "PDF file", "TXT file": the extension, as the web's card says it. */
+function fileKind(url: string): string {
+  const ext = /\.([a-z0-9]+)$/i.exec(fileName(url))?.[1];
+  return ext ? `${ext.toUpperCase()} file` : "File";
 }
