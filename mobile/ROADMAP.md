@@ -37,10 +37,10 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Timeline: grouping, day dividers, replies, mentions, code, links, custom emoji, spoilers, edited
 - [x] Swipe a message to reply; hold for actions (react, reply, copy, link, edit, delete)
 - [x] Composer above the keyboard; drafts synced; typing indicator
-- [ ] Message images open full screen (pinch, swipe to dismiss); video/audio/file cards
+- [x] Message images open full screen (pinch, swipe to dismiss); video/audio/file cards
 - [ ] Link previews and embeds (bot embeds, message/forum link cards, YouTube)
-- [ ] Emoji picker (standard + room custom emoji), reaction picker
-- [ ] Mention autocomplete (@user, @role) and :emoji: shortcodes in the composer
+- [x] Emoji picker (standard + room custom emoji), reaction picker
+- [x] Mention autocomplete (@user, @role) and :emoji: shortcodes in the composer (`composerTokens` in core)
 - [ ] Threads (open, reply, previews under channels)
 - [ ] Pins, search, mentions inbox
 - [ ] Polls (vote, results) and events (RSVP)
@@ -49,9 +49,9 @@ FCM push notifications are deliberately **last**: everything else first.
 - [ ] Friends and DMs: start a DM, group DMs, friend requests
 
 ### Uploads
-- [ ] Attach from gallery, camera, files; progress; chunked resumable upload (`uploadResume` in core)
+- [x] Attach from gallery, camera, files; progress; chunked resumable upload (`uploadResume` in core)
 - [ ] Share into Chatter from other apps (Android share sheet)
-- [ ] Save/share received files
+- [x] Save/share received files
 
 ### Forums
 - [ ] Forum channels: post list, tags, open a post, comment, create a post with images
@@ -60,7 +60,7 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Shared `VoiceEngine` in core (`packages/core/src/voice/engine.ts`), ported from `useWebRTCVoice`, on a `react-native-webrtc` backend (`src/voice/nativeBackend.ts`)
 - [x] **Web:** `useWebRTCVoice` adopts `VoiceEngine`, so web, desktop and mobile share one call implementation
 - [x] Join/leave, mute/deafen, slots, per-person volume, speaking rings, rejoin after a dropped socket
-- [ ] Push-to-talk button (the engine has `setTransmitting`; needs a hold-to-talk control)
+- [x] Push-to-talk: switch in the call sheet, hold-to-talk on the bar
 - [x] Calls keep running in the background: foreground service with Mute/Leave in its notification, wake and Wi-Fi locks (`modules/chatter-call`)
 - [ ] ConnectionService (self-managed Telecom): a phone call interrupting, car/watch controls
 - [x] Audio routing: speaker by default, headsets win when connected, tap to switch
@@ -68,6 +68,12 @@ FCM push notifications are deliberately **last**: everything else first.
 - [ ] Spatial channels' floor (heard by distance today, no map yet)
 - [ ] Watch screen shares and webcams; picture-in-picture
 - [ ] Share screen (MediaProjection) and camera
+
+### Design (match the web)
+- [x] Shared control recipes (`packages/core/src/ui/recipes.ts`) used by the web's shadcn files and `src/ui/controls.tsx`; the web's 17.6px rem
+- [x] Drawer (rail + channel list), header, messages, composer, members, call bar, sheets, settings, sign-in rebuilt from the web components
+- [ ] Header tool row (notifications, events, pins, mentions, search) as those features land
+- [ ] GIF picker and the composer's GIF button
 
 ### Adaptive layout
 - [x] Side-by-side panels on wide windows
