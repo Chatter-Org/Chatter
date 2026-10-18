@@ -18,7 +18,7 @@ import {
   formatScreenBitrate,
   loadScreenShareBitrate,
   storeScreenShareBitrate,
-} from "@/lib/webrtc";
+} from "../webrtc";
 
 describe("Screen share quality configuration", () => {
   describe("30fps profile", () => {

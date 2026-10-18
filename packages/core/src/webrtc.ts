@@ -1,5 +1,5 @@
-import type { VoicePeer } from "@/lib/media/types";
-import { getAccessToken } from "./api";
+import type { VoicePeer } from "./voice/media";
+import { getAccessToken, serverUrl } from "./api";
 
 // Fallback config used until the server responds
 const DEFAULT_WEBRTC_CONFIG: RTCConfiguration = {
@@ -13,7 +13,7 @@ export async function fetchIceServers(): Promise<void> {
   try {
     const token = getAccessToken();
     if (!token) return;
-    const res = await fetch("/api/ice-servers", {
+    const res = await fetch(serverUrl("/api/ice-servers"), {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.ok) {
@@ -142,7 +142,7 @@ export interface PeerStats {
   audioCodec: string | null;        // e.g. "opus/48000/2"
 }
 
-export function canSignal(wsRef: React.MutableRefObject<WebSocket | null>) {
+export function canSignal(wsRef: { current: WebSocket | null }) {
   return wsRef.current && wsRef.current.readyState === WebSocket.OPEN;
 }
 
@@ -155,7 +155,9 @@ export function canSignal(wsRef: React.MutableRefObject<WebSocket | null>) {
  */
 export function canShareScreen(): boolean {
   return (
+    // eslint-disable-next-line no-restricted-globals -- guarded; absent on a phone, which shares through its own module
     typeof navigator !== "undefined" &&
+    // eslint-disable-next-line no-restricted-globals -- guarded on the line above
     typeof navigator.mediaDevices?.getDisplayMedia === "function"
   );
 }

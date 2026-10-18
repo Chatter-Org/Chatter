@@ -7,7 +7,7 @@ import {
   VOICE_BITRATE_DEFAULT_BPS,
   VOICE_PTIME_MS,
   VOICE_MAXPTIME_MS,
-} from "@/lib/webrtc";
+} from "../webrtc";
 
 const SDP_WITH_FMTP = [
   "v=0",

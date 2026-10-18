@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getWebcamPublishProfile } from "@/lib/webrtc";
+import { getWebcamPublishProfile } from "../webrtc";
 
 describe("Webcam quality configuration", () => {
   describe("30fps profile", () => {

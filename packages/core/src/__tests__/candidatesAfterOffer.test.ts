@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { candidatesAfterOffer } from "@/lib/webrtc";
+import { candidatesAfterOffer } from "../webrtc";
 
 describe("candidatesAfterOffer", () => {
   it("holds candidates until the offer is sent, then sends them in order", () => {
