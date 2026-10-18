@@ -1,6 +1,10 @@
+import { useState } from "react";
 import { Pressable, View } from "react-native";
+import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Menu, Users, WifiOff, type LucideProps } from "lucide-react-native";
+import { AtSign, Bell, BellOff, Menu, Pin, Search, Users, WifiOff, type LucideProps } from "lucide-react-native";
+import { resolveNotificationLevel } from "@chatter/core/notifications";
+import { NotificationSheet } from "./NotificationSheet";
 import type { ComponentType } from "react";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter } from "@/state/ChatterProvider";
@@ -15,8 +19,8 @@ import { UI_META } from "@/ui/roles";
  * it), the members. Below it, while the socket is down, the web's
  * "Connection lost" bar.
  *
- * The web's second row (notifications, events, pins, mentions, search) joins
- * it as each of those arrives here.
+ * Under it, the web's second row: notifications, pins, mentions, search.
+ * (Events join it when they arrive here.)
  */
 export function ChatHeader() {
   const state = useChatter();
@@ -49,6 +53,7 @@ export function ChatHeader() {
         </View>
         <HeaderButton icon={Users} size={24} label="Members" active={panels.rightVisible} onPress={panels.toggleRight} />
       </View>
+      {state.currentRoomId ? <ToolRow /> : null}
       {!state.wsConnected && state.accessToken ? (
         <View className="flex-row items-center justify-center gap-2 bg-amber-600 px-3 py-1.5">
           <WifiOff size={16} color="#fff" />
@@ -81,6 +86,34 @@ function HeaderButton({
       className={cn("h-10 w-10 items-center justify-center rounded-lg active:bg-accent", active && "bg-accent")}
     >
       <Icon as={icon} size={size} tone={active ? "foreground" : "muted-foreground"} />
+    </Pressable>
+  );
+}
+
+/** The web's tool row at phone width: right-aligned ghost icon buttons. */
+function ToolRow() {
+  const state = useChatter();
+  const [bell, setBell] = useState(false);
+  const roomId = state.currentRoomId!;
+  const isDm = !!state.roomInfoMap[roomId]?.is_direct;
+  const channelId = state.currentChannelId ?? undefined;
+  const muted = resolveNotificationLevel(state.notificationSettings, roomId, channelId) === "none";
+  return (
+    <View className="flex-row items-center justify-end gap-1 border-b border-border px-1 py-0.5">
+      <Tool icon={muted ? BellOff : Bell} label="Notification settings" onPress={() => setBell(true)} />
+      <Tool icon={Pin} label="Pinned messages" dot={state.pinnedMessages.length > 0} onPress={() => router.push({ pathname: "/panel", params: { mode: "pins" } })} />
+      {!isDm ? <Tool icon={AtSign} label="Mentions" onPress={() => router.push({ pathname: "/panel", params: { mode: "mentions" } })} /> : null}
+      <Tool icon={Search} label="Search" onPress={() => router.push({ pathname: "/panel", params: { mode: "search" } })} />
+      <NotificationSheet open={bell} onClose={() => setBell(false)} channelId={channelId} />
+    </View>
+  );
+}
+
+function Tool({ icon, label, dot, onPress }: { icon: ComponentType<LucideProps>; label: string; dot?: boolean; onPress(): void }) {
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} className="size-9 items-center justify-center rounded-md active:bg-accent">
+      <Icon as={icon} size={17} tone="foreground" />
+      {dot ? <View className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" /> : null}
     </Pressable>
   );
 }

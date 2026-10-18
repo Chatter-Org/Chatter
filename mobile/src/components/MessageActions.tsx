@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { Copy, Link2, MessagesSquare, Pencil, Reply, SmilePlus, Trash2 } from "lucide-react-native";
+import { Copy, Link2, MessagesSquare, Pencil, Pin, PinOff, Reply, SmilePlus, Trash2 } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
 import { messageLinkFor } from "@chatter/core/messageLinks";
 import { canManageMessages } from "@chatter/core/permissions";
@@ -49,6 +49,9 @@ export function MessageActions({
   const deleted = !!message && isDeletedMessage(message);
   const mayDelete = !!message && !deleted && (mine || canManageMessages(state));
   const body = message?.content.body ?? "";
+  // As on the web: moderators pin, in the channel (a thread's pins are its own).
+  const canPin = !!message && !deleted && !!onOpenThread && message.content.msgtype !== "m.system" && canManageMessages(state);
+  const isPinned = !!message && state.pinnedMessages.some((m) => m.event_id === message.event_id);
 
   const run = (fn: () => void) => () => {
     void Haptics.selectionAsync().catch(() => {});
@@ -119,6 +122,17 @@ export function MessageActions({
                 <SheetRow icon={MessagesSquare} label="Open thread" onPress={run(() => onOpenThread(message.event_id))} />
               ) : null}
               {!deleted && <SheetRow icon={Copy} label="Copy text" onPress={run(() => void Clipboard.setStringAsync(body))} />}
+              {canPin ? (
+                <SheetRow
+                  icon={isPinned ? PinOff : Pin}
+                  label={isPinned ? "Unpin message" : "Pin message"}
+                  onPress={run(() =>
+                    void (isPinned ? actions.unpinMessage(message.event_id) : actions.pinMessage(message.event_id)).catch((e) =>
+                      showToast({ message: String(e?.message ?? e), tone: "error" }),
+                    ),
+                  )}
+                />
+              ) : null}
               <SheetRow
                 icon={Link2}
                 label="Copy message link"

@@ -40,6 +40,7 @@ function Root() {
             <Stack.Screen name="index" />
             <Stack.Screen name="settings" options={{ animation: "slide_from_right" }} />
             <Stack.Screen name="thread" options={{ animation: "slide_from_right" }} />
+            <Stack.Screen name="panel" options={{ animation: "slide_from_right" }} />
           </Stack.Protected>
           <Stack.Protected guard={!signedIn}>
             <Stack.Screen name="sign-in" />

@@ -94,6 +94,11 @@ export function ChatView() {
     [actions],
   );
 
+  // The channel's pins, for the header's pin dot and the pins screen.
+  useEffect(() => {
+    if (roomId) void actions.loadPins();
+  }, [roomId, channelId, actions]);
+
   // What the reader has seen is read: the newest message, while they are at
   // the bottom of the conversation with the app in front of them.
   const newest = state.messages[state.messages.length - 1]?.event_id;

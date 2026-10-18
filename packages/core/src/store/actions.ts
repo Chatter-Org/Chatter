@@ -952,6 +952,10 @@ export function createStoreActions(ctx: StoreContext) {
     }
   };
 
+  /** Change the search: its query, filters or whether it is open. */
+  const updateSearch = (change: Partial<AppState["search"]>) => dispatch({ type: "SET_SEARCH", payload: change });
+  const closeSearch = () => dispatch({ type: "CLOSE_SEARCH" });
+
   const loadMoreSearchResults = async () => {
     const cur = getState();
     const { open, query, filter, fileTypeFilter, hasMore, loadingMore, nextOffset } = cur.search;
@@ -1004,6 +1008,8 @@ export function createStoreActions(ctx: StoreContext) {
     unpinMessage,
     runSearch,
     loadMoreSearchResults,
+    updateSearch,
+    closeSearch,
     loadMessagesAround,
     selectChannel,
     sendMessage,
