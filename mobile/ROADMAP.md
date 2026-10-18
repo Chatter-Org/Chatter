@@ -38,13 +38,14 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Swipe a message to reply; hold for actions (react, reply, copy, link, edit, delete)
 - [x] Composer above the keyboard; drafts synced; typing indicator
 - [x] Message images open full screen (pinch, swipe to dismiss); video/audio/file cards
-- [ ] Link previews and embeds (bot embeds, message/forum link cards, YouTube)
+- [x] Link previews and embeds (message/forum link cards, page previews, YouTube); jumping to a linked message
+- [ ] Bot rich embeds
 - [x] Emoji picker (standard + room custom emoji), reaction picker
 - [x] Mention autocomplete (@user, @role) and :emoji: shortcodes in the composer (`composerTokens` in core)
 - [ ] Threads (open, reply, previews under channels)
 - [ ] Pins, search, mentions inbox
 - [ ] Polls (vote, results) and events (RSVP)
-- [ ] Unread marker line and "jump to unread"
+- [x] Unread marker line and "jump to unread" (the web's "New" line and unread bar)
 - [ ] Profiles: open a member, DM them, roles, profile themes and name fonts
 - [ ] Friends and DMs: start a DM, group DMs, friend requests
 
