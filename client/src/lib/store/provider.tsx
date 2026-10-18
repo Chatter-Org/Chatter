@@ -25,7 +25,6 @@ import {
   apiLogout,
   apiDeleteAccount,
   apiMarkRead,
-  apiGetMessagesAfter,
   apiCreateRoom,
   apiJoinRoom,
   apiLeaveRoom,
@@ -335,80 +334,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // from a phone that was put down.
   const hiddenAtRef = useRef<number | null>(null);
 
-  /**
-   * Replay whatever arrived while the socket was down.
-   *
-   * Live events are the only way a message reaches an open channel, so a
-   * dropped connection silently leaves a hole in the timeline — the client
-   * keeps rendering, the banner clears, and nothing says that anything is
-   * missing. This closes the hole from the newest message actually held,
-   * looping when the gap was wider than one page.
-   *
-   * Messages are replayed through ADD_MESSAGE, which ignores an event_id it
-   * already has, so an overlap with what arrived live is harmless.
-   */
-  const recoverMissedMessages = useCallback(async () => {
-    // Server-computed, so these are right even where the timeline is not.
-    void loadUnreadsRef.current();
-    // Who is in a call, who is muted, who is sharing — all of it is assembled
-    // from events, and every event sent while the socket was down reached
-    // nobody. Nothing else refetches it, so a single missed join left the call
-    // looking wrong until the room was reselected. Ask the server outright.
-    //
-    // (The server pushes the same snapshot when the socket opens; this covers
-    // the case where the connection survived and only the events were lost.)
-    void loadVoiceMembersRef.current();
-    // Online, idle and offline are broadcast the same way, and were missed the
-    // same way. The poll would correct it within ten seconds, but only for the
-    // room on screen and only once it next fires.
-    void loadPresenceRef.current();
-
-    const { currentRoomId, currentChannelId, messages } = stateRef.current;
-    if (!currentRoomId) return;
-
-    // With nothing loaded there is no gap to close — opening the channel will
-    // fetch it. Only a timeline that already has a tail can have lost one.
-    //
-    // The cursor carries the event id as well as the timestamp: two messages
-    // can share a millisecond, and asking only for "newer than this time"
-    // would step straight over the second one.
-    let cursor: { ts: number; eventId: string } | null = null;
-    for (const message of messages) {
-      if (
-        !cursor ||
-        message.origin_server_ts > cursor.ts ||
-        (message.origin_server_ts === cursor.ts && message.event_id > cursor.eventId)
-      ) {
-        cursor = { ts: message.origin_server_ts, eventId: message.event_id };
-      }
-    }
-    if (!cursor) return;
-
-    try {
-      // Bounded: a socket down for days should not walk the whole history.
-      for (let page = 0; page < 20; page++) {
-        const data = await apiGetMessagesAfter(
-          currentRoomId,
-          cursor.ts,
-          currentChannelId ?? undefined,
-          undefined,
-          cursor.eventId,
-        );
-        const chunk = data.chunk || [];
-        if (chunk.length === 0) return;
-        for (const message of chunk) {
-          dispatch({ type: "ADD_MESSAGE", payload: message });
-        }
-        // Continue from the last message of this page, in the server's order.
-        const last = chunk[chunk.length - 1];
-        cursor = { ts: last.origin_server_ts, eventId: last.event_id };
-        if (!data.has_more) return;
-      }
-    } catch {
-      // The socket is back and live messages are flowing again; the hole stays
-      // until the channel is reopened, which is no worse than before.
-    }
-  }, []);
+  // Replay whatever arrived while the socket was down (see core actions).
+  const recoverMissedMessages = shared.recoverMissedMessages;
 
   // WebSocket connection — refreshes expired token before connecting
   const connectWebSocket = useCallback(async () => {

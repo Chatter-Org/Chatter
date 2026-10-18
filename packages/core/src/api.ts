@@ -497,9 +497,25 @@ export async function apiGetAccountStatus() {
   return res.json() as Promise<{ totp_verified: boolean; entrance_sound_url?: string }>;
 }
 
+/** Sign out everywhere: every session the account has ends. */
 export async function apiLogout() {
   await authenticatedFetch("/_matrix/client/r0/logout", {
     method: "POST",
+  });
+}
+
+/**
+ * Sign out this device only, by naming its refresh token; the account stays
+ * signed in elsewhere. For a platform with a token store (configureApi) — the
+ * browser cannot read its cookie, and signs out with apiLogout.
+ */
+export async function apiLogoutDevice() {
+  const token = _refreshStore?.get();
+  if (!token) return;
+  await serverFetch("/_matrix/client/r0/logout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: token }),
   });
 }
 
