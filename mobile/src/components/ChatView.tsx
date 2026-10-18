@@ -107,6 +107,21 @@ export function ChatView() {
     actions.markChannelRead(roomId, channelId ?? undefined);
   }, [roomId, channelId, newest, atBottom, actions]);
 
+  // Something you posted — a message, a poll — is something you want to see:
+  // follow it down wherever the reader was.
+  const newestMessage = state.messages[state.messages.length - 1];
+  const lastFollowed = useRef(newest);
+  useEffect(() => {
+    if (!newest || newest === lastFollowed.current) return;
+    // Only an arrival at the end: a channel switch or a jump also changes the
+    // newest message, and must not be pulled away from.
+    const appended = state.messages[state.messages.length - 2]?.event_id === lastFollowed.current;
+    lastFollowed.current = newest;
+    if (appended && newestMessage?.sender === state.userId) {
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    }
+  }, [newest, newestMessage, state.messages, state.userId]);
+
   const renderItem = useCallback(
     ({ item }: { item: Row }) => {
       if (item.kind === "new") return <NewDivider />;

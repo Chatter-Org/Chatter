@@ -28,3 +28,18 @@ export async function saveServerFile(path: string, name: string): Promise<void> 
     showToast({ message: "Couldn't get that file", description: String((e as Error)?.message ?? e), tone: "error" });
   }
 }
+
+/** Text made here (a calendar entry) handed to the phone the same way. */
+export async function shareTextFile(name: string, text: string, mimeType: string): Promise<void> {
+  try {
+    const dir = new Directory(Paths.cache, "shared");
+    if (!dir.exists) dir.create({ intermediates: true });
+    const file = new File(dir, name);
+    if (file.exists) file.delete();
+    file.create();
+    file.write(text);
+    await Sharing.shareAsync(file.uri, { dialogTitle: name, mimeType });
+  } catch (e) {
+    showToast({ message: "Couldn't share that", description: String((e as Error)?.message ?? e), tone: "error" });
+  }
+}

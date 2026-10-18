@@ -1,5 +1,6 @@
 import type { ComponentType, ReactNode } from "react";
-import { Pressable, View, type PressableProps } from "react-native";
+import { Pressable, Switch as NativeSwitch, View, type PressableProps } from "react-native";
+import { useTheme } from "@/theme/ThemeProvider";
 import type { LucideProps } from "lucide-react-native";
 import * as Recipe from "@chatter/core/ui/recipes";
 import type { ThemeToken } from "@/theme/themes.generated";
@@ -140,4 +141,35 @@ export function Segmented<V extends string>({
 /** A card: the web's panels and boxes. */
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
   return <View className={cn(Recipe.card.box, className)}>{children}</View>;
+}
+
+/**
+ * The web's Switch: the primary track when on, the input colour when off,
+ * and a thumb that stays visible on a dark theme (foreground off,
+ * primary-foreground on) — the platform switch, in those colours.
+ */
+export function Switch({
+  value,
+  onValueChange,
+  disabled,
+  accessibilityLabel,
+}: {
+  value: boolean;
+  onValueChange(value: boolean): void;
+  disabled?: boolean;
+  accessibilityLabel?: string;
+}) {
+  const { mode, colors } = useTheme();
+  const dark = mode !== "light";
+  return (
+    <NativeSwitch
+      value={value}
+      onValueChange={onValueChange}
+      disabled={disabled}
+      accessibilityLabel={accessibilityLabel}
+      trackColor={{ false: colors.input, true: colors.primary }}
+      thumbColor={dark ? (value ? colors["primary-foreground"] : colors.foreground) : colors.background}
+      style={disabled ? { opacity: 0.5 } : undefined}
+    />
+  );
 }

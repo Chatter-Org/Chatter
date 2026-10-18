@@ -5,6 +5,7 @@
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.2",
     "@expo-google-fonts/jetbrains-mono": "^0.4.1",
+    "@react-native-community/datetimepicker": "9.2.1",
     "@shopify/flash-list": "2.3.2",
     "clsx": "^2.1.1",
     "expo": "~58.0.14",

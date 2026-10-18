@@ -44,7 +44,8 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Mention autocomplete (@user, @role) and :emoji: shortcodes in the composer (`composerTokens` in core)
 - [x] Threads (open, reply, previews under channels)
 - [x] Pins, search, mentions inbox (the web's MessagePanel as a screen); per-channel notification level from the header
-- [ ] Polls (vote, results) and events (RSVP)
+- [x] Polls: vote, voters, end early, results; create from the composer's + sheet
+- [x] Events: the header's events button (live/soon dot), RSVP, guest list, add to calendar (.ics share); schedule, edit, cancel, delete with the phone's date and time pickers
 - [x] Unread marker line and "jump to unread" (the web's "New" line and unread bar)
 - [x] Profiles: a sheet from any avatar, name or member (banner, status, about, Steam game, mutual friends, roles, profile colour); Message, friend and block from it
 - [ ] Name fonts (people's own fonts on their names)

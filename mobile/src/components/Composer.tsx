@@ -9,6 +9,7 @@ import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { useOutgoingUploads } from "@/state/outgoing";
 import { nativeUploadSource, type PickedFile } from "@/platform/uploads";
 import { showToast } from "@/platform/toast";
+import { can } from "@chatter/core/permissions";
 import { AttachSheet, MAX_ATTACHMENTS } from "./AttachSheet";
 import { EmojiPickerSheet } from "./EmojiPickerSheet";
 import { isCustomEmojiUrl } from "@chatter/core/emojiCatalog";
@@ -279,6 +280,7 @@ export function Composer({
         open={attaching}
         onClose={() => setAttaching(false)}
         room={MAX_ATTACHMENTS - staged.length}
+        poll={!threadEventId && can(state, "send_messages")}
         onPicked={(files) => setStaged((s) => [...s, ...files].slice(0, MAX_ATTACHMENTS))}
       />
     </View>

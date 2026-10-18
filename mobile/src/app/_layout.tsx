@@ -46,6 +46,9 @@ function Root() {
             <Stack.Screen name="profile" options={{ animation: "slide_from_right" }} />
             <Stack.Screen name="friends" options={{ animation: "slide_from_right" }} />
             <Stack.Screen name="people" options={{ animation: "slide_from_bottom" }} />
+            <Stack.Screen name="poll" options={{ animation: "slide_from_bottom" }} />
+            <Stack.Screen name="events" options={{ animation: "slide_from_right" }} />
+            <Stack.Screen name="event-edit" options={{ animation: "slide_from_bottom" }} />
           </Stack.Protected>
           <Stack.Protected guard={!signedIn}>
             <Stack.Screen name="sign-in" />

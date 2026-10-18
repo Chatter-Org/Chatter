@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AtSign, Bell, BellOff, Menu, Pin, Search, UserPlus, Users, WifiOff, type LucideProps } from "lucide-react-native";
+import { AtSign, Bell, BellOff, CalendarDays, Menu, Pin, Search, UserPlus, Users, WifiOff, type LucideProps } from "lucide-react-native";
 import { resolveNotificationLevel } from "@chatter/core/notifications";
+import { phaseOf } from "@chatter/core/eventTime";
 import { NotificationSheet } from "./NotificationSheet";
 import type { ComponentType } from "react";
 import { displayUserId } from "@chatter/core/utils";
@@ -19,8 +20,8 @@ import { UI_META } from "@/ui/roles";
  * it), the members. Below it, while the socket is down, the web's
  * "Connection lost" bar.
  *
- * Under it, the web's second row: notifications, pins, mentions, search, and
- * in a DM, adding people.
+ * Under it, the web's second row: notifications, events, pins, mentions,
+ * search, and in a DM, adding people.
  * (Events join it when they arrive here.)
  */
 export function ChatHeader() {
@@ -100,10 +101,27 @@ function ToolRow() {
   const isDm = !!state.roomInfoMap[roomId]?.is_direct;
   const channelId = state.currentChannelId ?? undefined;
   const muted = resolveNotificationLevel(state.notificationSettings, roomId, channelId) === "none";
+  // Green while something is on, primary for one starting soon (the web's).
+  let live = 0;
+  let soon = 0;
+  for (const event of state.roomEvents) {
+    if (event.cancelled) continue;
+    const phase = phaseOf(event, Date.now());
+    if (phase === "live") live++;
+    else if (phase === "soon") soon++;
+  }
   return (
     <View className="flex-row items-center justify-end gap-1 border-b border-border px-1 py-0.5">
       <Tool icon={muted ? BellOff : Bell} label="Notification settings" onPress={() => setBell(true)} />
-      <Tool icon={Pin} label="Pinned messages" dot={state.pinnedMessages.length > 0} onPress={() => router.push({ pathname: "/panel", params: { mode: "pins" } })} />
+      {!isDm ? (
+        <Tool
+          icon={CalendarDays}
+          label={live > 0 ? `${live} event${live === 1 ? "" : "s"} happening now` : "Events"}
+          dot={live > 0 ? "bg-success" : soon > 0 ? "bg-primary" : undefined}
+          onPress={() => router.push("/events")}
+        />
+      ) : null}
+      <Tool icon={Pin} label="Pinned messages" dot={state.pinnedMessages.length > 0 ? "bg-primary" : undefined} onPress={() => router.push({ pathname: "/panel", params: { mode: "pins" } })} />
       {!isDm ? <Tool icon={AtSign} label="Mentions" onPress={() => router.push({ pathname: "/panel", params: { mode: "mentions" } })} /> : null}
       <Tool icon={Search} label="Search" onPress={() => router.push({ pathname: "/panel", params: { mode: "search" } })} />
       {isDm ? <Tool icon={UserPlus} label="Add people" onPress={() => router.push({ pathname: "/people", params: { mode: "add" } })} /> : null}
@@ -112,11 +130,11 @@ function ToolRow() {
   );
 }
 
-function Tool({ icon, label, dot, onPress }: { icon: ComponentType<LucideProps>; label: string; dot?: boolean; onPress(): void }) {
+function Tool({ icon, label, dot, onPress }: { icon: ComponentType<LucideProps>; label: string; dot?: string; onPress(): void }) {
   return (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} className="size-9 items-center justify-center rounded-md active:bg-accent">
       <Icon as={icon} size={17} tone="foreground" />
-      {dot ? <View className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" /> : null}
+      {dot ? <View className={cn("absolute right-1 top-1 h-1.5 w-1.5 rounded-full", dot)} /> : null}
     </Pressable>
   );
 }

@@ -1,6 +1,6 @@
 import { memo, useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
-import { GestureDetector, useCompetingGestures, useLongPressGesture, usePanGesture, useTapGesture } from "react-native-gesture-handler";
+import { GestureDetector, useCompetingGestures, useLongPressGesture, usePanGesture } from "react-native-gesture-handler";
 import Animated, { interpolate, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import * as Haptics from "expo-haptics";
@@ -9,6 +9,8 @@ import { EyeOff, MessagesSquare, MoreHorizontal, Reply } from "lucide-react-nati
 import type { MatrixMessage } from "@chatter/core/api";
 import type { FormatOptions } from "@chatter/core/messageFormat";
 import { extractMedia, isDeletedMessage } from "@chatter/core/messageFormat";
+import { Tap } from "./Tap";
+import { PollCard, PollResultsCard } from "./PollCard";
 import { useShowProfile } from "./ProfileSheet";
 import { Avatar } from "./Avatar";
 import { BODY_TEXT, MessageBody } from "./MessageBody";
@@ -203,6 +205,10 @@ function RowContent({
         {!grouped ? <View className="h-0.5" /> : null}
         {deleted ? (
           <T className={cn(BODY_TEXT, "italic text-muted-foreground opacity-60")}>message deleted</T>
+        ) : message.content.msgtype === "m.poll" ? (
+          <PollCard message={message} />
+        ) : message.content.msgtype === "m.poll_results" ? (
+          <PollResultsCard message={message} />
         ) : message.content.spoiler ? (
           <SpoilerBody body={body} options={formatOptions} edited={message.edited} />
         ) : (
@@ -249,44 +255,6 @@ function RowContent({
         <Icon as={MoreHorizontal} size={17} />
       </Tap>
     </View>
-  );
-}
-
-/**
- * Something tappable inside a message. The row's own gestures (swipe to
- * reply, hold for actions) take the touch before a React Native Pressable
- * would see it, so a control here is a tap gesture of its own, which wins
- * over them the moment the finger lifts without moving.
- */
-function Tap({ onPress, label, className, children }: { onPress(): void; label: string; className?: string; children: ReactNode }) {
-  const [pressed, setPressed] = useState(false);
-  const tap = useTapGesture({
-    onBegin: () => {
-      "worklet";
-      scheduleOnRN(setPressed, true);
-    },
-    onActivate: () => {
-      "worklet";
-      scheduleOnRN(onPress);
-    },
-    onFinalize: () => {
-      "worklet";
-      scheduleOnRN(setPressed, false);
-    },
-  });
-  return (
-    <GestureDetector gesture={tap}>
-      <View
-        accessible
-        accessibilityRole="button"
-        accessibilityLabel={label}
-        accessibilityActions={[{ name: "activate" }]}
-        onAccessibilityAction={onPress}
-        className={cn(className, pressed && "bg-accent")}
-      >
-        {children}
-      </View>
-    </GestureDetector>
   );
 }
 
