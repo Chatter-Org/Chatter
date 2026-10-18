@@ -122,8 +122,8 @@ export function PanelLayout({ left, right, children }: { left: ReactNode; right:
   if (leftDocked) {
     return (
       <PanelsContext.Provider value={value}>
-        {/* The web's desktop arrangement: cards on the page colour. */}
-        <View className="flex-1 flex-row bg-muted">
+        {/* Cards on the conversation's own background, so the panels and the chat read as one surface. */}
+        <View className="flex-1 flex-row bg-background">
           <View style={{ width: LEFT_PANEL_WIDTH }}>{left}</View>
           <View className="flex-1 overflow-hidden">{children}</View>
           {rightDocked ? (
@@ -243,7 +243,7 @@ function PushLayout({
   }));
 
   return (
-    <View className="flex-1 bg-muted">
+    <View className="flex-1 bg-background">
       <Animated.View style={[styles.panel, { left: 0, width: leftWidth }, leftStyle]} pointerEvents={open === "left" ? "auto" : "none"}>
         {left}
       </Animated.View>

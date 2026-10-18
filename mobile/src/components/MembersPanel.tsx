@@ -12,7 +12,7 @@ import { UI_HEADING } from "@/ui/roles";
 /**
  * The room's members — the web's MembersPanel: a "MEMBERS n" heading, then
  * owners, moderators, members and the offline, each a section; a card on the
- * page colour, as the drawer on the left.
+ * chat's background, as the drawer on the left.
  */
 export function MembersPanel() {
   const state = useChatter();
@@ -37,8 +37,8 @@ export function MembersPanel() {
   }, [state.roomMembers, state.userPresence]);
 
   return (
-    <View className="flex-1 bg-muted px-2" style={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 8 }}>
-      <View className="flex-1 overflow-hidden rounded-lg border border-border bg-background">
+    <View className="flex-1 bg-background px-2" style={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 8 }}>
+      <View className="flex-1 overflow-hidden rounded-lg border border-border bg-sidebar">
         <View className="flex-row items-center gap-2 border-b border-border px-3 py-3">
           <T className={UI_HEADING}>Members</T>
           <View className="rounded-full bg-secondary px-2 py-0.5">

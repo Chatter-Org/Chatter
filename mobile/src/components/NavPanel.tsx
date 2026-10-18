@@ -38,7 +38,8 @@ import { UI_HEADING } from "@/ui/roles";
 /**
  * The left panel, built from the web's own parts: the sidebar in its rail
  * form (AppSidebar's collapsed mode) and, beside it, the server's channel
- * list (ChannelList) — two cards on the page colour, as on the desktop. A
+ * list (ChannelList) — two cards, as on the desktop, here on the chat's own
+ * background so the drawer and the conversation read as one surface. A
  * phone has room for the rail but not the full sidebar beside the channels,
  * which is the choice the web makes when its sidebar is collapsed.
  */
@@ -93,7 +94,7 @@ export function NavPanel({ rail, onRail }: { rail: RailSelection; onRail(selecti
 
   return (
     <View
-      className="flex-1 flex-row gap-2 bg-muted px-2"
+      className="flex-1 flex-row gap-2 bg-background px-2"
       style={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 8 }}
     >
       {/* The sidebar, as its rail (AppSidebar collapsed). */}
