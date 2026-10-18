@@ -7,12 +7,12 @@ import {
   playSound,
   type SoundPack,
 } from "@/lib/sounds";
-import { fetchIceServers, getWebRTCConfig, VOICE_SUBSCRIBE_RETRY_MS, VOICE_SUBSCRIBE_MAX_RETRIES, VOICE_SUBSCRIBE_MAX_BACKOFF_MS, VOICE_PUBLISH_INITIAL_RETRY_MS, VOICE_PUBLISH_MAX_BACKOFF_MS, VOICE_SLOT_COUNT, VOICE_BITRATE_DEFAULT_BPS, VOICE_CONNECT_TIMEOUT_MS, VOICE_DISCONNECTED_GRACE_MS, canSignal, clampVoiceBitrate, mungeVoiceAudioSdp, applyVoiceSenderBitrate, holdCandidatesUntilAnswer, isAwaitingAnswer, addRemoteCandidate, releaseHeldCandidates } from "@/lib/webrtc";
+import { fetchIceServers, getWebRTCConfig, VOICE_SUBSCRIBE_RETRY_MS, VOICE_SUBSCRIBE_MAX_RETRIES, VOICE_SUBSCRIBE_MAX_BACKOFF_MS, VOICE_PUBLISH_INITIAL_RETRY_MS, VOICE_PUBLISH_MAX_BACKOFF_MS, VOICE_SLOT_COUNT, VOICE_BITRATE_DEFAULT_BPS, VOICE_CONNECT_TIMEOUT_MS, VOICE_DISCONNECTED_GRACE_MS, canSignal, candidatesAfterOffer, clampVoiceBitrate, mungeVoiceAudioSdp, applyVoiceSenderBitrate, holdCandidatesUntilAnswer, isAwaitingAnswer, addRemoteCandidate, releaseHeldCandidates } from "@/lib/webrtc";
 import { toast } from "sonner";
 import { desktop, hasDesktopFeature } from "@/lib/desktop/bridge";
 import type { VoiceRestoreState } from "@/lib/voiceRejoin";
 import { toWorld } from "@/lib/spatialAudio";
-import { browserVoiceBackend, selectVoiceBackend, type LocalMic, type MicOptions, type VoiceMediaBackend, type VoicePeer } from "@/lib/media";
+import { browserVoiceBackend, selectVoiceBackend, type LocalMic, type MicOptions, type VoiceIceCandidate, type VoiceMediaBackend, type VoicePeer } from "@/lib/media";
 
 const VOICE_PUBLISH_MAX_RETRIES = 5;
 const RECONNECTING_TOAST = "voice-reconnecting";
@@ -221,6 +221,25 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
     }
   };
 
+  /** Send this peer's own candidates, none before its offer (see
+   *  `candidatesAfterOffer`). Returns the function to call once the offer is
+   *  on its way. An early candidate on a rejoin used to land on the
+   *  connection being replaced, whose refusal then tore down the new one. */
+  const trickleAfterOffer = (pc: VoicePeer, type: "voice_webrtc_publish_candidate" | "voice_webrtc_subscribe_candidate") => {
+    const trickle = candidatesAfterOffer<VoiceIceCandidate>((c) => {
+      if (!canSignal(wsRef)) return;
+      wsRef.current!.send(JSON.stringify({
+        type,
+        room_id: voiceRoomIdRef.current || currentRoomRef.current,
+        candidate: { candidate: c.candidate, sdpMid: c.sdpMid, sdpMLineIndex: c.sdpMLineIndex, usernameFragment: c.usernameFragment },
+      }));
+    });
+    pc.onicecandidate = (ev) => {
+      if (ev.candidate) trickle.add(ev.candidate);
+    };
+    return trickle.offerSent;
+  };
+
   // ─── Connection recovery ──────────────────────────────────────────────────
   // Both connections recover the same way. A connection that came up and then
   // broke is retried for as long as the call lasts, backing off to a ceiling:
@@ -289,14 +308,7 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
     micRef.current.attachTo(pc);
     const current = () => voicePublisherPcRef.current;
 
-    pc.onicecandidate = (ev) => {
-      if (!ev.candidate || !canSignal(wsRef)) return;
-      wsRef.current!.send(JSON.stringify({
-        type: "voice_webrtc_publish_candidate",
-        room_id: voiceRoomIdRef.current || currentRoomRef.current,
-        candidate: { candidate: ev.candidate.candidate, sdpMid: ev.candidate.sdpMid, sdpMLineIndex: ev.candidate.sdpMLineIndex, usernameFragment: ev.candidate.usernameFragment },
-      }));
-    };
+    const offerSent = trickleAfterOffer(pc, "voice_webrtc_publish_candidate");
 
     pc.onconnectionstatechange = () => {
       if (pc !== voicePublisherPcRef.current) return;
@@ -333,6 +345,7 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
         channel_id: voiceChannelIdRef.current || undefined,
         sdp: offer.sdp,
       }));
+      offerSent();
       watchConnection(pc, current, failPublisher);
     } catch (err) {
       console.warn("[voice] could not create publisher offer", err);
@@ -381,14 +394,7 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
     holdCandidatesUntilAnswer(pc);
     const current = () => voiceSubscriberPcRef.current;
 
-    pc.onicecandidate = (ev) => {
-      if (!ev.candidate || !canSignal(wsRef)) return;
-      wsRef.current!.send(JSON.stringify({
-        type: "voice_webrtc_subscribe_candidate",
-        room_id: voiceRoomIdRef.current || currentRoomRef.current,
-        candidate: { candidate: ev.candidate.candidate, sdpMid: ev.candidate.sdpMid, sdpMLineIndex: ev.candidate.sdpMLineIndex, usernameFragment: ev.candidate.usernameFragment },
-      }));
-    };
+    const offerSent = trickleAfterOffer(pc, "voice_webrtc_subscribe_candidate");
 
     pc.ontrack = (ev) => {
       if (pc !== voiceSubscriberPcRef.current) return;
@@ -436,6 +442,7 @@ export function useWebRTCVoice({ cleanupScreenRef }: UseWebRTCVoiceOptions) {
         room_id: voiceRoomIdRef.current || currentRoomRef.current,
         sdp: offer.sdp,
       }));
+      offerSent();
       watchConnection(pc, current, failSubscriber);
     } catch (err) {
       console.warn("[voice] could not create subscription offer", err);

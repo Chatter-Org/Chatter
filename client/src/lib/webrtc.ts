@@ -50,6 +50,34 @@ export const VOICE_CONNECT_TIMEOUT_MS = 15_000;
 // silence in a call nobody can tell is broken.
 export const VOICE_DISCONNECTED_GRACE_MS = 4_000;
 
+// ─── Local ICE candidates ───────────────────────────────────────────────────
+// A peer's own candidates must not reach the server ahead of its offer. They
+// can: the voice publisher waits on its bitrate before offering, screen and
+// webcam publishers tune their senders, and the desktop app's engine reports
+// candidates before setLocalDescription resolves. The server has nothing to add
+// them to yet and drops them — or, on a rejoin, adds them to the connection
+// being replaced — so whether a connection came up depended on timing.
+
+/** Hold candidates passed to `add` until `offerSent`, then send them in order
+ *  and everything after straight through. */
+export function candidatesAfterOffer<C>(send: (candidate: C) => void): {
+  add: (candidate: C) => void;
+  offerSent: () => void;
+} {
+  let sent = false;
+  const early: C[] = [];
+  return {
+    add: (candidate) => {
+      if (sent) send(candidate);
+      else early.push(candidate);
+    },
+    offerSent: () => {
+      sent = true;
+      early.splice(0).forEach(send);
+    },
+  };
+}
+
 // ─── Remote ICE candidates ──────────────────────────────────────────────────
 // The SFU trickles its candidates as it gathers them, and they can overtake
 // the answer on the socket. A candidate added before the remote description

@@ -1250,6 +1250,9 @@ pub(crate) struct VoiceSlot {
 pub(crate) struct VoiceSlotAssignment {
     pub(crate) speaker_user_id: String,
     pub(crate) forward_task: JoinHandle<()>,
+    /// Shared with the forward task, so a task that stops on its own can tell
+    /// whether the slot is still its to give back.
+    pub(crate) token: Arc<()>,
 }
 
 /// A slot keeps one SSRC for the life of the connection while the speaker
