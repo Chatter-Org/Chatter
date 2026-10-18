@@ -27,17 +27,6 @@ import {
   apiCreateRoom,
   apiJoinRoom,
   apiLeaveRoom,
-  apiCreateEvent,
-  apiUpdateEvent,
-  apiDeleteEvent,
-  apiSetRsvp,
-  apiCreatePoll,
-  apiVotePoll,
-  apiGetPoll,
-  apiClosePoll,
-  type EventDraft,
-  type PollDraft,
-  type RsvpStatus,
   apiGetAllRooms,
   apiUpdateTopic,
   apiUpdateRoomSettings,
@@ -665,101 +654,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const loadEventsRef = useRef(loadEvents);
   useEffect(() => { loadEventsRef.current = loadEvents; }, [loadEvents]);
 
-  const createEvent = useCallback(async (draft: EventDraft) => {
-    const roomId = stateRef.current.currentRoomId;
-    if (!roomId) return;
-    const { event } = await apiCreateEvent(roomId, draft);
-    // The broadcast will arrive too, but it cannot carry this client's own
-    // RSVP — and creating an event answers "going" for you.
-    dispatch({ type: "UPSERT_ROOM_EVENT", payload: event });
-  }, []);
+  const createEvent = shared.createEvent;
 
-  const updateEvent = useCallback(
-    async (eventId: string, patch: Partial<EventDraft> & { cancelled?: boolean }) => {
-      const roomId = stateRef.current.currentRoomId;
-      if (!roomId) return;
-      await apiUpdateEvent(roomId, eventId, patch);
-    },
-    [],
-  );
+  const updateEvent = shared.updateEvent;
 
-  const deleteEvent = useCallback(async (eventId: string) => {
-    const roomId = stateRef.current.currentRoomId;
-    if (!roomId) return;
-    await apiDeleteEvent(roomId, eventId);
-    // Deleting is the one case the broadcast covers fully, but dropping it
-    // here too means the card goes as the button is released.
-    dispatch({ type: "REMOVE_ROOM_EVENT", payload: eventId });
-  }, []);
+  const deleteEvent = shared.deleteEvent;
 
-  const setRsvp = useCallback(async (eventId: string, status: RsvpStatus | "") => {
-    const roomId = stateRef.current.currentRoomId;
-    if (!roomId) return;
-    const previous = stateRef.current.roomEvents.find((e) => e.event_id === eventId)?.my_rsvp ?? "";
-    dispatch({ type: "SET_MY_RSVP", payload: { eventId, status } });
-    try {
-      await apiSetRsvp(roomId, eventId, status);
-    } catch (err) {
-      dispatch({ type: "SET_MY_RSVP", payload: { eventId, status: previous } });
-      throw err;
-    }
-  }, []);
+  const setRsvp = shared.setRsvp;
 
-  const createPoll = useCallback(async (draft: PollDraft) => {
-    const roomId = stateRef.current.currentRoomId;
-    if (!roomId) return;
-    // The channel is read here rather than in the dialog: it is the one the
-    // person is looking at, and a poll that quietly landed in the room's
-    // default channel would be a poll asked of the wrong people.
-    draft = { ...draft, channel_id: stateRef.current.currentChannelId ?? undefined };
-    // The poll's own message arrives on the socket and carries its state, so
-    // nothing is inserted here — this is the one path where the broadcast is
-    // complete, because a poll nobody has voted in has no per-viewer half.
-    await apiCreatePoll(roomId, draft);
-  }, []);
+  const createPoll = shared.createPoll;
 
-  const votePoll = useCallback(async (pollId: string, options: number[]) => {
-    const roomId = stateRef.current.currentRoomId;
-    if (!roomId) return;
-    const previous = stateRef.current.polls[pollId];
-    const me = stateRef.current.userId;
-    // Move the bars as the button is released rather than a round trip later.
-    // The broadcast that follows replaces this with the server's tally, and a
-    // refusal puts back exactly what was there.
-    if (previous && me) {
-      dispatch({
-        type: "UPDATE_POLL",
-        payload: {
-          ...previous,
-          voters: previous.voters.map((voters, index) => {
-            const without = voters.filter((id) => id !== me);
-            return options.includes(index) ? [...without, me] : without;
-          }),
-        },
-      });
-    }
-    try {
-      const { poll } = await apiVotePoll(roomId, pollId, options);
-      dispatch({ type: "UPDATE_POLL", payload: poll });
-    } catch (err) {
-      if (previous) dispatch({ type: "UPDATE_POLL", payload: previous });
-      throw err;
-    }
-  }, []);
+  const votePoll = shared.votePoll;
 
-  const closePoll = useCallback(async (pollId: string) => {
-    const roomId = stateRef.current.currentRoomId;
-    if (!roomId) return;
-    const { poll } = await apiClosePoll(roomId, pollId);
-    dispatch({ type: "UPDATE_POLL", payload: poll });
-  }, []);
+  const closePoll = shared.closePoll;
 
-  const loadPoll = useCallback(async (pollId: string) => {
-    const roomId = stateRef.current.currentRoomId;
-    if (!roomId) return;
-    const { poll } = await apiGetPoll(roomId, pollId);
-    dispatch({ type: "UPDATE_POLL", payload: poll });
-  }, []);
+  const loadPoll = shared.loadPoll;
 
   const loadPins = shared.loadPins;
 
