@@ -63,7 +63,7 @@ import { loadLastChannels, pickLandingChannel } from "../lastChannel";
 import { channelNotificationTag, settingsKey, type NotificationLevel, type NotificationSettings } from "../notifications";
 import { host } from "../platform";
 import type { ProfileTheme } from "../profileTheme";
-import { displayUserId } from "../utils";
+import { displayUserId, userIdFromInput } from "../utils";
 import {
   resumePointsMap,
   THREAD_ACTIVE_WINDOW_MS,
@@ -1049,7 +1049,9 @@ export function createStoreActions(ctx: StoreContext) {
     }
   };
 
-  const sendFriendRequest = async (userId: string) => {
+  /** Takes an id, or a name as someone typed it. */
+  const sendFriendRequest = async (who: string) => {
+    const userId = userIdFromInput(who, getState().userId);
     const result = await apiSendFriendRequest(userId);
     if (result.auto_accepted) {
       dispatch({ type: "ADD_FRIEND", payload: userId });
