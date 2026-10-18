@@ -522,6 +522,9 @@ export function createStoreActions(ctx: StoreContext) {
    *  message needs the room's channels and timeline, which exist only once
    *  selecting the room has finished, and the caller is a row on another page
    *  that this very switch is about to unmount. */
+  /** The timeline has landed on a jump's message (or given up on it). */
+  const clearPendingJump = () => dispatch({ type: "SET_PENDING_JUMP", payload: null });
+
   const openMessage = async (target: MessageTarget) => {
     dispatch({ type: "SET_PENDING_JUMP", payload: target });
     // Already here: nothing to load, and the timeline acts on the target as
@@ -732,6 +735,7 @@ export function createStoreActions(ctx: StoreContext) {
     selectRoom,
     loadOlderMessages,
     openMessage,
+    clearPendingJump,
     loadMessagesAround,
     selectChannel,
     sendMessage,

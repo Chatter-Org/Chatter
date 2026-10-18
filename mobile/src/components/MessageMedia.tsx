@@ -11,6 +11,7 @@ import { serverImage } from "@/ui/media";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { ImageViewer } from "./ImageViewer";
+import { ForumLinkCard, LinkPreviewCard, MessageLinkCard } from "./LinkCards";
 import { saveServerFile } from "@/platform/files";
 
 /** The session header for media the server may only show to members. */
@@ -36,7 +37,15 @@ function fileName(url: string): string {
 export const MessageMedia = memo(function MessageMedia({ media, spoiler }: { media: BodyMedia; spoiler?: boolean }) {
   const [viewing, setViewing] = useState<number | null>(null);
   const hasAny =
-    media.images.length + media.videos.length + media.audios.length + media.files.length + media.youtubeIds.length > 0;
+    media.images.length +
+      media.videos.length +
+      media.audios.length +
+      media.files.length +
+      media.youtubeIds.length +
+      media.links.length +
+      media.messageLinks.length +
+      media.forumLinks.length >
+    0;
   if (!hasAny) return null;
 
   return (
@@ -56,6 +65,14 @@ export const MessageMedia = memo(function MessageMedia({ media, spoiler }: { med
       {media.youtubeIds.map((id) => (
         <YouTubeCard key={id} id={id} />
       ))}
+      {media.messageLinks.map((url) => (
+        <MessageLinkCard key={url} url={url} />
+      ))}
+      {media.forumLinks.map((url) => (
+        <ForumLinkCard key={url} url={url} />
+      ))}
+      {/* One page preview, for the first link, as on the web. */}
+      {media.links.length > 0 ? <LinkPreviewCard url={media.links[0]} /> : null}
       <ImageViewer urls={media.images} index={viewing} onClose={() => setViewing(null)} />
     </View>
   );

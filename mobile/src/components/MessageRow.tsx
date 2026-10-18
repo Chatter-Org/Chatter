@@ -34,6 +34,8 @@ export interface MessageRowProps {
   reactions?: Record<string, string[]>;
   myUserId: string | null;
   mentionsMe: boolean;
+  /** Just jumped to: lit for a moment. */
+  highlighted?: boolean;
   formatOptions: FormatOptions;
   onReply(message: MatrixMessage): void;
   onLongPress(message: MatrixMessage): void;
@@ -118,7 +120,7 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
         <Animated.View style={[rowStyle, pressStyle]}>
           {/* MessageItem's row at phone width: msg-row-mobile / -grouped,
               and a message that names you tinted (no border, as on the web). */}
-          <View className={cn("mx-1 rounded-md px-2", grouped ? "-mt-0.5 py-1" : "pb-1 pt-2", props.mentionsMe && "bg-mention/10")}>
+          <View className={cn("mx-1 rounded-md px-2", grouped ? "-mt-0.5 py-1" : "pb-1 pt-2", props.mentionsMe && "bg-mention/10", props.highlighted && "bg-accent")}>
             <RowContent {...props} />
           </View>
         </Animated.View>

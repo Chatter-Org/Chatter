@@ -45,6 +45,7 @@ export function ChatView() {
   const listRef = useRef<FlashListRef<Row>>(null);
   const [replyTo, setReplyTo] = useState<MatrixMessage | null>(null);
   const [acting, setActing] = useState<MatrixMessage | null>(null);
+  const [highlighted, setHighlighted] = useState<string | null>(null);
   const [atBottom, setAtBottom] = useState(true);
 
   const roomId = state.currentRoomId;
@@ -136,6 +137,7 @@ export function ChatView() {
           reactions={state.messageReactions[m.event_id]}
           myUserId={state.userId}
           mentionsMe={mentionsMe}
+          highlighted={m.event_id === highlighted}
           formatOptions={formatOptions}
           onReply={setReplyTo}
           onLongPress={setActing}
@@ -143,8 +145,41 @@ export function ChatView() {
         />
       );
     },
-    [state, roomInfo, formatOptions, nameOf, myName, actions.addReaction],
+    [state, roomInfo, formatOptions, nameOf, myName, actions.addReaction, highlighted],
   );
+
+  // A jump to a message — a message link opened, from here or another room
+  // (openMessage). Go to its channel, load around it if it is not here, then
+  // scroll to it and light it up for a moment, as the web does.
+  const jump = state.pendingJump;
+  const loadedAround = useRef<string | null>(null);
+  useEffect(() => {
+    if (!jump || jump.roomId !== roomId) return;
+    if (jump.channelId && jump.channelId !== channelId) {
+      void actions.selectChannel(jump.channelId).catch(() => actions.clearPendingJump());
+      return;
+    }
+    // Wait for this channel's own messages, not the last one's still on screen.
+    const last = state.messages[state.messages.length - 1];
+    if (!last || (jump.channelId && last.channel_id && last.channel_id !== jump.channelId)) return;
+    const index = rows.findIndex((r) => r.kind === "message" && r.message.event_id === jump.eventId);
+    if (index >= 0) {
+      requestAnimationFrame(() => listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.4 }));
+      setHighlighted(jump.eventId);
+      setTimeout(() => setHighlighted((h) => (h === jump.eventId ? null : h)), 1500);
+      loadedAround.current = null;
+      actions.clearPendingJump();
+      return;
+    }
+    if (loadedAround.current !== jump.eventId) {
+      loadedAround.current = jump.eventId;
+      void actions.loadMessagesAround(jump.roomId, jump.ts).catch(() => actions.clearPendingJump());
+      return;
+    }
+    // Loaded around it and still not here: gone, or not ours to see.
+    loadedAround.current = null;
+    actions.clearPendingJump();
+  }, [jump, roomId, channelId, rows, state.messages, actions]);
 
   if (!roomId) {
     return (
