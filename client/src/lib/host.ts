@@ -13,7 +13,14 @@ import {
   closeReadNotifications,
   showDesktopNotification,
 } from "@/lib/notifications";
-import { deferArrivalSound, playSound, playSoundUrl, prewarmSounds } from "@/lib/sounds";
+import {
+  deferArrivalSound,
+  dropDeferredArrivalSound,
+  playDeferredArrivalSound,
+  playSound,
+  playSoundUrl,
+  prewarmSounds,
+} from "@/lib/sounds";
 
 configureHost({
   origin: () => window.location.origin,
@@ -27,6 +34,8 @@ configureHost({
   playSound,
   playSoundUrl,
   deferArrivalSound,
+  playDeferredArrivalSound,
+  dropDeferredArrivalSound,
   prewarmSounds,
   adoptGifFavorites: (payload) => adoptGifFavorites(payload as GifFavoritesPayload),
   saveFile: (blob, filename) => {

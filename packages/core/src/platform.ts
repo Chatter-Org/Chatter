@@ -48,6 +48,10 @@ export interface Host {
   playSoundUrl(url: string, gain?: number): void;
   /** Hold an arrival sound until the voice connection it announces is up. */
   deferArrivalSound(sound: { url: string; gain: number } | null): void;
+  /** Play the held arrival sound, once (the voice connection came up). */
+  playDeferredArrivalSound(): void;
+  /** Forget the held arrival sound (the call it announced is not happening). */
+  dropDeferredArrivalSound(): void;
   /** Warm anything a first sound would otherwise wait on. */
   prewarmSounds(): void;
 
@@ -70,6 +74,8 @@ const inert: Host = {
   playSound: () => {},
   playSoundUrl: () => {},
   deferArrivalSound: () => {},
+  playDeferredArrivalSound: () => {},
+  dropDeferredArrivalSound: () => {},
   prewarmSounds: () => {},
   adoptGifFavorites: () => {},
   saveFile: () => {},

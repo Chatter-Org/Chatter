@@ -1,4 +1,8 @@
-import { useSyncExternalStore } from "react";
+/**
+ * Voice and audio settings: one copy for the whole app, remembered in Web
+ * Storage. Shared by the web client and the mobile app; each wraps
+ * `subscribeVoiceSettings` in its own hook.
+ */
 
 /** "rnnoise" is the desktop app's ML noise suppression (native voice only). */
 export type NoiseSuppressionMode = "none" | "browser" | "rnnoise";
@@ -41,28 +45,28 @@ function read(): VoiceSettings {
 // One copy for the whole page. Each hook used to keep its own, so a change in
 // the settings dialog never reached the call already running: the device,
 // volumes and gain were saved and then ignored until the next page load.
-let current: VoiceSettings = typeof window === "undefined" ? DEFAULT_SETTINGS : read();
+let current: VoiceSettings = typeof localStorage === "undefined" ? DEFAULT_SETTINGS : read();
 const listeners = new Set<() => void>();
 
 function emit(): void {
   listeners.forEach((l) => l());
 }
 
-// Another tab changing them is the same person changing them.
-function onStorage(e: StorageEvent): void {
-  if (e.key !== STORAGE_KEY) return;
+/** Subscribe to changes; returns the unsubscribe. */
+export function subscribeVoiceSettings(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** Read the stored settings again — another tab (or window) changed them. */
+export function reloadVoiceSettings(): void {
   current = read();
   emit();
 }
 
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  if (listeners.size === 1) window.addEventListener("storage", onStorage);
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0) window.removeEventListener("storage", onStorage);
-  };
-}
+export const DEFAULT_VOICE_SETTINGS = DEFAULT_SETTINGS;
 
 export function getVoiceSettings(): VoiceSettings {
   return current;
@@ -82,9 +86,4 @@ export function updateVoiceSettings(updates: Partial<VoiceSettings>): void {
 export function micGain(settings: VoiceSettings): number {
   const manual = settings.autoGainControl ? 1 : Math.pow(10, settings.inputGainDb / 20);
   return (settings.inputVolume / 100) * manual;
-}
-
-export function useVoiceSettings() {
-  const settings = useSyncExternalStore(subscribe, getVoiceSettings, () => DEFAULT_SETTINGS);
-  return { settings, updateSettings: updateVoiceSettings };
 }
