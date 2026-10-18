@@ -42,8 +42,8 @@ FCM push notifications are deliberately **last**: everything else first.
 - [ ] Bot rich embeds
 - [x] Emoji picker (standard + room custom emoji), reaction picker
 - [x] Mention autocomplete (@user, @role) and :emoji: shortcodes in the composer (`composerTokens` in core)
-- [ ] Threads (open, reply, previews under channels)
-- [ ] Pins, search, mentions inbox
+- [x] Threads (open, reply, previews under channels)
+- [x] Pins, search, mentions inbox (the web's MessagePanel as a screen); per-channel notification level from the header
 - [ ] Polls (vote, results) and events (RSVP)
 - [x] Unread marker line and "jump to unread" (the web's "New" line and unread bar)
 - [ ] Profiles: open a member, DM them, roles, profile themes and name fonts
@@ -73,7 +73,8 @@ FCM push notifications are deliberately **last**: everything else first.
 ### Design (match the web)
 - [x] Shared control recipes (`packages/core/src/ui/recipes.ts`) used by the web's shadcn files and `src/ui/controls.tsx`; the web's 17.6px rem
 - [x] Drawer (rail + channel list), header, messages, composer, members, call bar, sheets, settings, sign-in rebuilt from the web components
-- [ ] Header tool row (notifications, events, pins, mentions, search) as those features land
+- [x] Header tool row: notifications, pins, mentions, search
+- [ ] Events in the tool row (with polls/events)
 - [ ] GIF picker and the composer's GIF button
 
 ### Adaptive layout
