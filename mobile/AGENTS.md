@@ -20,7 +20,20 @@ and what is next.
 - **Styling is Uniwind** (Tailwind 4): use the web's classNames (`bg-card`,
   `text-muted-foreground`). Colours come from `src/theme/themes.css`,
   generated from `client/src/index.css` by `npm run port-theme` — never hand
-  edit it. Text goes through `T` (`src/ui/primitives.tsx`) for the font.
+  edit it. Text goes through `T` (`src/ui/primitives.tsx`) for the font; it
+  turns the web's `font-medium`/`font-bold` into the right JetBrains Mono
+  family. Uniwind's rem is the web's 17.6px (`metro.config.js`), so a class
+  is the same size on both.
+- **Look like the web, built like a phone.** A screen here is the web
+  component it corresponds to (`client/src/components/…`), with its
+  classNames copied, adapted only where a phone needs it: a pressed state for
+  hover, 44px targets, a sheet for a dropdown. Read the web component before
+  writing or changing one here. Controls (buttons, badges, inputs, the
+  segmented switch) come from the recipes both apps share in
+  `../packages/core/src/ui/recipes.ts`; the web's `components/ui` files and
+  `src/ui/controls.tsx` here are both built on them, so change the look there.
+  The web's text roles (`ui-heading`, `ui-meta`, `ui-hint`) are in
+  `src/ui/roles.ts`.
 - **Gestures** use react-native-gesture-handler v3's hook API
   (`usePanGesture`, `GestureDetector`). Rightward swipes belong to the panels,
   leftward ones to messages (swipe to reply) unless they start at the edge.

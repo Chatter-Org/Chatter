@@ -39,6 +39,10 @@ const styled = withUniwindConfig(config, {
   cssEntryFile: "./src/global.css",
   extraThemes: themeIds.filter((id) => id !== "light" && id !== "dark"),
   dtsFile: "./src/uniwind-types.d.ts",
+  // The web's root font size (client/src/index.css): 1rem is 17.6px there, so
+  // every Tailwind size is a tenth larger than stock. The same here keeps a
+  // className meaning the same size on both.
+  polyfills: { rem: 17.6 },
 });
 
 // ─── Resolution ──────────────────────────────────────────────────────────────

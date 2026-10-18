@@ -1,16 +1,17 @@
 import type { ComponentProps, ComponentType } from "react";
 import { Text } from "react-native";
 import type { LucideProps } from "lucide-react-native";
-import { cn } from "./cn";
+import { textClasses } from "./cn";
 import { useTheme } from "@/theme/ThemeProvider";
 import type { ThemeToken } from "@/theme/themes.generated";
 
 /**
  * Text in Chatter's face. Every string on screen goes through this, so the
  * font and colour are right by default and a className only says what differs.
+ * Web weights (`font-medium`, `font-bold`) work as on the web; see textClasses.
  */
 export function T({ className, ...props }: ComponentProps<typeof Text>) {
-  return <Text {...props} className={cn("font-mono text-sm text-foreground", className)} />;
+  return <Text {...props} className={textClasses("font-mono text-sm text-foreground", className)} />;
 }
 
 /**
