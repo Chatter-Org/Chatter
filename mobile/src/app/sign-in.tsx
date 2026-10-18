@@ -1,31 +1,60 @@
-import { useRef, useState, type ComponentRef } from "react";
-import { ActivityIndicator, Pressable, TextInput, View } from "react-native";
+import { useEffect, useRef, useState, type ComponentRef } from "react";
+import { Linking, Pressable, Text, TextInput, View, type TextInputProps } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Constants from "expo-constants";
+import { LOGIN_CONNECTION_STEPS } from "@chatter/core/loginScreen";
 import { useChatterActions } from "@/state/ChatterProvider";
 import { currentServer, normalizeServer, setServer } from "@/platform/server";
-import { T } from "@/ui/primitives";
-import { cn } from "@/ui/cn";
-import { useTheme } from "@/theme/ThemeProvider";
+import { CrtBackground, type CrtClearance } from "@/components/CrtBackground";
 
 /**
- * Sign in: server, username and password, then the authenticator code when
- * the account has one. Creating an account and recovering one stay on the
- * web, where the authenticator is set up.
+ * Sign in — the web's LoginScreen: a terminal card over the CRT backdrop,
+ * in its own fixed palette rather than the theme's, as on the web. The phone
+ * adds the server to connect to; creating an account and recovering one open
+ * the web, where the authenticator is set up.
  */
+
+// LoginScreen's palette.
+const C = {
+  title: "rgba(220, 230, 255, 0.95)",
+  text: "rgba(220, 230, 255, 0.85)",
+  dim: "rgba(180, 210, 255, 0.4)",
+  faint: "rgba(180, 210, 255, 0.35)",
+  link: "rgba(180, 210, 255, 0.5)",
+  border: "rgba(180, 210, 255, 0.12)",
+  rule: "rgba(180, 210, 255, 0.1)",
+  caret: "rgba(180, 210, 255, 0.6)",
+  error: "rgba(255, 120, 100, 0.8)",
+  ok: "rgba(120, 230, 160, 0.9)",
+};
+const MONO = "JetBrainsMono_400Regular";
+const MONO_BOLD = "JetBrainsMono_700Bold";
+
 export default function SignIn() {
   const { signIn } = useChatterActions();
   const insets = useSafeAreaInsets();
-  const { colors } = useTheme();
   const [server, setServerText] = useState(currentServer());
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [needsCode, setNeedsCode] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [steps, setSteps] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [help, setHelp] = useState(false);
+  const [card, setCard] = useState<CrtClearance | undefined>();
   const passwordRef = useRef<ComponentRef<typeof TextInput>>(null);
   const codeRef = useRef<ComponentRef<typeof TextInput>>(null);
+
+  // The connection sequence plays while the request is out. It never holds
+  // the reader up: an answer that comes first skips to the end.
+  useEffect(() => {
+    if (!busy) return;
+    setSteps(1);
+    const timers = LOGIN_CONNECTION_STEPS.slice(1, -1).map((s, i) => setTimeout(() => setSteps(i + 2), s.ms));
+    return () => timers.forEach(clearTimeout);
+  }, [busy]);
 
   const submit = async () => {
     if (busy) return;
@@ -38,11 +67,11 @@ export default function SignIn() {
       return;
     }
     if (!username.trim() || !password) {
-      setError("Enter your username and password.");
+      setError("enter your username and password.");
       return;
     }
     if (needsCode && code.trim().length < 6) {
-      setError("Enter the 6-digit code from your authenticator.");
+      setError("enter the 6-digit code from your authenticator.");
       return;
     }
     setBusy(true);
@@ -52,114 +81,286 @@ export default function SignIn() {
       if (result.requiresTotp) {
         setNeedsCode(true);
         setTimeout(() => codeRef.current?.focus(), 50);
+      } else {
+        setSteps(LOGIN_CONNECTION_STEPS.length);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sign-in failed");
+      setError(e instanceof Error ? e.message : "sign-in failed");
     } finally {
       setBusy(false);
     }
   };
 
-  const field = (props: React.ComponentProps<typeof TextInput>, label: string) => (
-    <View className="gap-1.5">
-      <T className="text-[11px] uppercase tracking-widest text-muted-foreground">{label}</T>
+  const openWeb = () => {
+    try {
+      void Linking.openURL(normalizeServer(server));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const subtitle = busy ? "authenticating..." : needsCode ? "enter authenticator code" : "what will you chat about?";
+  const version = Constants.expoConfig?.version ?? "0.1.0";
+
+  return (
+    <View style={{ flex: 1, backgroundColor: "#0a0a0a" }}>
+      <CrtBackground clear={card} />
+      <KeyboardAwareScrollView
+        bottomOffset={130}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 16, paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }}
+      >
+        <View
+          onLayout={(e) => {
+            const { y, height } = e.nativeEvent.layout;
+            setCard({ top: y, bottom: y + height });
+          }}
+          style={{
+            width: "100%",
+            maxWidth: 448,
+            alignSelf: "center",
+            borderRadius: 13.4,
+            borderWidth: 1,
+            borderColor: busy ? `rgba(180, 210, 255, ${0.15 + (steps / LOGIN_CONNECTION_STEPS.length) * 0.45})` : "rgba(180, 210, 255, 0.15)",
+            backgroundColor: "rgba(10, 10, 10, 0.92)",
+            boxShadow: "0 0 20px rgba(180, 210, 255, 0.04)",
+            overflow: "hidden",
+          }}
+        >
+          <View style={{ paddingHorizontal: 26, paddingTop: 26 }}>
+            <Text style={{ fontFamily: MONO, fontSize: 11, letterSpacing: 3.3, textTransform: "uppercase", color: C.faint, marginBottom: 35 }}>
+              v{version} - mobile build
+            </Text>
+            <Text
+              adjustsFontSizeToFit
+              numberOfLines={1}
+              style={{ fontFamily: MONO_BOLD, fontSize: 53, letterSpacing: 5.3, textTransform: "uppercase", color: C.title, textAlign: "center" }}
+            >
+              Chatter
+            </Text>
+            <Text style={{ fontFamily: MONO, fontSize: 13.2, letterSpacing: 1.05, color: C.dim, textAlign: "center", marginTop: 13 }}>{subtitle}</Text>
+            <View style={{ height: 1, backgroundColor: C.rule, marginTop: 17.6 }} />
+          </View>
+
+          <View style={{ paddingHorizontal: 26, paddingTop: 22, paddingBottom: 26, gap: 22 }}>
+            {busy ? (
+              <Sequence shown={steps} />
+            ) : (
+              <>
+                <Field
+                  label="server"
+                  value={server}
+                  onChangeText={setServerText}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  textContentType="URL"
+                  editable={!needsCode}
+                />
+                <Field
+                  label="username"
+                  value={username}
+                  onChangeText={(t) => setUsername(t.replace(/[^A-Za-z0-9_]/g, ""))}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="username"
+                  textContentType="username"
+                  returnKeyType="next"
+                  onSubmitEditing={() => passwordRef.current?.focus()}
+                  editable={!needsCode}
+                />
+                <Field
+                  label="password"
+                  inputRef={passwordRef}
+                  value={password}
+                  onChangeText={(t) => {
+                    setPassword(t);
+                    if (error) setError(null);
+                  }}
+                  secureTextEntry
+                  autoComplete="current-password"
+                  textContentType="password"
+                  returnKeyType={needsCode ? "next" : "go"}
+                  onSubmitEditing={() => (needsCode ? codeRef.current?.focus() : void submit())}
+                  editable={!needsCode}
+                  spacing={2.6}
+                />
+                {needsCode ? (
+                  <Field
+                    label="authenticator code"
+                    inputRef={codeRef}
+                    value={code}
+                    onChangeText={(t) => setCode(t.replace(/\D/g, "").slice(0, 6))}
+                    keyboardType="number-pad"
+                    autoComplete="one-time-code"
+                    textContentType="oneTimeCode"
+                    placeholder="000000"
+                    returnKeyType="go"
+                    onSubmitEditing={() => void submit()}
+                    spacing={5}
+                    center
+                  />
+                ) : null}
+
+                {error ? (
+                  <View style={{ padding: 13, borderWidth: 1, borderColor: "rgba(255, 120, 100, 0.25)", backgroundColor: "rgba(255, 120, 100, 0.05)" }}>
+                    <Text style={{ fontFamily: MONO, fontSize: 12.1, letterSpacing: 1, textTransform: "uppercase", color: C.error }}>&gt; {error}</Text>
+                  </View>
+                ) : null}
+
+                <Pressable
+                  onPress={submit}
+                  accessibilityRole="button"
+                  style={({ pressed }) => ({
+                    height: 44,
+                    borderRadius: 13.4,
+                    borderWidth: 1,
+                    borderColor: pressed ? "rgba(180, 210, 255, 0.4)" : "rgba(180, 210, 255, 0.2)",
+                    backgroundColor: pressed ? "rgba(180, 210, 255, 0.1)" : "rgba(180, 210, 255, 0.04)",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  })}
+                >
+                  <Text style={{ fontFamily: MONO, fontSize: 13.2, letterSpacing: 2.6, textTransform: "uppercase", color: "rgba(220, 230, 255, 0.8)" }}>connect</Text>
+                </Pressable>
+
+                <View style={{ flexDirection: "row", justifyContent: "center", gap: 17.6, paddingTop: 4 }}>
+                  {needsCode ? (
+                    <Link
+                      text="use a different account"
+                      onPress={() => {
+                        setNeedsCode(false);
+                        setCode("");
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <Link text="create account" onPress={openWeb} />
+                      <Link text="forgot password?" onPress={openWeb} />
+                    </>
+                  )}
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </KeyboardAwareScrollView>
+
+      {/* The web's "?" in the corner. */}
+      {help ? (
+        <View
+          style={{
+            position: "absolute",
+            right: 20,
+            bottom: insets.bottom + 64,
+            maxWidth: 240,
+            padding: 10,
+            borderRadius: 13.4,
+            borderWidth: 1,
+            borderColor: "rgba(180, 210, 255, 0.2)",
+            backgroundColor: "rgba(10, 10, 10, 0.95)",
+          }}
+        >
+          <Text style={{ fontFamily: MONO_BOLD, fontSize: 12.1, color: "rgba(220, 230, 255, 0.9)", marginBottom: 4 }}>Chatter</Text>
+          <Text style={{ fontFamily: MONO, fontSize: 12.1, lineHeight: 19, color: "rgba(220, 230, 255, 0.75)" }}>
+            A lightweight self-hosted chat app. Create an account, set up two-factor authentication, and start chatting. Voice, text,
+            reactions -- all in real time.
+          </Text>
+        </View>
+      ) : null}
+      <Pressable
+        onPress={() => setHelp((h) => !h)}
+        accessibilityRole="button"
+        accessibilityLabel="About Chatter"
+        style={{
+          position: "absolute",
+          right: 20,
+          bottom: insets.bottom + 20,
+          width: 36,
+          height: 36,
+          borderRadius: 13.4,
+          borderWidth: 1,
+          borderColor: help ? "rgba(180, 210, 255, 0.35)" : "rgba(180, 210, 255, 0.15)",
+          backgroundColor: "rgba(10, 10, 10, 0.6)",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Text style={{ fontFamily: MONO, fontSize: 13.2, color: help ? "rgba(220, 230, 255, 0.8)" : "rgba(180, 210, 255, 0.4)" }}>?</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function Field({
+  label,
+  inputRef,
+  spacing = 1,
+  center,
+  ...props
+}: TextInputProps & { label: string; inputRef?: React.Ref<ComponentRef<typeof TextInput>>; spacing?: number; center?: boolean }) {
+  return (
+    <View style={{ gap: 6.6 }}>
+      <Text style={{ fontFamily: MONO, fontSize: 11, letterSpacing: 2.2, textTransform: "uppercase", color: C.dim }}>{label}</Text>
       <TextInput
+        ref={inputRef}
+        placeholder=">"
+        placeholderTextColor="rgba(180, 210, 255, 0.3)"
+        accessibilityLabel={label}
+        cursorColor={C.caret}
+        selectionColor="rgba(180, 210, 255, 0.3)"
         {...props}
-        placeholderTextColor={colors["muted-foreground"]}
-        className="rounded-lg border border-input bg-card px-3.5 py-3 font-mono text-[15px] text-foreground"
+        style={{
+          height: 44,
+          borderRadius: 13.4,
+          borderWidth: 1,
+          borderColor: C.border,
+          paddingHorizontal: 13,
+          fontFamily: MONO,
+          fontSize: 15.4,
+          letterSpacing: spacing,
+          color: C.text,
+          textAlign: center ? "center" : "left",
+          opacity: props.editable === false ? 0.6 : 1,
+        }}
       />
     </View>
   );
+}
 
+function Link({ text, onPress }: { text: string; onPress(): void }) {
   return (
-    <KeyboardAwareScrollView
-      // Room for the Connect button below the focused field.
-      bottomOffset={130}
-      keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ flexGrow: 1, justifyContent: "center", paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }}
-      className="bg-background"
-    >
-      <View className="w-full max-w-[420px] self-center gap-5 px-6">
-        <View className="items-center gap-1 pb-4">
-          <T className="font-mono-bold text-3xl tracking-[6px]">chatter</T>
-          <T className="text-xs text-muted-foreground">{needsCode ? "enter your authenticator code" : "sign in to continue"}</T>
-        </View>
-        {field(
-          {
-            value: server,
-            onChangeText: setServerText,
-            autoCapitalize: "none",
-            autoCorrect: false,
-            keyboardType: "url",
-            textContentType: "URL",
-            editable: !needsCode,
-            accessibilityLabel: "Server",
-          },
-          "Server",
-        )}
-        {field(
-          {
-            value: username,
-            onChangeText: setUsername,
-            autoCapitalize: "none",
-            autoCorrect: false,
-            autoComplete: "username",
-            textContentType: "username",
-            returnKeyType: "next",
-            onSubmitEditing: () => passwordRef.current?.focus(),
-            editable: !needsCode,
-            accessibilityLabel: "Username",
-          },
-          "Username",
-        )}
-        {field(
-          {
-            ref: passwordRef,
-            value: password,
-            onChangeText: setPassword,
-            secureTextEntry: true,
-            autoComplete: "current-password",
-            textContentType: "password",
-            returnKeyType: needsCode ? "next" : "go",
-            onSubmitEditing: () => (needsCode ? codeRef.current?.focus() : void submit()),
-            editable: !needsCode,
-            accessibilityLabel: "Password",
-          },
-          "Password",
-        )}
-        {needsCode &&
-          field(
-            {
-              ref: codeRef,
-              value: code,
-              onChangeText: (t) => setCode(t.replace(/\D/g, "").slice(0, 6)),
-              keyboardType: "number-pad",
-              autoComplete: "one-time-code",
-              textContentType: "oneTimeCode",
-              placeholder: "000000",
-              returnKeyType: "go",
-              onSubmitEditing: () => void submit(),
-              accessibilityLabel: "Authenticator code",
-            },
-            "Authenticator code",
-          )}
-        {error ? <T className="text-sm text-destructive">{error}</T> : null}
-        <Pressable
-          onPress={submit}
-          disabled={busy}
-          accessibilityRole="button"
-          className={cn("mt-1 items-center rounded-lg bg-primary py-3.5", busy && "opacity-60")}
-        >
-          {busy ? <ActivityIndicator color={colors["primary-foreground"]} /> : <T className="font-mono-bold uppercase tracking-widest text-primary-foreground">Connect</T>}
-        </Pressable>
-        {needsCode ? (
-          <Pressable onPress={() => { setNeedsCode(false); setCode(""); }} className="items-center py-2">
-            <T className="text-xs text-muted-foreground">use a different account</T>
-          </Pressable>
-        ) : (
-          <T className="text-center text-xs text-muted-foreground">New here? Create an account on the web first.</T>
-        )}
+    <Pressable onPress={onPress} hitSlop={10}>
+      {({ pressed }) => (
+        <Text style={{ fontFamily: MONO, fontSize: 11, letterSpacing: 1.65, textTransform: "uppercase", color: pressed ? "rgba(180, 210, 255, 0.85)" : C.link }}>
+          {text}
+        </Text>
+      )}
+    </Pressable>
+  );
+}
+
+/** The terminal lines while signing in, with the progress rule under them. */
+function Sequence({ shown }: { shown: number }) {
+  const total = LOGIN_CONNECTION_STEPS.length;
+  return (
+    <View style={{ minHeight: 158, gap: 4.4 }}>
+      {LOGIN_CONNECTION_STEPS.map((s, i) => {
+        const visible = i < shown;
+        const last = i === total - 1;
+        return (
+          <View key={s.text} style={{ flexDirection: "row", gap: 8.8, opacity: visible ? 1 : 0 }}>
+            <Text style={{ fontFamily: MONO, fontSize: 12.1, color: last ? "rgba(120, 230, 160, 0.6)" : "rgba(180, 210, 255, 0.3)" }}>{last ? "✓" : ">"}</Text>
+            <Text style={{ fontFamily: MONO, fontSize: 12.1, letterSpacing: 0.6, color: last ? C.ok : "rgba(200, 220, 255, 0.75)" }}>
+              {s.text}
+              {i === shown - 1 && !last ? <Text style={{ color: "rgba(180, 210, 255, 0.6)" }}> ▌</Text> : null}
+            </Text>
+          </View>
+        );
+      })}
+      <View style={{ marginTop: 17.6, height: 1, backgroundColor: "rgba(180, 210, 255, 0.08)" }}>
+        <View style={{ height: 1, width: `${(shown / total) * 100}%`, backgroundColor: "rgba(180, 210, 255, 0.4)" }} />
       </View>
-    </KeyboardAwareScrollView>
+    </View>
   );
 }

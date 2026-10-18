@@ -36,6 +36,7 @@ export function Button({
   variant = "default",
   size = "default",
   icon,
+  iconTone,
   children,
   className,
   textClassName,
@@ -45,13 +46,15 @@ export function Button({
   variant?: Recipe.ButtonVariant;
   size?: Recipe.ButtonSize;
   icon?: ComponentType<LucideProps>;
+  /** The icon's colour, when the label's is overridden too. */
+  iconTone?: ThemeToken;
   children?: ReactNode;
   className?: string;
   textClassName?: string;
 }) {
   const v = Recipe.button.variant[variant];
   const s = Recipe.button.size[size];
-  const tone = ICON_TONE[variant];
+  const tone = iconTone ?? ICON_TONE[variant];
   const iconSize = size === "xs" || size === "icon-xs" ? 12 : 16;
   return (
     <Pressable
