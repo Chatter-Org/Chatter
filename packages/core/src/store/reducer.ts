@@ -249,9 +249,12 @@ export function reducer(state: AppState, action: Action): AppState {
       if (incoming.room_id !== state.currentRoomId) return state;
       const known = state.roomEvents.find((e) => e.event_id === incoming.event_id);
       // A broadcast reaches the whole room, so it cannot carry anyone's own
-      // answer. Keep the one this client already knows rather than letting a
-      // neighbour's RSVP blank out yours.
-      const merged = known ? { ...incoming, my_rsvp: known.my_rsvp } : incoming;
+      // answer (the server always sends it empty). Keep the one this client
+      // already knows rather than letting a neighbour's RSVP blank out yours.
+      // An answer that is there came from this client's own request — the
+      // event it just created — and wins, even when the broadcast got here
+      // first and was stored with none.
+      const merged = known ? { ...incoming, my_rsvp: incoming.my_rsvp || known.my_rsvp } : incoming;
       const rest = state.roomEvents.filter((e) => e.event_id !== incoming.event_id);
       return {
         ...state,
