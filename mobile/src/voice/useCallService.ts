@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useSyncExternalStore } from "react";
 import * as Notifications from "expo-notifications";
 import type { AppState } from "@chatter/core/store/types";
 import { callService, type AudioRoute } from "../../modules/chatter-call";
@@ -10,8 +10,6 @@ import { callService, type AudioRoute } from "../../modules/chatter-call";
  */
 export function useCallService(state: AppState, voice: { leave(): Promise<void>; toggleMute(): void }) {
   const running = useRef(false);
-  const voiceRef = useRef(voice);
-  voiceRef.current = voice;
 
   const title = state.voiceChannelName ? `In a call · ${state.voiceChannelName}` : "In a call";
   const text = (state.voiceRoomId && state.roomInfoMap[state.voiceRoomId]?.name) || "";
@@ -40,14 +38,13 @@ export function useCallService(state: AppState, voice: { leave(): Promise<void>;
     callService.update(title, text, muted);
   }, [state.inVoiceChannel, title, text, muted]);
 
-  useEffect(
-    () =>
-      callService.onAction((action) => {
-        if (action === "leave") void voiceRef.current.leave();
-        else voiceRef.current.toggleMute();
-      }),
-    [],
-  );
+  // The notification outlives renders, so its buttons reach whichever voice
+  // the latest one had.
+  const onAction = useEffectEvent((action: "leave" | "toggleMute") => {
+    if (action === "leave") void voice.leave();
+    else voice.toggleMute();
+  });
+  useEffect(() => callService.onAction((action) => onAction(action)), []);
 
   // Signed out or torn down with a call up: the service goes with it.
   useEffect(
@@ -58,16 +55,32 @@ export function useCallService(state: AppState, voice: { leave(): Promise<void>;
   );
 }
 
+/**
+ * The phone's audio routes, as a store for useSyncExternalStore: read when the
+ * first reader subscribes, then replaced only by the module's change events,
+ * so every render in between sees the same array.
+ */
+const NO_ROUTES: AudioRoute[] = [];
+let currentRoutes = NO_ROUTES;
+
+function subscribeToRoutes(onChange: () => void): () => void {
+  const off = callService.onRoutesChanged((routes) => {
+    currentRoutes = routes;
+    onChange();
+  });
+  currentRoutes = callService.routes();
+  onChange();
+  return () => {
+    off();
+    currentRoutes = NO_ROUTES;
+  };
+}
+
+const subscribeToNothing = () => () => {};
+
 /** The phone's audio routes for the call, kept current as headsets come and go. */
 export function useAudioRoutes(active: boolean): AudioRoute[] {
-  const [routes, setRoutes] = useState<AudioRoute[]>([]);
-  useEffect(() => {
-    if (!active) {
-      setRoutes([]);
-      return;
-    }
-    setRoutes(callService.routes());
-    return callService.onRoutesChanged(setRoutes);
-  }, [active]);
-  return routes;
+  return useSyncExternalStore(active ? subscribeToRoutes : subscribeToNothing, () =>
+    active ? currentRoutes : NO_ROUTES,
+  );
 }

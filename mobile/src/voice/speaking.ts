@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 /**
  * Who is talking. Others come from the server's `voice_speaking` frames — it
@@ -21,25 +21,34 @@ export function clearSpeaking(): void {
 
 const POLL_MS = 150;
 
+const NOBODY = new Set<string>();
+let lastSample = NOBODY;
+
+/**
+ * The talking set now. It stays the same Set until someone starts or stops,
+ * which is what lets useSyncExternalStore skip a render on every quiet poll.
+ */
+function sampleSpeaking(me: string | null, localSpeaking: () => boolean): Set<string> {
+  const next = new Set(remote);
+  if (me) {
+    if (localSpeaking()) next.add(me);
+    else next.delete(me);
+  }
+  const same = next.size === lastSample.size && [...next].every((id) => lastSample.has(id));
+  if (!same) lastSample = next;
+  return lastSample;
+}
+
+function pollSpeaking(onChange: () => void): () => void {
+  const id = setInterval(onChange, POLL_MS);
+  return () => clearInterval(id);
+}
+
+const pollNothing = () => () => {};
+
 /** The talking set, sampled while `active` — only something on screen reads it. */
 export function useSpeaking(active: boolean, me: string | null, localSpeaking: () => boolean): Set<string> {
-  const [speaking, setSpeaking] = useState<Set<string>>(() => new Set());
-  useEffect(() => {
-    if (!active) {
-      setSpeaking(new Set());
-      return;
-    }
-    const tick = () => {
-      const next = new Set(remote);
-      if (me) {
-        if (localSpeaking()) next.add(me);
-        else next.delete(me);
-      }
-      setSpeaking((prev) => (prev.size === next.size && [...next].every((id) => prev.has(id)) ? prev : next));
-    };
-    tick();
-    const id = setInterval(tick, POLL_MS);
-    return () => clearInterval(id);
-  }, [active, me, localSpeaking]);
-  return speaking;
+  return useSyncExternalStore(active ? pollSpeaking : pollNothing, () =>
+    active ? sampleSpeaking(me, localSpeaking) : NOBODY,
+  );
 }

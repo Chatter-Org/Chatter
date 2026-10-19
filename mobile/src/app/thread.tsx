@@ -7,7 +7,7 @@ import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { ArrowLeft, Reply } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
-import { groupsWith } from "@chatter/core/messageFormat";
+import { extractMedia, groupsWith } from "@chatter/core/messageFormat";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { Avatar } from "@/components/Avatar";
 import { MessageRow } from "@/components/MessageRow";
@@ -16,7 +16,6 @@ import { MessageMedia } from "@/components/MessageMedia";
 import { MessageActions } from "@/components/MessageActions";
 import { Composer } from "@/components/Composer";
 import { useMessageRows } from "@/components/useMessageRows";
-import { extractMedia } from "@chatter/core/messageFormat";
 import { Icon, T } from "@/ui/primitives";
 import { UI_HEADING, UI_META } from "@/ui/roles";
 

@@ -1,14 +1,13 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
 import { usePanels } from "./PanelLayout";
 import { useWindowLayout } from "@/ui/windowLayout";
-import { ActivityIndicator, AppState, Pressable, TextInput, View, type ScrollViewProps } from "react-native";
+import { ActivityIndicator, AppState, Pressable, View, type ScrollViewProps } from "react-native";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import { KeyboardChatScrollView, useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import { ArrowDown, SendHorizontal, X } from "lucide-react-native";
+import { ArrowDown } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
 import { groupsWith, startsNewDay } from "@chatter/core/messageFormat";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
@@ -19,8 +18,6 @@ import { CallBar } from "./CallBar";
 import { NewDivider, UnreadBanner, useNewDivider } from "./UnreadMarks";
 import { useMessageRows } from "./useMessageRows";
 import { Icon, T } from "@/ui/primitives";
-import { cn } from "@/ui/cn";
-import { useTheme } from "@/theme/ThemeProvider";
 import { showToast } from "@/platform/toast";
 
 type Row =
@@ -54,7 +51,6 @@ export function ChatView() {
 
   const roomId = state.currentRoomId;
   const channelId = state.currentChannelId;
-  const roomInfo = roomId ? state.roomInfoMap[roomId] : undefined;
 
   const firstUnread = useNewDivider();
   const rows = useMemo<Row[]>(() => {
@@ -177,8 +173,11 @@ export function ChatView() {
     if (!last || (jump.channelId && last.channel_id && last.channel_id !== jump.channelId)) return;
     const index = rows.findIndex((r) => r.kind === "message" && r.message.event_id === jump.eventId);
     if (index >= 0) {
-      requestAnimationFrame(() => listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.4 }));
-      setHighlighted(jump.eventId);
+      // The light comes on with the scroll that brings it into view.
+      requestAnimationFrame(() => {
+        listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.4 });
+        setHighlighted(jump.eventId);
+      });
       setTimeout(() => setHighlighted((h) => (h === jump.eventId ? null : h)), 1500);
       loadedAround.current = null;
       actions.clearPendingJump();

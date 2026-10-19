@@ -34,7 +34,13 @@ export function Sheet({
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   // Kept mounted while the closing animation plays.
-  const [visible, setVisible] = useState(open);
+  const [wasOpen, setWasOpen] = useState(open);
+  const [closing, setClosing] = useState(false);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (!open) setClosing(true);
+  }
+  const visible = open || closing;
   const [height, setHeight] = useState(600);
   const offset = useSharedValue(height);
   const dim = useSharedValue(0);
@@ -42,15 +48,16 @@ export function Sheet({
   useEffect(() => {
     const ease = { duration: 220, easing: Easing.out(Easing.cubic) };
     if (open) {
-      setVisible(true);
-      offset.value = height;
-      offset.value = withTiming(0, ease);
-      dim.value = withTiming(1, ease);
+      offset.set(height);
+      offset.set(withTiming(0, ease));
+      dim.set(withTiming(1, ease));
     } else if (visible) {
-      dim.value = withTiming(0, { duration: 180 });
-      offset.value = withTiming(height, { duration: 180 }, (done) => {
-        if (done) scheduleOnRN(setVisible, false);
-      });
+      dim.set(withTiming(0, { duration: 180 }));
+      offset.set(
+        withTiming(height, { duration: 180 }, (done) => {
+          if (done) scheduleOnRN(setClosing, false);
+        }),
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -59,12 +66,12 @@ export function Sheet({
     activeOffsetY: [-8, 8],
     onUpdate: (e) => {
       "worklet";
-      offset.value = Math.max(0, e.translationY);
+      offset.set(Math.max(0, e.translationY));
     },
     onDeactivate: (e) => {
       "worklet";
       if (e.translationY > 80 || e.velocityY > 800) scheduleOnRN(onClose);
-      else offset.value = withTiming(0, { duration: 160 });
+      else offset.set(withTiming(0, { duration: 160 }));
     },
   });
 

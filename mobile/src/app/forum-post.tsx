@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ComponentRef } from "react";
 import { ActivityIndicator, Alert, FlatList, Pressable, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import * as Clipboard from "expo-clipboard";
@@ -98,8 +98,6 @@ export default function ForumPostScreen() {
   const [landing, setLanding] = useState<string | null>(null);
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const listRef = useRef<FlatList<Row>>(null);
-  const threadRef = useRef(thread);
-  threadRef.current = thread;
 
   const keyboard = useReanimatedKeyboardAnimation();
   const lift = useAnimatedStyle(() => ({ transform: [{ translateY: Math.min(0, keyboard.height.value + insets.bottom) }] }));
@@ -111,18 +109,17 @@ export default function ForumPostScreen() {
   }, [roomId, postId]);
 
   // The socket, through the shared rules (core/forum.ts).
+  const onForumEvent = useEffectEvent((type: (typeof FORUM_EVENTS)[number], detail: ForumEventDetail) => {
+    const next = applyForumThreadEvent(thread, type, detail, postId);
+    if (next.gone) {
+      showToast({ message: "This post was deleted" });
+      router.back();
+      return;
+    }
+    if (next !== thread) setThread(next);
+  });
   useEffect(() => {
-    const offs = FORUM_EVENTS.map((type) =>
-      on<ForumEventDetail>(type, (detail) => {
-        const next = applyForumThreadEvent(threadRef.current, type, detail, postId);
-        if (next.gone) {
-          showToast({ message: "This post was deleted" });
-          router.back();
-          return;
-        }
-        if (next !== threadRef.current) setThread(next);
-      }),
-    );
+    const offs = FORUM_EVENTS.map((type) => on<ForumEventDetail>(type, (detail) => onForumEvent(type, detail)));
     return () => offs.forEach((off) => off());
   }, [postId]);
 
@@ -145,8 +142,10 @@ export default function ForumPostScreen() {
     if (!landing) return;
     const index = rows.findIndex((r) => r.node.comment.comment_id === landing);
     if (index < 0) return;
-    setLanding(null);
-    requestAnimationFrame(() => listRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true }));
+    requestAnimationFrame(() => {
+      setLanding(null);
+      listRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
+    });
   }, [landing, rows]);
 
   const toggleFold = useCallback((id: string) => {

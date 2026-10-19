@@ -30,6 +30,16 @@ interface Line {
   opacity: number;
 }
 
+/** A line as one frame draws it, flicker included. */
+interface Drawn {
+  id: number;
+  text: string;
+  x: number;
+  y: number;
+  typing: boolean;
+  opacity: number;
+}
+
 /** The part of the screen to keep clear: the sign-in card, top to bottom. */
 export interface CrtClearance {
   top: number;
@@ -38,7 +48,9 @@ export interface CrtClearance {
 
 export function CrtBackground({ clear }: { clear?: CrtClearance }) {
   const { width, height } = useWindowDimensions();
-  const [, setFrame] = useState(0);
+  // The lines live in refs and change in place every tick; each frame hands
+  // the screen a copy to draw.
+  const [frame, setFrame] = useState<Drawn[]>([]);
   const lines = useRef<Line[]>([]);
   const nextId = useRef(1);
   const lastSpawn = useRef(0);
@@ -96,16 +108,25 @@ export function CrtBackground({ clear }: { clear?: CrtClearance }) {
         }
       }
       spawn(now);
-      setFrame((f) => f + 1);
+      const flicker = 1 - dip.current;
+      setFrame(
+        lines.current.map((l) => ({
+          id: l.id,
+          text: l.text.slice(0, l.shown),
+          x: l.x,
+          y: l.y,
+          typing: l.phase === "typing",
+          opacity: l.opacity * (0.88 + Math.random() * 0.12) * flicker,
+        })),
+      );
     }, FRAME_MS);
     return () => clearInterval(timer);
   }, [width, height, clear]);
 
-  const flicker = 1 - dip.current;
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: "#0a0a0a" }]} pointerEvents="none">
-      {lines.current.map((l) => {
-        const o = l.opacity * (0.88 + Math.random() * 0.12) * flicker;
+      {frame.map((l) => {
+        const o = l.opacity;
         return (
           <Text
             key={l.id}
@@ -120,8 +141,8 @@ export function CrtBackground({ clear }: { clear?: CrtClearance }) {
               textShadowRadius: 8 * (o / MAX_OPACITY),
             }}
           >
-            {l.text.slice(0, l.shown)}
-            {l.phase === "typing" ? <Text style={{ color: `rgba(200, 220, 255, ${o * 0.7})` }}>▏</Text> : null}
+            {l.text}
+            {l.typing ? <Text style={{ color: `rgba(200, 220, 255, ${o * 0.7})` }}>▏</Text> : null}
           </Text>
         );
       })}

@@ -24,20 +24,26 @@ export default function Home() {
     const first = state.joinedRoomIds.find((id) => !state.roomInfoMap[id]?.is_direct) ?? state.joinedRoomIds[0];
     if (!first) return;
     landed.current = true;
-    setRail(state.roomInfoMap[first]?.is_direct ? { kind: "dms" } : { kind: "server", roomId: first });
+    // The rail follows (below): selectRoom makes it the room on screen at once.
     void selectRoom(first).catch(() => {
       landed.current = false;
     });
   }, [state.currentRoomId, state.joinedRoomIds, state.roomInfoMap, selectRoom]);
 
   // The rail follows the room on screen when something else changes it — a
-  // notification, a link.
-  useEffect(() => {
+  // notification, a link — settled in the same render that brings the room.
+  const [followed, setFollowed] = useState<{ id: string | null; rooms: typeof state.roomInfoMap | null }>({
+    id: null,
+    rooms: null,
+  });
+  if (followed.id !== state.currentRoomId || followed.rooms !== state.roomInfoMap) {
+    setFollowed({ id: state.currentRoomId, rooms: state.roomInfoMap });
     const id = state.currentRoomId;
-    if (!id) return;
-    const isDm = state.roomInfoMap[id]?.is_direct;
-    setRail((r) => (isDm ? (r.kind === "dms" ? r : { kind: "dms" }) : r.kind === "server" && r.roomId === id ? r : { kind: "server", roomId: id }));
-  }, [state.currentRoomId, state.roomInfoMap]);
+    if (id) {
+      const isDm = state.roomInfoMap[id]?.is_direct;
+      setRail((r) => (isDm ? (r.kind === "dms" ? r : { kind: "dms" }) : r.kind === "server" && r.roomId === id ? r : { kind: "server", roomId: id }));
+    }
+  }
 
   return (
     <PanelLayout left={<NavPanel rail={rail} onRail={setRail} />} right={<MembersPanel />} thread={<ThreadPane />}>

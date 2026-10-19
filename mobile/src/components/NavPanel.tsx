@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
@@ -27,7 +27,6 @@ import {
   Volume2,
   type LucideProps,
 } from "lucide-react-native";
-import type { ComponentType } from "react";
 import type { Channel, RoomInfo } from "@chatter/core/api";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";

@@ -1,10 +1,9 @@
-import { memo, useState, type ReactNode } from "react";
+import { memo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { GestureDetector, useCompetingGestures, useLongPressGesture, usePanGesture } from "react-native-gesture-handler";
 import Animated, { interpolate, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import * as Haptics from "expo-haptics";
-import { Image } from "expo-image";
 import { EyeOff, MessagesSquare, MoreHorizontal, Reply } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
 import type { FormatOptions } from "@chatter/core/messageFormat";
@@ -19,7 +18,6 @@ import { MessageMedia } from "./MessageMedia";
 import { EmojiGlyph } from "./EmojiPickerSheet";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
-import { serverImage } from "@/ui/media";
 
 /** The web's avatar size below 768px (h-7). */
 const AVATAR = 31;

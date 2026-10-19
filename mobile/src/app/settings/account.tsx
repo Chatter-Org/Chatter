@@ -18,7 +18,7 @@ import { Button } from "@/ui/controls";
 import { ScreenHeader } from "@/ui/ScreenHeader";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
-import { UI_HEADING, UI_HINT } from "@/ui/roles";
+import { UI_HEADING } from "@/ui/roles";
 import { SettingsSection, TextField } from "@/ui/settings";
 
 const digits = (v: string) => v.replace(/\D/g, "").slice(0, 6);

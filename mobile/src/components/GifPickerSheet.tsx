@@ -298,7 +298,12 @@ export function CategoryActions({ id, onClose }: { id: string | null; onClose():
   const fav = useGifFavorites();
   const category = fav.categories.find((c) => c.id === id);
   const [name, setName] = useState(category?.name ?? "");
-  useEffect(() => setName(category?.name ?? ""), [category?.name]);
+  // Another category, or this one renamed elsewhere, starts the field over.
+  const [nameFor, setNameFor] = useState(category?.name);
+  if (nameFor !== category?.name) {
+    setNameFor(category?.name);
+    setName(category?.name ?? "");
+  }
   return (
     <Sheet open={!!category} onClose={onClose} title={category?.name}>
       {category ? (

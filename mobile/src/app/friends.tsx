@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { Pressable, ScrollView, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { ArrowLeft, Ban, ChevronDown, Clock, Gamepad2, MessageCircle, UserCheck, UserPlus, type LucideProps } from "lucide-react-native";
-import type { ComponentType } from "react";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { Avatar } from "@/components/Avatar";

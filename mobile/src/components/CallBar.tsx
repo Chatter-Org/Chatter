@@ -462,7 +462,7 @@ function VolumeSlider({ value, max, onChange, label }: { value: number; max: num
   const [width, setWidth] = useState(1);
   const fraction = useSharedValue(value / max);
   useEffect(() => {
-    fraction.value = value / max;
+    fraction.set(value / max);
   }, [value, max, fraction]);
 
   const set = (x: number) => {
@@ -470,7 +470,7 @@ function VolumeSlider({ value, max, onChange, label }: { value: number; max: num
     const f = Math.min(1, Math.max(0, x / width));
     // Snap to 100% when close: the level most people come back to.
     const snapped = Math.abs(f * max - 1) < 0.04 ? 1 / max : f;
-    fraction.value = snapped;
+    fraction.set(snapped);
     scheduleOnRN(onChange, Math.round(snapped * max * 100) / 100);
   };
   const pan = usePanGesture({

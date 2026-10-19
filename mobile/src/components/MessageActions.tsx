@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
@@ -41,9 +41,11 @@ export function MessageActions({
   const [draft, setDraft] = useState("");
 
   // A fresh sheet for each message held.
-  useEffect(() => {
+  const [heldMessage, setHeldMessage] = useState(message);
+  if (heldMessage !== message) {
+    setHeldMessage(message);
     if (message) setEditing(false);
-  }, [message]);
+  }
 
   const mine = !!message && message.sender === state.userId;
   const deleted = !!message && isDeletedMessage(message);

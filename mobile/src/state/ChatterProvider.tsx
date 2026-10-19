@@ -99,6 +99,12 @@ export function useChatterActions(): ChatterActions {
 
 export function ChatterProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  // The core's actions and socket handler are shared with the web and read
+  // the store through getState() and refs, never during a render. The ref is
+  // written during render on purpose: children's effects run before this
+  // component's, and an action they call must see the state they rendered
+  // with, which a ref synced in an effect here would not have yet.
+  /* eslint-disable react-hooks/refs */
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -125,6 +131,7 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
   const [handleFrame] = useState(() =>
     createWsMessageHandler(dispatch, stateRef, typingTimeoutsRef, loadRoomsRef, loadPresenceRef),
   );
+  /* eslint-enable react-hooks/refs */
 
   // ─── Voice ─────────────────────────────────────────────────────────────────
 
@@ -467,7 +474,6 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "SET_SESSION_RESTORE", payload: "absent" });
       },
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [shared, voice],
   );
 

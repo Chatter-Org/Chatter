@@ -79,9 +79,14 @@ function Profile({ userId, onClose }: { userId: string; onClose(): void }) {
 
   const [mutuals, setMutuals] = useState<string[]>([]);
   const [mutualsOpen, setMutualsOpen] = useState(false);
-  useEffect(() => {
+  // Someone else's profile starts with nobody in common until theirs loads.
+  const [mutualsOf, setMutualsOf] = useState({ userId, isSelf });
+  if (mutualsOf.userId !== userId || mutualsOf.isSelf !== isSelf) {
+    setMutualsOf({ userId, isSelf });
     setMutuals([]);
     setMutualsOpen(false);
+  }
+  useEffect(() => {
     if (isSelf) return;
     let live = true;
     apiGetMutualFriends(userId)

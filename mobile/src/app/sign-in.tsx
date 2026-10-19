@@ -47,11 +47,11 @@ export default function SignIn() {
   const passwordRef = useRef<ComponentRef<typeof TextInput>>(null);
   const codeRef = useRef<ComponentRef<typeof TextInput>>(null);
 
-  // The connection sequence plays while the request is out. It never holds
-  // the reader up: an answer that comes first skips to the end.
+  // The connection sequence plays while the request is out (its first step
+  // shows with the request, in submit). It never holds the reader up: an
+  // answer that comes first skips to the end.
   useEffect(() => {
     if (!busy) return;
-    setSteps(1);
     const timers = LOGIN_CONNECTION_STEPS.slice(1, -1).map((s, i) => setTimeout(() => setSteps(i + 2), s.ms));
     return () => timers.forEach(clearTimeout);
   }, [busy]);
@@ -75,6 +75,7 @@ export default function SignIn() {
       return;
     }
     setBusy(true);
+    setSteps(1);
     try {
       setServer(origin);
       const result = await signIn(username.trim(), password, needsCode ? code.trim() : undefined);

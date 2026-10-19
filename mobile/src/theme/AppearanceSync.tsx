@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { AppState } from "react-native";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import { apiGetAppearance, apiSetAppearance, type AppearancePayload } from "@chatter/core/api";
 import { DEFAULT_APPEARANCE_DISPLAY, themeFromAppearance, themeToAppearance, type ThemeDefinition } from "@chatter/core/theme";
 import { useChatter } from "@/state/ChatterProvider";
@@ -26,8 +26,7 @@ export function AppearanceSync() {
   // answered, or a phone holding a theme the account has never seen would
   // wait for the next change to send it.
   const [ready, setReady] = useState(false);
-  const readyRef = useRef(false);
-  readyRef.current = ready;
+  const [readyUser, setReadyUser] = useState(userId);
   const synced = useRef<string | null>(null);
   const display = useRef<AppearancePayload["display"]>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -35,9 +34,13 @@ export function AppearanceSync() {
 
   const local = JSON.stringify({ theme_id: preference, custom_themes: customThemes.map(themeToAppearance) });
 
-  // Another account (or a sign-out) starts over.
-  useEffect(() => {
+  // Another account (or a sign-out) starts over: not ready from this render
+  // on, and nothing known about what the server holds.
+  if (userId !== readyUser) {
+    setReadyUser(userId);
     setReady(false);
+  }
+  useEffect(() => {
     synced.current = null;
     display.current = null;
   }, [userId]);
@@ -89,14 +92,15 @@ export function AppearanceSync() {
 
   // Leaving the app straight after a change would otherwise lose it to the
   // debounce.
+  const onAppStateChange = useEffectEvent((next: AppStateStatus) => {
+    if (next === "active" || !ready) return;
+    const body = pending.current;
+    if (!body || body === synced.current) return;
+    if (timer.current) clearTimeout(timer.current);
+    push(body);
+  });
   useEffect(() => {
-    const sub = AppState.addEventListener("change", (next) => {
-      if (next === "active" || !readyRef.current) return;
-      const body = pending.current;
-      if (!body || body === synced.current) return;
-      if (timer.current) clearTimeout(timer.current);
-      push(body);
-    });
+    const sub = AppState.addEventListener("change", (next) => onAppStateChange(next));
     return () => sub.remove();
   }, []);
 

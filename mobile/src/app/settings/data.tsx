@@ -52,7 +52,12 @@ export default function DataSettings() {
   const measure = useCallback(() => {
     setCacheBytes(clearable().reduce((total, dir) => total + sizeOf(dir), 0));
   }, []);
-  useEffect(measure, [measure]);
+  // Walking the cache can take a moment, so it waits for the screen's first
+  // frame rather than holding it up.
+  useEffect(() => {
+    const frame = requestAnimationFrame(measure);
+    return () => cancelAnimationFrame(frame);
+  }, [measure]);
 
   const clear = async () => {
     setClearing(true);

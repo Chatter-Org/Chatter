@@ -33,9 +33,14 @@ export function ImageViewer({ urls, index, onClose }: { urls: string[]; index: n
   const [zoomed, setZoomed] = useState(false);
   const scroller = useRef<ComponentRef<typeof ScrollView>>(null);
 
+  // Opening on a picture (or turning the phone) goes back to the one opened.
+  const [openedAt, setOpenedAt] = useState({ index, width });
+  if (openedAt.index !== index || openedAt.width !== width) {
+    setOpenedAt({ index, width });
+    if (index !== null) setPage(index);
+  }
   useEffect(() => {
     if (index === null) return;
-    setPage(index);
     // After the modal lays out, so the offset sticks.
     requestAnimationFrame(() => scroller.current?.scrollTo({ x: index * width, animated: false }));
   }, [index, width]);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, RefreshControl, ScrollView, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Image } from "expo-image";
@@ -67,10 +67,9 @@ export function ForumView() {
   const isOwnerOrMod = myRole === "owner" || myRole === "moderator";
 
   const [posts, setPosts] = useState<ForumPost[]>([]);
-  const postsRef = useRef(posts);
-  postsRef.current = posts;
   const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(false);
+  // Loading from the start: the first page is fetched as the view mounts.
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sort, setSort] = useState<ForumSort>("activity");
   const [tagFilter, setTagFilter] = useState<string | null>(null);
@@ -79,42 +78,48 @@ export function ForumView() {
   const [sorting, setSorting] = useState(false);
   const [acting, setActing] = useState<ForumPost | null>(null);
 
-  const load = useCallback(
-    async (nextSort: ForumSort, tag: string | null, before?: number) => {
-      setLoading(true);
-      try {
-        const data = await apiListForumPosts(roomId, 20, before, nextSort, channelId, tag);
-        setPosts((prev) => (before === undefined ? data.posts : appendForumPage(prev, data.posts)));
-        setHasMore(data.has_more);
-      } catch {
-        // The list stays as it was.
-      } finally {
-        setLoading(false);
-      }
-    },
+  const fetchPosts = useCallback(
+    (nextSort: ForumSort, tag: string | null, before?: number) =>
+      apiListForumPosts(roomId, 20, before, nextSort, channelId, tag)
+        .then((data) => {
+          setPosts((prev) => (before === undefined ? data.posts : appendForumPage(prev, data.posts)));
+          setHasMore(data.has_more);
+        })
+        .catch(() => {
+          // The list stays as it was.
+        })
+        .finally(() => setLoading(false)),
     [roomId, channelId],
   );
 
-  // A new forum starts fresh: all posts, most active first.
-  useEffect(() => {
-    setPosts([]);
-    setSort("activity");
-    setTagFilter(null);
-    setQuery("");
-    setSearching(false);
-    void load("activity", null);
-  }, [load]);
+  const load = useCallback(
+    (nextSort: ForumSort, tag: string | null, before?: number) => {
+      setLoading(true);
+      return fetchPosts(nextSort, tag, before);
+    },
+    [fetchPosts],
+  );
 
-  // Search, a beat after typing stops; clearing it goes back to the list.
+  // A new forum starts fresh: all posts, most active first. Each room and
+  // channel is its own ForumView (keyed in app/index.tsx), so the rest of the
+  // state starts fresh with it.
+  useEffect(() => {
+    void fetchPosts("activity", null);
+  }, [fetchPosts]);
+
+  // Clearing the search goes back to the list.
+  const changeQuery = (next: string) => {
+    setQuery(next);
+    if (!next.trim() && searching) {
+      setSearching(false);
+      void load(sort, tagFilter);
+    }
+  };
+
+  // Search, a beat after typing stops.
   useEffect(() => {
     const q = query.trim();
-    if (!q) {
-      if (searching) {
-        setSearching(false);
-        void load(sort, tagFilter);
-      }
-      return;
-    }
+    if (!q) return;
     const timer = setTimeout(async () => {
       setSearching(true);
       setLoading(true);
@@ -129,24 +134,21 @@ export function ForumView() {
       }
     }, 300);
     return () => clearTimeout(timer);
-    // Only the query starts a search.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, roomId, channelId]);
 
   // The socket, through the shared rules (core/forum.ts).
+  const onForumEvent = useEffectEvent((type: (typeof FORUM_EVENTS)[number], detail: ForumEventDetail, view: ForumListView) => {
+    setPosts((prev) => applyForumListEvent(prev, type, detail, view));
+    const fetchId = pinnedPostToFetch(posts, type, detail, view);
+    if (fetchId) {
+      apiGetForumPost(roomId, fetchId)
+        .then(({ post }) => setPosts((prev) => addPinnedPost(prev, post, detail, view)))
+        .catch(() => {});
+    }
+  });
   useEffect(() => {
     const view: ForumListView = { roomId, channelId, sort, tagFilter, searching };
-    const offs = FORUM_EVENTS.map((type) =>
-      on<ForumEventDetail>(type, (detail) => {
-        setPosts((prev) => applyForumListEvent(prev, type, detail, view));
-        const fetchId = pinnedPostToFetch(postsRef.current, type, detail, view);
-        if (fetchId) {
-          apiGetForumPost(roomId, fetchId)
-            .then(({ post }) => setPosts((prev) => addPinnedPost(prev, post, detail, view)))
-            .catch(() => {});
-        }
-      }),
-    );
+    const offs = FORUM_EVENTS.map((type) => on<ForumEventDetail>(type, (detail) => onForumEvent(type, detail, view)));
     return () => offs.forEach((off) => off());
   }, [roomId, channelId, sort, tagFilter, searching]);
 
@@ -185,7 +187,7 @@ export function ForumView() {
           <Icon as={Search} size={15} />
           <TextInput
             value={query}
-            onChangeText={setQuery}
+            onChangeText={changeQuery}
             placeholder="Search posts..."
             placeholderTextColor={colors["muted-foreground"]}
             autoCapitalize="none"
@@ -194,7 +196,7 @@ export function ForumView() {
             className="h-9 flex-1 px-2 font-mono text-sm text-foreground"
           />
           {query ? (
-            <Pressable onPress={() => setQuery("")} hitSlop={8} accessibilityLabel="Clear search" className="px-2">
+            <Pressable onPress={() => changeQuery("")} hitSlop={8} accessibilityLabel="Clear search" className="px-2">
               <Icon as={X} size={14} />
             </Pressable>
           ) : null}

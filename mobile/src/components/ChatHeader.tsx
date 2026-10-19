@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -93,6 +93,8 @@ function HeaderButton({
   );
 }
 
+const PHASE_TICK_MS = 30_000;
+
 /** The web's tool row at phone width: right-aligned ghost icon buttons. */
 function ToolRow() {
   const state = useChatter();
@@ -102,11 +104,18 @@ function ToolRow() {
   const channelId = state.currentChannelId ?? undefined;
   const muted = resolveNotificationLevel(state.notificationSettings, roomId, channelId) === "none";
   // Green while something is on, primary for one starting soon (the web's).
+  // The clock ticks on its own, so an event starts here without anything
+  // else changing on screen.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), PHASE_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
   let live = 0;
   let soon = 0;
   for (const event of state.roomEvents) {
     if (event.cancelled) continue;
-    const phase = phaseOf(event, Date.now());
+    const phase = phaseOf(event, now);
     if (phase === "live") live++;
     else if (phase === "soon") soon++;
   }

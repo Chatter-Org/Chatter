@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useChatter } from "@/state/ChatterProvider";
 import { BackHandler, Pressable, StyleSheet, View } from "react-native";
 import { useWindowLayout } from "@/ui/windowLayout";
@@ -97,37 +97,45 @@ export function PanelLayout({
 
   const animateTo = useCallback(
     (side: PanelSide | null) => {
-      offset.value = withSpring(side === "left" ? leftWidth : side === "right" ? -rightWidth : 0, SPRING);
+      offset.set(withSpring(side === "left" ? leftWidth : side === "right" ? -rightWidth : 0, SPRING));
       setOpen(side);
     },
     [offset, leftWidth, rightWidth],
   );
 
-  // A layout change (folding, rotating) settles whatever was half open.
-  useEffect(() => {
-    offset.value = 0;
+  // A layout change (folding, rotating) settles whatever was half open: the
+  // panel closes with this render, and the slide goes back to rest after it.
+  const [layoutDocked, setLayoutDocked] = useState(leftDocked);
+  if (layoutDocked !== leftDocked) {
+    setLayoutDocked(leftDocked);
     setOpen(null);
+  }
+  useEffect(() => {
+    offset.set(0);
   }, [leftDocked, offset]);
 
   // Another conversation (a DM opened from a profile, say) is a new list of
   // members; the old one, left open over it, would be someone else's.
   const { currentRoomId: roomId, activeThreadEventId } = useChatter();
+  // The panel closes with this render; the conversation slides back after it.
+  const [membersRoom, setMembersRoom] = useState(roomId);
+  if (membersRoom !== roomId) {
+    setMembersRoom(roomId);
+    if (open === "right") setOpen(null);
+  }
   useEffect(() => {
-    setOpen((side) => {
-      if (side === "right") offset.value = withSpring(0, SPRING);
-      return side === "right" ? null : side;
-    });
+    if (offset.value < 0) offset.set(withSpring(0, SPRING));
   }, [roomId, offset]);
 
   // The pane shows the store's open thread. Opening one from the channel list
   // switches channel first and the thread arrives after, so the pane waits
   // for it; the store dropping a thread it had (another room or channel, the
   // thread deleted) closes the pane.
-  const hadThread = useRef(false);
-  useEffect(() => {
-    if (hadThread.current && !activeThreadEventId) setThreadOpen(false);
-    hadThread.current = !!activeThreadEventId;
-  }, [activeThreadEventId]);
+  const [paneThread, setPaneThread] = useState(activeThreadEventId);
+  if (paneThread !== activeThreadEventId) {
+    setPaneThread(activeThreadEventId);
+    if (paneThread && !activeThreadEventId) setThreadOpen(false);
+  }
   const showThread = threadOpen && !!activeThreadEventId;
 
   // Back closes an open panel before it leaves the screen.
@@ -257,15 +265,15 @@ function PushLayout({
     failOffsetY: [-14, 14],
     onBegin: () => {
       "worklet";
-      start.value = offset.value;
-      fromRightEdge.value = false;
+      start.set(offset.value);
+      fromRightEdge.set(false);
     },
     onUpdate: (e) => {
       "worklet";
       const next = start.value + e.translationX;
       const min = start.value < 0 || fromRightEdge.value ? -rightWidth : 0;
       const max = start.value < 0 ? 0 : leftWidth;
-      offset.value = Math.min(max, Math.max(min, next));
+      offset.set(Math.min(max, Math.max(min, next)));
     },
     onDeactivate: (e) => {
       "worklet";
@@ -278,12 +286,12 @@ function PushLayout({
     failOffsetY: [-14, 14],
     onBegin: () => {
       "worklet";
-      start.value = offset.value;
-      fromRightEdge.value = true;
+      start.set(offset.value);
+      fromRightEdge.set(true);
     },
     onUpdate: (e) => {
       "worklet";
-      offset.value = Math.min(0, Math.max(-rightWidth, start.value + e.translationX));
+      offset.set(Math.min(0, Math.max(-rightWidth, start.value + e.translationX)));
     },
     onDeactivate: (e) => {
       "worklet";

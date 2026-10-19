@@ -124,16 +124,21 @@ export default function Panel() {
 function useMentions(active: boolean) {
   const state = useChatter();
   const [items, setItems] = useState<MatrixMessage[]>([]);
-  const [loading, setLoading] = useState(active);
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
   const roomId = state.currentRoomId;
   const username = state.userId ? state.userId.replace(/^@/, "").replace(/:.*$/, "") : "";
 
+  // Loading until the first page for this room has answered, and while a
+  // further page is on its way.
+  const wanted = active && roomId && username ? `${roomId}|${username}` : null;
+  const [answered, setAnswered] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loading = (wanted !== null && answered !== wanted) || loadingMore;
+
   useEffect(() => {
     if (!active || !roomId || !username) return;
     let live = true;
-    setLoading(true);
     apiSearchMessages(roomId, username, "mention")
       .then((page) => {
         if (!live) return;
@@ -142,15 +147,16 @@ function useMentions(active: boolean) {
         setOffset(page.nextOffset);
       })
       .catch(() => live && setItems([]))
-      .finally(() => live && setLoading(false));
+      .finally(() => live && setAnswered(`${roomId}|${username}`));
     return () => {
       live = false;
+      setAnswered(null);
     };
   }, [active, roomId, username]);
 
   const loadMore = async () => {
     if (!roomId || !hasMore || loading) return;
-    setLoading(true);
+    setLoadingMore(true);
     try {
       const page = await apiSearchMessages(roomId, username, "mention", "all", undefined, undefined, offset);
       // Dedupe in case a new mention arrived and shifted the window.
@@ -161,7 +167,7 @@ function useMentions(active: boolean) {
       setHasMore(page.hasMore);
       setOffset(page.nextOffset);
     } finally {
-      setLoading(false);
+      setLoadingMore(false);
     }
   };
 

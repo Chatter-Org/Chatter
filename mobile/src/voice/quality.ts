@@ -8,26 +8,26 @@ const POLL_MS = 2000;
 export function useCallQuality(active: boolean, peer: () => VoicePeer | null): ConnectionQuality {
   const [quality, setQuality] = useState<ConnectionQuality>(0);
   useEffect(() => {
-    if (!active) {
-      setQuality(0);
-      return;
-    }
+    if (!active) return;
     let stopped = false;
-    const read = async () => {
+    const read = () => {
       const pc = peer();
-      if (!pc) return setQuality(0);
-      try {
-        const stats = await pc.getStats();
-        if (!stopped) setQuality(scoreCallQuality(readCallStats(pc.connectionState, stats)));
-      } catch {
-        if (!stopped) setQuality(0);
-      }
+      const scored = pc
+        ? pc.getStats().then((stats) => scoreCallQuality(readCallStats(pc.connectionState, stats)))
+        : Promise.resolve<ConnectionQuality>(0);
+      void scored
+        .catch((): ConnectionQuality => 0)
+        .then((q) => {
+          if (!stopped) setQuality(q);
+        });
     };
-    void read();
+    read();
     const id = setInterval(read, POLL_MS);
     return () => {
       stopped = true;
       clearInterval(id);
+      // The next call starts from nothing, not this one's last reading.
+      setQuality(0);
     };
   }, [active, peer]);
   return quality;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { Check } from "lucide-react-native";
 import { isHexColor, isDarkColor } from "@chatter/core/color";
@@ -40,10 +40,14 @@ export function ColorPickerSheet({
   onClose(): void;
   onPick(hex: string): void;
 }) {
+  // The field starts from the current colour each time the sheet opens, and
+  // follows it while open.
   const [hex, setHex] = useState(value);
-  useEffect(() => {
+  const [shownFor, setShownFor] = useState({ open, value });
+  if (shownFor.open !== open || shownFor.value !== value) {
+    setShownFor({ open, value });
     if (open) setHex(value);
-  }, [open, value]);
+  }
   const rows = useMemo(() => LIGHTNESS.map((l) => HUES.map((h) => hsl(h, l > 0.8 || l < 0.25 ? 0.55 : 0.7, l))), []);
   const typed = hex.startsWith("#") ? hex : `#${hex}`;
   const valid = isHexColor(typed);
