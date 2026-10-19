@@ -73,7 +73,8 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Watch screen shares and webcams: the shared `StreamViewer` (core) on react-native-webrtc; "is streaming / View stream" bar, LIVE buttons in the call sheet, a full-screen viewer with a strip to switch feeds; opt-in like the web (nothing is fetched until the viewer is open)
 - [x] Picture-in-picture: leaving the app while watching (or the button) floats the stream over other apps, just the picture
 - [x] Camera: send this phone's camera to the call (the shared `StreamPublisher`), mirrored self-preview, switch lenses, off from the call sheet or the viewer
-- [ ] Share screen (MediaProjection)
+- [x] Share screen (MediaProjection): Share screen in the call sheet, Android's own prompt (one app or the whole screen), a "You are sharing your screen · Stop" strip instead of a hall-of-mirrors preview; sent with the shared `StreamPublisher` at the web's detail profile
+- [ ] A capture that fails after the prompt still shows as sharing until the connection gives up; check that frames are going out
 - [ ] Picture-in-picture window shaped to the stream (it is 16:9 for now; a portrait camera has bars)
 
 ### Design (match the web)

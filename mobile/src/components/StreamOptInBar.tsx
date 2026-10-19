@@ -1,6 +1,6 @@
 import { Pressable, View } from "react-native";
 import { router } from "expo-router";
-import { Monitor, Video } from "lucide-react-native";
+import { Monitor, MonitorOff, Video } from "lucide-react-native";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { Icon, T } from "@/ui/primitives";
@@ -13,7 +13,29 @@ import { Icon, T } from "@/ui/primitives";
 export function StreamOptInBar() {
   const state = useChatter();
   const { voice } = useChatterActions();
-  if (!state.inVoiceChannel || state.screenViewerOpen) return null;
+  if (!state.inVoiceChannel) return null;
+  // One's own screen is not shown back (it would be a hall of mirrors); the
+  // strip says it is going out, and stops it.
+  if (state.isScreenSharing) {
+    return (
+      <View className="flex-row items-center gap-2 border-b border-border bg-destructive/10 px-3 py-1.5">
+        <View className="size-2 rounded-full bg-destructive" />
+        <Icon as={Monitor} size={14} tone="destructive" />
+        <T className="min-w-0 flex-1 text-sm text-muted-foreground" numberOfLines={1}>
+          You are sharing your screen
+        </T>
+        <Pressable
+          onPress={voice.stopScreenShare}
+          accessibilityRole="button"
+          className="h-9 flex-row items-center gap-1.5 rounded-md bg-destructive px-3 active:bg-destructive/90"
+        >
+          <Icon as={MonitorOff} size={14} color="#fff" />
+          <T className="text-xs font-medium text-white">Stop</T>
+        </Pressable>
+      </View>
+    );
+  }
+  if (state.screenViewerOpen) return null;
 
   const screens = state.activeScreenSharers.filter((id) => id !== state.userId);
   const cameras = state.activeWebcamStreamers.filter((id) => id !== state.userId);

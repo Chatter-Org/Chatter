@@ -24,6 +24,7 @@ class ChatterCallModule : Module() {
 
     OnCreate {
       CallService.onAction = { action -> sendEvent("onCallAction", mapOf("action" to action)) }
+      enableScreenCaptureService()
     }
 
     OnActivityEntersForeground { pip.attach(appContext.currentActivity) }
@@ -86,6 +87,23 @@ class ChatterCallModule : Module() {
 
     Function("isInPictureInPicture") {
       pip.isActive(appContext.currentActivity)
+    }
+  }
+
+  /**
+   * Sharing the screen needs a foreground service of the media-projection
+   * type running before the capture starts (Android 14+). react-native-webrtc
+   * brings one, but only starts it when told to — an option apps usually set
+   * in MainApplication, which is generated here. Set from here instead, by
+   * name, so this module does not have to build against the library.
+   */
+  private fun enableScreenCaptureService() {
+    try {
+      val options = Class.forName("com.oney.WebRTCModule.WebRTCModuleOptions")
+      val instance = options.getMethod("getInstance").invoke(null)
+      options.getField("enableMediaProjectionService").setBoolean(instance, true)
+    } catch (e: Exception) {
+      android.util.Log.w("ChatterCall", "screen sharing will not have its capture service", e)
     }
   }
 

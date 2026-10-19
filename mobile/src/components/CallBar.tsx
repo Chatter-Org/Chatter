@@ -13,6 +13,7 @@ import {
   Mic,
   MicOff,
   Monitor,
+  MonitorOff,
   PhoneOff,
   Smartphone,
   Video,
@@ -336,6 +337,16 @@ function CallSheet({
               voice.watch(state.userId, "webcam");
               router.push("/watch");
             });
+          }}
+        />
+        <CallAction
+          icon={state.isScreenSharing ? MonitorOff : Monitor}
+          label={state.isScreenSharing ? "Stop sharing" : "Share screen"}
+          tone={state.isScreenSharing ? "danger" : "neutral"}
+          onPress={() => {
+            if (state.isScreenSharing) return voice.stopScreenShare();
+            onClose();
+            void voice.startScreenShare();
           }}
         />
         {route ? (
