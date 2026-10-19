@@ -89,7 +89,7 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Fold posture module (`modules/chatter-fold`, Jetpack WindowManager): the window's hinges, live as the phone folds and bends
 - [x] Book posture: an unfolded foldable splits at the hinge, channels on one side and the conversation on the other, nothing in the crease
 - [x] Tabletop posture: half open on its side, the conversation sits above the hinge and the composer below it
-- [ ] Tabletop for calls: video and screen shares above the hinge, controls below (with screen and webcam viewing)
+- [x] Tabletop for calls: a stream above the hinge, and below it who is live, the other feeds and round mute, deafen and leave buttons
 - [x] Tablets: three columns (channels, conversation, members); a thread opens beside the conversation in place of the members, and the members button swaps back
 - [x] Pushed screens (settings, profiles, a post) keep to a 760 dp reading column on wide windows
 - [x] Sheets on wide windows are a centred 640 dp column (Material's large-screen bottom sheet), never taller than below the status bar
