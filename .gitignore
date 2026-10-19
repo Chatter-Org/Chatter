@@ -31,3 +31,7 @@ external/*
 .git
 
 .DS_Store
+
+# Signing keys never belong in the repository (see mobile/RELEASING.md).
+*.jks
+*.keystore

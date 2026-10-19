@@ -5,7 +5,7 @@ React Native on top of `packages/core`, the protocol and state code it shares
 with the web client. The goal is the web's look and features, laid out and
 behaving like a phone app: gestures, back, sheets, notifications, foldables.
 
-FCM push notifications are deliberately **last**: everything else first.
+FCM push notifications are **on hold until the project owner says otherwise**.
 
 ## How it fits together
 
@@ -111,8 +111,9 @@ FCM push notifications are deliberately **last**: everything else first.
 
 ### Release
 - [x] App icon/splash in Chatter's identity: the web's mark (client/public/icon.svg) drawn by `scripts/make-icons.py` into the launcher icon, adaptive layers (with a monochrome one for themed icons) and the splash, on Chatter's dark tile
-- [ ] Release signing, versioning, EAS build profile
-- [ ] Replace the Kotlin app (`io.zgaf.chatter`)
+- [x] Release build in GitHub Actions (`.github/workflows/mobile-release.yml`): signed APK from a `mobile-v*` tag (GitHub Release) or by hand (artifact); version from the tag, versionCode from the run number; signing from secrets through `plugins/withReleaseSigning.js`. See RELEASING.md
+- [ ] The signing key itself, and the four secrets (RELEASING.md walks through it)
+- [x] ~~Replace the Kotlin app~~ — it was never published; nothing to replace
 
 ## Backend changes made for mobile
 

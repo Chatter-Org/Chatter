@@ -8,6 +8,15 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
  */
 const IS_DEV = process.env.APP_VARIANT === "development";
 
+/**
+ * Release builds are numbered by CI (.github/workflows/mobile-release.yml):
+ * the name from the tag (mobile-v1.2.0 → 1.2.0), the code from the run number,
+ * which only ever grows — Android installs an APK over an older one only when
+ * its versionCode is higher.
+ */
+const VERSION = process.env.CHATTER_VERSION ?? "0.1.0";
+const VERSION_CODE = Number(process.env.CHATTER_VERSION_CODE ?? "1");
+
 /** The server the sign-in screen offers first. Anyone self-hosting types their own. */
 const DEFAULT_SERVER =
   process.env.CHATTER_ORIGIN ?? (IS_DEV ? "http://localhost:8000" : "https://chatter.zgaf.io");
@@ -19,7 +28,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: IS_DEV ? "Chatter Dev" : "Chatter",
   slug: "chatter",
-  version: "0.1.0",
+  version: VERSION,
   scheme: IS_DEV ? "chatter-dev" : "chatter",
   orientation: "default",
   icon: "./assets/icon.png",
@@ -31,6 +40,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   android: {
     package: IS_DEV ? "io.zgaf.chatter.dev" : "io.zgaf.chatter",
+    versionCode: VERSION_CODE,
     adaptiveIcon: {
       backgroundColor: "#0a0a0a",
       foregroundImage: "./assets/android-icon-foreground.png",
@@ -72,6 +82,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         android: {
           // Only a development build may talk to a local server over http.
           usesCleartextTraffic: IS_DEV,
+          // R8 (on in release builds) stops at a class react-native-webrtc's
+          // prebuilt library refers to but does not ship: the AV1 decoder's
+          // JNI stub. The library's own rules keep the rest of org.webrtc.
+          extraProguardRules: "-dontwarn org.webrtc.Dav1dDecoder$Natives",
         },
       },
     ],
@@ -101,6 +115,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     "./plugins/withLongPathCmake",
+    "./plugins/withReleaseSigning",
   ],
   experiments: {
     typedRoutes: true,
