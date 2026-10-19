@@ -68,6 +68,12 @@ fn resolve_jwt_secret_unset() -> String {
 }
 
 pub async fn build_state() -> Arc<AppState> {
+    build_state_in("chatter").await
+}
+
+/// [`build_state`] on a database of the given name. The integration tests
+/// give each test its own, so their users and rooms never meet.
+pub async fn build_state_in(database: &str) -> Arc<AppState> {
     let _ = dotenvy::dotenv();
 
     let mongodb_uri =
@@ -79,7 +85,7 @@ pub async fn build_state() -> Arc<AppState> {
     let client = Client::with_uri_str(&mongodb_uri)
         .await
         .expect("Failed to connect to MongoDB");
-    let db = client.database("chatter");
+    let db = client.database(database);
 
     // Create indexes
     create_indexes(&db).await;

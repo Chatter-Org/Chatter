@@ -2,7 +2,7 @@ mod common;
 
 use common::{
     bearer, create_room, recv_event_type, recv_matching, register_user, spawn_server,
-    ws_connect_authenticated,
+    ws_connect_authenticated, PASSWORD,
 };
 use futures_util::SinkExt;
 use reqwest::{Client, StatusCode};
@@ -13,7 +13,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 async fn websocket_requires_valid_auth_handshake() {
     let server = spawn_server().await;
     let (_alice_user_id, _alice_token) =
-        register_user(&Client::new(), &server.base_url, "alice", "pw").await;
+        register_user(&Client::new(), &server.base_url, "alice", PASSWORD).await;
 
     let (mut socket, _) = connect_async(&server.ws_url).await.unwrap();
     socket
@@ -33,8 +33,8 @@ async fn typing_and_voice_events_update_room_state() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -148,8 +148,8 @@ async fn presence_transitions_active_to_offline_on_connect_disconnect() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -213,8 +213,8 @@ async fn a_reconnecting_client_is_handed_the_whole_voice_picture() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -284,8 +284,8 @@ async fn voice_events_carry_every_members_state() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -362,8 +362,8 @@ async fn voice_flags_reach_the_call_not_the_room_on_screen() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
 
     let call_room = create_room(
         &client,

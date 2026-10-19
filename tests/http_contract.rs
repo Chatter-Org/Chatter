@@ -1,7 +1,8 @@
 mod common;
 
 use common::{
-    bearer, create_room, recv_event_type, register_user, spawn_server, ws_connect_authenticated,
+    bearer, create_room, esc, recv_event_type, register_user, register_user_with_secret,
+    spawn_server, totp_code, ws_connect_authenticated, PASSWORD,
 };
 use reqwest::{multipart, Client, StatusCode};
 use serde_json::{json, Value};
@@ -11,24 +12,27 @@ async fn auth_contract_register_login_logout_and_failures() {
     let server = spawn_server().await;
     let client = Client::new();
 
-    let register_response = client
-        .post(format!("{}/_matrix/client/r0/register", server.base_url))
-        .json(&json!({"username": "alice", "password": "pw", "device_id": "a1"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(register_response.status(), StatusCode::OK);
-    let register_body: Value = register_response.json().await.unwrap();
-    assert_eq!(register_body["user_id"], "@alice:localhost");
-    let token = register_body["access_token"].as_str().unwrap().to_string();
+    // Signing up is two steps: register, then confirm a code from the TOTP
+    // secret it hands back. Only the second issues tokens.
+    let (user_id, token, secret) =
+        register_user_with_secret(&client, &server.base_url, "alice", PASSWORD).await;
+    assert_eq!(user_id, "@alice:localhost");
 
     let duplicate_register = client
         .post(format!("{}/_matrix/client/r0/register", server.base_url))
-        .json(&json!({"username": "alice", "password": "pw"}))
+        .json(&json!({"username": "alice", "password": PASSWORD}))
         .send()
         .await
         .unwrap();
     assert_eq!(duplicate_register.status(), StatusCode::BAD_REQUEST);
+
+    let short_password = client
+        .post(format!("{}/_matrix/client/r0/register", server.base_url))
+        .json(&json!({"username": "carol", "password": "pw"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(short_password.status(), StatusCode::BAD_REQUEST);
 
     let bad_login = client
         .post(format!("{}/_matrix/client/r0/login", server.base_url))
@@ -38,9 +42,26 @@ async fn auth_contract_register_login_logout_and_failures() {
         .unwrap();
     assert_eq!(bad_login.status(), StatusCode::FORBIDDEN);
 
+    // The right password alone only asks for the code.
+    let login_without_code = client
+        .post(format!("{}/_matrix/client/r0/login", server.base_url))
+        .json(&json!({"username": "alice", "password": PASSWORD, "device_id": "a2"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login_without_code.status(), StatusCode::OK);
+    let body: Value = login_without_code.json().await.unwrap();
+    assert_eq!(body["requires_totp"], true);
+    assert!(body.get("access_token").is_none());
+
     let login_response = client
         .post(format!("{}/_matrix/client/r0/login", server.base_url))
-        .json(&json!({"username": "alice", "password": "pw", "device_id": "a2"}))
+        .json(&json!({
+            "username": "alice",
+            "password": PASSWORD,
+            "totp_code": totp_code(&secret, "alice"),
+            "device_id": "a2"
+        }))
         .send()
         .await
         .unwrap();
@@ -49,12 +70,16 @@ async fn auth_contract_register_login_logout_and_failures() {
     let login_token = login_body["access_token"].as_str().unwrap().to_string();
     assert_ne!(login_token, token);
 
+    let refresh_token = login_body["refresh_token"].as_str().unwrap().to_string();
+
+    // Logging out is idempotent: with nothing to revoke it still clears the
+    // cookies and answers OK.
     let logout_missing_token = client
         .post(format!("{}/_matrix/client/r0/logout", server.base_url))
         .send()
         .await
         .unwrap();
-    assert_eq!(logout_missing_token.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(logout_missing_token.status(), StatusCode::OK);
 
     let logout_ok = client
         .post(format!("{}/_matrix/client/r0/logout", server.base_url))
@@ -64,16 +89,15 @@ async fn auth_contract_register_login_logout_and_failures() {
         .unwrap();
     assert_eq!(logout_ok.status(), StatusCode::OK);
 
-    let joined_rooms_after_logout = client
-        .get(format!(
-            "{}/_matrix/client/r0/joined_rooms",
-            server.base_url
-        ))
-        .header("authorization", bearer(&login_token))
+    // Access tokens are short-lived JWTs and run out on their own; what
+    // logging out revokes is the refresh token that would renew them.
+    let refresh_after_logout = client
+        .post(format!("{}/_matrix/client/r0/refresh", server.base_url))
+        .json(&json!({"refresh_token": refresh_token}))
         .send()
         .await
         .unwrap();
-    assert_eq!(joined_rooms_after_logout.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(refresh_after_logout.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -82,8 +106,8 @@ async fn room_contract_join_leave_and_dm_dedup() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -173,10 +197,10 @@ async fn room_members_contract_shape_and_membership_gate() {
     let client = Client::new();
 
     let (alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
     let (_carol_user_id, carol_token) =
-        register_user(&client, &server.base_url, "carol", "pw").await;
+        register_user(&client, &server.base_url, "carol", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -249,8 +273,8 @@ async fn message_contract_reply_redact_reaction_toggle_and_sync_shape() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -349,14 +373,13 @@ async fn message_contract_reply_redact_reaction_toggle_and_sync_shape() {
         .await
         .unwrap();
     let redacted_chunk: Value = messages_after_redact.json().await.unwrap();
-    let redacted_event = redacted_chunk["chunk"]
+    // A deleted message leaves history; the row is only kept, marked, for the
+    // counts and the broadcast.
+    assert!(redacted_chunk["chunk"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|event| event["event_id"].as_str() == Some(first_event_id.as_str()))
-        .unwrap();
-    assert_eq!(redacted_event["redacted"], true);
-    assert_eq!(redacted_event["content"]["body"], "[deleted]");
+        .all(|event| event["event_id"].as_str() != Some(first_event_id.as_str())));
 
     let reaction_add = client
         .put(format!(
@@ -416,8 +439,8 @@ async fn topic_update_broadcast_payload_shape() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -456,7 +479,7 @@ async fn voice_presence_and_upload_contract_auth_and_size_checks() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -520,6 +543,17 @@ async fn voice_presence_and_upload_contract_auth_and_size_checks() {
         .unwrap();
     assert_eq!(upload_without_auth.status(), StatusCode::UNAUTHORIZED);
 
+    // Uploads are unlimited until an admin sets a limit; alice, the first
+    // user, is the admin.
+    let set_limit = client
+        .put(format!("{}/api/admin/settings", server.base_url))
+        .header("authorization", bearer(&alice_token))
+        .json(&json!({"upload_limit_bytes": 10 * 1024 * 1024}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(set_limit.status(), StatusCode::OK);
+
     let oversized_file = vec![b'x'; 10 * 1024 * 1024 + 1];
     let form = multipart::Form::new().text("filename", "big.bin").part(
         "file",
@@ -536,7 +570,7 @@ async fn voice_presence_and_upload_contract_auth_and_size_checks() {
     assert_eq!(oversized_upload.status(), StatusCode::BAD_REQUEST);
 
     let body: Value = oversized_upload.json().await.unwrap();
-    assert_eq!(body["error"], "File too large (max 10MB)");
+    assert_eq!(body["error"], "File too large (max 10.0 MB)");
 }
 
 #[tokio::test]
@@ -545,8 +579,8 @@ async fn pin_contract_permissions_broadcast_and_redaction_cleanup() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -643,7 +677,9 @@ async fn pin_contract_permissions_broadcast_and_redaction_cleanup() {
     let list: Value = client
         .get(format!(
             "{}/api/rooms/{}/pins?channel_id={}",
-            server.base_url, room_id, channel_id
+            server.base_url,
+            room_id,
+            esc(&channel_id)
         ))
         .header("authorization", bearer(&bob_token))
         .send()
@@ -676,7 +712,9 @@ async fn pin_contract_permissions_broadcast_and_redaction_cleanup() {
     let list_after: Value = client
         .get(format!(
             "{}/api/rooms/{}/pins?channel_id={}",
-            server.base_url, room_id, channel_id
+            server.base_url,
+            room_id,
+            esc(&channel_id)
         ))
         .header("authorization", bearer(&alice_token))
         .send()
@@ -706,7 +744,7 @@ async fn pin_and_search_pagination_contract() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -781,7 +819,10 @@ async fn pin_and_search_pagination_contract() {
             client
                 .get(format!(
                     "{}/api/rooms/{}/pins?channel_id={}&limit=2&offset={}",
-                    base_url, room_id, channel_id, offset
+                    base_url,
+                    room_id,
+                    esc(&channel_id),
+                    offset
                 ))
                 .header("authorization", bearer(&token))
                 .send()
@@ -858,8 +899,10 @@ async fn permission_contract_custom_roles_are_enforced() {
     let server = spawn_server().await;
     let client = Client::new();
 
-    let (_owner_id, owner_token) = register_user(&client, &server.base_url, "owner", "pw").await;
-    let (member_id, member_token) = register_user(&client, &server.base_url, "member", "pw").await;
+    let (_owner_id, owner_token) =
+        register_user(&client, &server.base_url, "owner", PASSWORD).await;
+    let (member_id, member_token) =
+        register_user(&client, &server.base_url, "member", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -1059,8 +1102,10 @@ async fn channel_overwrite_contract_denies_allows_and_precedence() {
     let server = spawn_server().await;
     let client = Client::new();
 
-    let (_owner_id, owner_token) = register_user(&client, &server.base_url, "owner", "pw").await;
-    let (member_id, member_token) = register_user(&client, &server.base_url, "member", "pw").await;
+    let (_owner_id, owner_token) =
+        register_user(&client, &server.base_url, "owner", PASSWORD).await;
+    let (member_id, member_token) =
+        register_user(&client, &server.base_url, "member", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -1097,7 +1142,9 @@ async fn channel_overwrite_contract_denies_allows_and_precedence() {
             client
                 .get(format!(
                     "{}/api/rooms/{}/permissions?channel_id={}",
-                    base_url, room_id, channel
+                    base_url,
+                    room_id,
+                    esc(&channel)
                 ))
                 .header("authorization", bearer(&token))
                 .send()
@@ -1119,7 +1166,7 @@ async fn channel_overwrite_contract_denies_allows_and_precedence() {
     let set_everyone_deny = client
         .put(format!(
             "{}/api/rooms/{}/channels/{}",
-            server.base_url, room_id, channel_id
+            server.base_url, room_id, esc(&channel_id)
         ))
         .header("authorization", bearer(&owner_token))
         .json(&json!({
@@ -1157,7 +1204,7 @@ async fn channel_overwrite_contract_denies_allows_and_precedence() {
     let add_user_allow = client
         .put(format!(
             "{}/api/rooms/{}/channels/{}",
-            server.base_url, room_id, channel_id
+            server.base_url, room_id, esc(&channel_id)
         ))
         .header("authorization", bearer(&owner_token))
         .json(&json!({
@@ -1190,7 +1237,7 @@ async fn channel_overwrite_contract_denies_allows_and_precedence() {
     let hide = client
         .put(format!(
             "{}/api/rooms/{}/channels/{}",
-            server.base_url, room_id, channel_id
+            server.base_url, room_id, esc(&channel_id)
         ))
         .header("authorization", bearer(&owner_token))
         .json(&json!({
@@ -1228,7 +1275,9 @@ async fn channel_overwrite_contract_denies_allows_and_precedence() {
     let bad = client
         .put(format!(
             "{}/api/rooms/{}/channels/{}",
-            server.base_url, room_id, channel_id
+            server.base_url,
+            room_id,
+            esc(&channel_id)
         ))
         .header("authorization", bearer(&owner_token))
         .json(&json!({
@@ -1247,8 +1296,10 @@ async fn role_hierarchy_contract_blocks_self_escalation() {
     let server = spawn_server().await;
     let client = Client::new();
 
-    let (_owner_id, owner_token) = register_user(&client, &server.base_url, "owner", "pw").await;
-    let (member_id, member_token) = register_user(&client, &server.base_url, "member", "pw").await;
+    let (_owner_id, owner_token) =
+        register_user(&client, &server.base_url, "owner", PASSWORD).await;
+    let (member_id, member_token) =
+        register_user(&client, &server.base_url, "member", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -1367,8 +1418,10 @@ async fn category_permissions_are_inherited_until_a_channel_opts_out() {
     let server = spawn_server().await;
     let client = Client::new();
 
-    let (_owner_id, owner_token) = register_user(&client, &server.base_url, "owner", "pw").await;
-    let (member_id, member_token) = register_user(&client, &server.base_url, "member", "pw").await;
+    let (_owner_id, owner_token) =
+        register_user(&client, &server.base_url, "owner", PASSWORD).await;
+    let (member_id, member_token) =
+        register_user(&client, &server.base_url, "member", PASSWORD).await;
 
     let room_id = create_room(
         &client,
@@ -1426,7 +1479,9 @@ async fn category_permissions_are_inherited_until_a_channel_opts_out() {
             client
                 .get(format!(
                     "{}/api/rooms/{}/permissions?channel_id={}",
-                    base_url, room_id, channel
+                    base_url,
+                    room_id,
+                    esc(&channel)
                 ))
                 .header("authorization", bearer(&token))
                 .send()
@@ -1448,7 +1503,7 @@ async fn category_permissions_are_inherited_until_a_channel_opts_out() {
     let deny_on_category = client
         .put(format!(
             "{}/api/rooms/{}/categories/{}",
-            server.base_url, room_id, category_id
+            server.base_url, room_id, esc(&category_id)
         ))
         .header("authorization", bearer(&owner_token))
         .json(&json!({
@@ -1471,7 +1526,7 @@ async fn category_permissions_are_inherited_until_a_channel_opts_out() {
     let allow_on_channel = client
         .put(format!(
             "{}/api/rooms/{}/channels/{}",
-            server.base_url, room_id, channel_id
+            server.base_url, room_id, esc(&channel_id)
         ))
         .header("authorization", bearer(&owner_token))
         .json(&json!({
@@ -1494,7 +1549,9 @@ async fn category_permissions_are_inherited_until_a_channel_opts_out() {
     let opt_out = client
         .put(format!(
             "{}/api/rooms/{}/channels/{}",
-            server.base_url, room_id, channel_id
+            server.base_url,
+            room_id,
+            esc(&channel_id)
         ))
         .header("authorization", bearer(&owner_token))
         .json(&json!({ "inherit_category_permissions": false, "overwrites": [] }))
@@ -1527,7 +1584,10 @@ async fn category_permissions_are_inherited_until_a_channel_opts_out() {
     let as_role: Value = client
         .get(format!(
             "{}/api/rooms/{}/permissions?channel_id={}&as_role={}",
-            server.base_url, room_id, channel_id, role_id
+            server.base_url,
+            room_id,
+            esc(&channel_id),
+            role_id
         ))
         .header("authorization", bearer(&owner_token))
         .send()
@@ -1555,7 +1615,7 @@ async fn category_permissions_are_inherited_until_a_channel_opts_out() {
 async fn appearance_contract_round_trip_and_validation() {
     let server = spawn_server().await;
     let client = Client::new();
-    let (_, token) = register_user(&client, &server.base_url, "painter", "pw").await;
+    let (_, token) = register_user(&client, &server.base_url, "painter", PASSWORD).await;
 
     // An account that has never saved answers with nulls, not a 404: "nothing
     // stored" is the normal first-visit state.
@@ -1763,7 +1823,7 @@ async fn appearance_contract_round_trip_and_validation() {
         .unwrap();
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 
-    let (_, other_token) = register_user(&client, &server.base_url, "stranger", "pw").await;
+    let (_, other_token) = register_user(&client, &server.base_url, "stranger", PASSWORD).await;
     let theirs: Value = client
         .get(format!("{}/api/appearance", server.base_url))
         .header("authorization", bearer(&other_token))
@@ -1780,8 +1840,8 @@ async fn appearance_contract_round_trip_and_validation() {
 async fn room_suggested_theme_contract() {
     let server = spawn_server().await;
     let client = Client::new();
-    let (_, owner_token) = register_user(&client, &server.base_url, "host", "pw").await;
-    let (_, member_token) = register_user(&client, &server.base_url, "guest", "pw").await;
+    let (_, owner_token) = register_user(&client, &server.base_url, "host", PASSWORD).await;
+    let (_, member_token) = register_user(&client, &server.base_url, "guest", PASSWORD).await;
     let room_id = create_room(
         &client,
         &server.base_url,
@@ -1912,7 +1972,7 @@ async fn a_deleted_thread_reply_stops_being_counted() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
     let room_id = create_room(
         &client,
         &server.base_url,
@@ -2045,8 +2105,8 @@ async fn a_thread_mention_stays_unread_until_the_thread_itself_is_read() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (_bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (_bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
     let room_id = create_room(
         &client,
         &server.base_url,
@@ -2169,8 +2229,8 @@ async fn unreads_count_replies_and_dms_as_mentions_and_skip_deleted_messages() {
     let client = Client::new();
 
     let (alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (_bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (_bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
     let room_id = create_room(
         &client,
         &server.base_url,
@@ -2313,8 +2373,8 @@ async fn chunked_upload_reports_what_it_holds_and_can_be_abandoned_on_purpose() 
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (_bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (_bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
 
     let payload = vec![b'q'; 100];
     let init = client
@@ -2449,7 +2509,7 @@ async fn chunked_upload_verifies_each_chunk_before_assembling() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
 
     // Small enough to be a single chunk, so the whole file is the remainder
     // case: `min(CHUNK_SIZE, file_size - offset)`.
@@ -2600,8 +2660,8 @@ async fn poll_contract_vote_change_withdraw_and_close_posts_results() {
     let server = spawn_server().await;
     let client = Client::new();
 
-    let (alice_id, alice_token) = register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+    let (alice_id, alice_token) = register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
     let room_id = create_room(
         &client,
         &server.base_url,
@@ -2844,9 +2904,10 @@ async fn a_poll_is_only_as_visible_as_the_channel_it_was_asked_in() {
     let server = spawn_server().await;
     let client = Client::new();
 
-    let (_alice_id, alice_token) = register_user(&client, &server.base_url, "alice", "pw").await;
+    let (_alice_id, alice_token) =
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
     let (_mallory_id, mallory_token) =
-        register_user(&client, &server.base_url, "mallory", "pw").await;
+        register_user(&client, &server.base_url, "mallory", PASSWORD).await;
     let room_id = create_room(
         &client,
         &server.base_url,
@@ -2921,7 +2982,7 @@ async fn deleting_a_message_takes_its_upload_only_when_asked() {
     let client = Client::new();
 
     let (_alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "attachalice", "pw").await;
+        register_user(&client, &server.base_url, "attachalice", PASSWORD).await;
     let room_id = create_room(
         &client,
         &server.base_url,
@@ -3054,7 +3115,7 @@ async fn deleting_a_message_takes_its_upload_only_when_asked() {
 async fn gif_favorites_contract_follows_the_user_across_devices() {
     let server = spawn_server().await;
     let client = Client::new();
-    let (_, token) = register_user(&client, &server.base_url, "gifkeeper", "pw").await;
+    let (_, token) = register_user(&client, &server.base_url, "gifkeeper", PASSWORD).await;
     let url = format!("{}/api/gif-favorites", server.base_url);
 
     let empty: Value = client
@@ -3144,8 +3205,8 @@ async fn forum_posts_can_be_pinned_by_their_creator_and_moderators() {
     let client = Client::new();
 
     let (alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", "pw").await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", "pw").await;
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
 
     // A room that is a forum itself: its posts carry no channel, and its creator
     // is who set it up.

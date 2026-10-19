@@ -1,8 +1,19 @@
 name: Rust Quality Gate
 
+# Pushes to main as well as pull requests: most changes land by pushing to main
+# directly, and a gate that only watched pull requests never saw them.
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+  # deploy.yml runs this gate before deploying, without the advisory scan.
+  workflow_call:
+    inputs:
+      security:
+        description: Also run the advisory and licence scan
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -10,7 +21,8 @@ permissions:
 jobs:
   quality:
     name: Quality
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest, which moves to a new release on its own.
+    runs-on: ubuntu-24.04
     # scripts/rust-ci.sh runs `cargo test --workspace`, and the integration
     # tests in tests/ spawn a real server via build_state(), which connects to
     # MongoDB. Without this service they fail before asserting anything.
@@ -26,7 +38,13 @@ jobs:
           --health-retries 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      # The media tests convert real video, as the server does in production
+      # (the Dockerfile installs ffmpeg). The runner image has none, so without
+      # this every one of them failed and the gate had never passed.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -42,10 +60,13 @@ jobs:
 
   security:
     name: Security
-    runs-on: ubuntu-latest
+    # Off when deploying: a newly published advisory can fail it with nothing
+    # to do with the change being deployed. It still runs on every push and PR.
+    if: ${{ inputs.security != false }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
