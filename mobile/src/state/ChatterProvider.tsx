@@ -91,6 +91,8 @@ export interface ChatterActions extends StoreActions {
     stopCamera(): void;
     /** Front camera to back, or back again. */
     flipCamera(): void;
+    /** Stand somewhere else on a spatial channel's floor (0–1 across it). */
+    move(x: number, y: number): void;
     /** Share this phone's screen (Android asks first); off with `stopScreenShare`. */
     startScreenShare(): Promise<boolean>;
     stopScreenShare(): void;
@@ -499,6 +501,12 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         startCamera: () => shares.start("webcam"),
         stopCamera: () => shares.stop("webcam"),
         flipCamera: () => shares.flipCamera(),
+        move(x, y) {
+          const s = stateRef.current;
+          const ws = socketRef.current;
+          if (!s.voiceChannelId || !ws || ws.readyState !== WebSocket.OPEN) return;
+          ws.send(JSON.stringify({ type: "voice_move", room_id: s.voiceRoomId || s.currentRoomId, channel_id: s.voiceChannelId, x, y }));
+        },
         startScreenShare: () => shares.start("screen"),
         stopScreenShare: () => shares.stop("screen"),
       },

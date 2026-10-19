@@ -14,6 +14,7 @@ import {
   MicOff,
   Monitor,
   MonitorOff,
+  Move3d,
   PhoneOff,
   Smartphone,
   Video,
@@ -339,6 +340,17 @@ function CallSheet({
             });
           }}
         />
+        {state.channels.find((c) => c.channel_id === state.voiceChannelId)?.channel_type === "spatial" ? (
+          <CallAction
+            icon={Move3d}
+            label="Floor"
+            tone="neutral"
+            onPress={() => {
+              onClose();
+              router.push("/floor");
+            }}
+          />
+        ) : null}
         <CallAction
           icon={state.isScreenSharing ? MonitorOff : Monitor}
           label={state.isScreenSharing ? "Stop sharing" : "Share screen"}

@@ -69,7 +69,7 @@ FCM push notifications are deliberately **last**: everything else first.
 - [ ] ConnectionService (self-managed Telecom): a phone call interrupting, car/watch controls
 - [x] Audio routing: speaker by default, headsets win when connected, tap to switch
 - [x] Proximity screen-off while on the earpiece (`ProximityLock` in `modules/chatter-call`, following the audio route; not yet tried on a phone with an earpiece — the emulators have none)
-- [ ] Spatial channels' floor (heard by distance today, no map yet)
+- [x] Spatial channels' floor (the web's SpatialVoiceArea): everyone where they stand, faded with distance, a halo for what you can hear; tap or drag to walk (`voice_move`, metered with the last always sent). Tapping a spatial channel joins and opens it; the call sheet has Floor
 - [x] Watch screen shares and webcams: the shared `StreamViewer` (core) on react-native-webrtc; "is streaming / View stream" bar, LIVE buttons in the call sheet, a full-screen viewer with a strip to switch feeds; opt-in like the web (nothing is fetched until the viewer is open)
 - [x] Picture-in-picture: leaving the app while watching (or the button) floats the stream over other apps, just the picture
 - [x] Camera: send this phone's camera to the call (the shared `StreamPublisher`), mirrored self-preview, switch lenses, off from the call sheet or the viewer

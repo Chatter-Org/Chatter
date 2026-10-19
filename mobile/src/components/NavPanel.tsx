@@ -282,7 +282,16 @@ function ChannelList({ roomId }: { roomId: string }) {
     // A voice channel is a call: tapping it walks in (as on the web), and the
     // conversation on screen stays where it was.
     if (holdsCall(channel)) {
-      if (state.voiceChannelId !== channel.channel_id) void voice.join(channel.channel_id);
+      const joining = state.voiceChannelId !== channel.channel_id ? voice.join(channel.channel_id) : Promise.resolve();
+      // A spatial channel has a floor to stand on: open it once in.
+      if (channel.channel_type === "spatial") {
+        void joining.then(() => {
+          close();
+          router.push("/floor");
+        });
+      } else {
+        void joining;
+      }
       return;
     }
     if (channel.channel_id !== state.currentChannelId) void selectChannel(channel.channel_id).catch(() => {});

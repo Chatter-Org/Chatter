@@ -71,6 +71,7 @@ function Root() {
             <Stack.Screen name="forum-tags" options={{ animation: "slide_from_right" }} />
             <Stack.Screen name="share" options={{ animation: "slide_from_bottom" }} />
             <Stack.Screen name="watch" options={{ animation: "fade" }} />
+            <Stack.Screen name="floor" options={{ animation: "slide_from_right" }} />
           </Stack.Protected>
           <Stack.Protected guard={!signedIn}>
             <Stack.Screen name="sign-in" />
