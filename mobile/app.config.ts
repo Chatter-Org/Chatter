@@ -85,10 +85,22 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         android: {
           // Only a development build may talk to a local server over http.
           usesCleartextTraffic: IS_DEV,
-          // R8 (on in release builds) stops at a class react-native-webrtc's
-          // prebuilt library refers to but does not ship: the AV1 decoder's
-          // JNI stub. The library's own rules keep the rest of org.webrtc.
-          extraProguardRules: "-dontwarn org.webrtc.Dav1dDecoder$Natives",
+          // R8 shrinks and renames release builds, so anything native code
+          // finds by name has to be kept. The WebRTC library's own rules keep
+          // org.webrtc but not jni_zero, its JNI helper: the native side loads
+          // org.jni_zero.JniZero by name at start-up, and with it removed every
+          // release build aborted before drawing anything. CxxReactPackage is
+          // the one other class native code names that R8 removed. The AV1
+          // decoder stub is referred to but not shipped, and only needs R8 to
+          // not stop at it.
+          extraProguardRules: [
+            "-keep class org.jni_zero.** { *; }",
+            "-keepclasseswithmembers class * { @org.jni_zero.CalledByNative <methods>; }",
+            "-keepclasseswithmembers class * { @org.jni_zero.CalledByNativeUnchecked <methods>; }",
+            "-keepclasseswithmembers class * { @org.jni_zero.AccessedByNative <fields>; }",
+            "-keep class com.facebook.react.runtime.cxxreactpackage.** { *; }",
+            "-dontwarn org.webrtc.Dav1dDecoder$Natives",
+          ].join("\n"),
         },
       },
     ],
