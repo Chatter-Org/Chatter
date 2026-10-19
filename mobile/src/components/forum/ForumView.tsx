@@ -3,7 +3,7 @@ import { Alert, FlatList, Pressable, RefreshControl, ScrollView, TextInput, View
 import { router } from "expo-router";
 import { Image } from "expo-image";
 import * as Clipboard from "expo-clipboard";
-import { ArrowUpDown, Check, Link, MessageSquare, Paperclip, Pin, PinOff, Play, Plus, Search, Trash2, X } from "lucide-react-native";
+import { ArrowUpDown, Check, Link, MessageSquare, Paperclip, Pin, PinOff, Play, Plus, Search, Tags, Trash2, X } from "lucide-react-native";
 import {
   apiDeleteForumPost,
   apiGetForumPost,
@@ -62,6 +62,9 @@ export function ForumView() {
   const forumChannel = state.channels.find((c) => c.channel_id === state.currentChannelId && c.channel_type === "forum");
   const channelId = forumChannel?.channel_id ?? null;
   const tags = useMemo(() => forumChannel?.forum_tags ?? [], [forumChannel?.forum_tags]);
+  // Whoever set the forum up decides its tags, as does anyone who can manage
+  // the room's channels (the server checks the same two things).
+  const canManageTags = !!forumChannel && (forumChannel.created_by === state.userId || !!state.myPermissions?.manage_channels);
   const canPin = !!state.myPermissions?.manage_channels || (forumChannel ? forumChannel.created_by === state.userId : roomInfo?.creator === state.userId);
   const myRole = state.roomMembers.find((m) => m.userId === state.userId)?.role;
   const isOwnerOrMod = myRole === "owner" || myRole === "moderator";
@@ -209,6 +212,16 @@ export function ForumView() {
         >
           <Icon as={ArrowUpDown} size={15} />
         </Pressable>
+        {canManageTags ? (
+          <Pressable
+            onPress={() => router.push({ pathname: "/forum-tags", params: { room: roomId, channel: channelId ?? "" } })}
+            accessibilityRole="button"
+            accessibilityLabel="Set up this forum's tags"
+            className="size-9 items-center justify-center rounded-md border border-input active:bg-accent"
+          >
+            <Icon as={Tags} size={15} />
+          </Pressable>
+        ) : null}
         <Pressable
           onPress={() => router.push({ pathname: "/forum-new", params: { room: roomId, channel: channelId ?? "" } })}
           accessibilityRole="button"

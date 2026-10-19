@@ -13,7 +13,7 @@ import {
 } from "@chatter/core/gifFavorites";
 import { useDevicePrefs } from "@/state/devicePrefs";
 import { useTheme } from "@/theme/ThemeProvider";
-import { Sheet, SheetRow } from "@/ui/Sheet";
+import { Sheet, SheetRow, useSheetWidth } from "@/ui/Sheet";
 import { Segmented } from "@/ui/controls";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
@@ -34,7 +34,8 @@ export function useGifFavorites() {
  * to rename or delete it.
  */
 export function GifPickerSheet({ open, onClose, onPick }: { open: boolean; onClose(): void; onPick(url: string): void }) {
-  const { height, width } = useWindowDimensions();
+  const { height } = useWindowDimensions();
+  const width = useSheetWidth();
   // Three abreast however few there are: px-3 either side, gap-1 between.
   const tile = Math.floor((width - 24 - 8) / 3);
   const { colors } = useTheme();

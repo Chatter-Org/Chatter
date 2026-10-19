@@ -2,7 +2,7 @@ import { memo, useMemo, useState } from "react";
 import { Pressable, ScrollView, TextInput, useWindowDimensions, View } from "react-native";
 import { Image } from "expo-image";
 import { filterEmojiCatalog, getFrequentEmojis, isCustomEmojiUrl, recordEmojiUsage } from "@chatter/core/emojiCatalog";
-import { Sheet } from "@/ui/Sheet";
+import { Sheet, useSheetWidth } from "@/ui/Sheet";
 import { T } from "@/ui/primitives";
 import { UI_HEADING } from "@/ui/roles";
 import { serverImage } from "@/ui/media";
@@ -28,7 +28,8 @@ export function EmojiPickerSheet({
   emojiAliases?: Record<string, string>;
 }) {
   const { colors } = useTheme();
-  const { height, width } = useWindowDimensions();
+  const { height } = useWindowDimensions();
+  const width = useSheetWidth();
   const [search, setSearch] = useState("");
   const frequent = useMemo(() => (open ? getFrequentEmojis() : []), [open]);
   const { categories, custom } = useMemo(
@@ -36,8 +37,8 @@ export function EmojiPickerSheet({
     [search, roomCustomEmojis, emojiAliases],
   );
   // Cells sized so a row fills the sheet.
-  const columns = Math.max(7, Math.floor((Math.min(width, 640) - 24) / 46));
-  const cell = (Math.min(width, 640) - 24) / columns;
+  const columns = Math.max(7, Math.floor((width - 24) / 46));
+  const cell = (width - 24) / columns;
 
   const pick = (emoji: string) => {
     recordEmojiUsage(emoji);

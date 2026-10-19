@@ -58,7 +58,7 @@ FCM push notifications are deliberately **last**: everything else first.
 
 ### Forums
 - [x] Forum channels: post list (search, sort, tag filters, pins first, pull to refresh, live), open a post (Markdown, media, reactions, threaded replies with folding), comment and reply with attachments, edit and delete, create and edit a post with tags and up to ten attachments; forum links open the post
-- [ ] Forum tag set-up (the web's Manage tags dialog)
+- [x] Forum tag set-up (the web's Manage tags dialog): name, colour (or none), add and remove, up to twenty, with a preview; for the forum's creator and anyone who can manage channels
 
 ### Voice and video
 - [x] Shared `VoiceEngine` in core (`packages/core/src/voice/engine.ts`), ported from `useWebRTCVoice`, on a `react-native-webrtc` backend (`src/voice/nativeBackend.ts`)
@@ -88,6 +88,7 @@ FCM push notifications are deliberately **last**: everything else first.
 - [ ] Tabletop for calls: video and screen shares above the hinge, controls below (with screen and webcam viewing)
 - [x] Tablets: three columns (channels, conversation, members); a thread opens beside the conversation in place of the members, and the members button swaps back
 - [x] Pushed screens (settings, profiles, a post) keep to a 760 dp reading column on wide windows
+- [x] Sheets on wide windows are a centred 640 dp column (Material's large-screen bottom sheet), never taller than below the status bar
 
 ### Settings (native screens)
 - [x] Appearance: Match phone + the 8 web themes

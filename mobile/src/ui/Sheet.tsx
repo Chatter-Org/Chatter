@@ -1,6 +1,6 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import type { LucideProps } from "lucide-react-native";
-import { Modal, Pressable, StyleSheet, View } from "react-native";
+import { Modal, Pressable, StyleSheet, View, useWindowDimensions } from "react-native";
 import { GestureDetector, GestureHandlerRootView, usePanGesture } from "react-native-gesture-handler";
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
@@ -9,11 +9,21 @@ import { useTheme } from "@/theme/ThemeProvider";
 import { Icon, T } from "./primitives";
 import { cn } from "./cn";
 
+/** A sheet is no wider than this (Material's bottom sheet on a large screen). */
+export const SHEET_MAX_WIDTH = 640;
+
+/** How wide a sheet is in this window: the window, or the cap, centred. */
+export function useSheetWidth(): number {
+  const { width } = useWindowDimensions();
+  return Math.min(width, SHEET_MAX_WIDTH);
+}
+
 /**
  * A bottom sheet: what a phone shows where the web shows a menu or a dialog.
  *
  * Slides up over a dimmed backdrop; a tap on the backdrop, a swipe down on the
- * sheet, or Back closes it. Sized to its content.
+ * sheet, or Back closes it. Sized to its content, below the status bar at the
+ * most; on a wide window, a centred column rather than the whole width.
  *
  * `bare` gives the content the sheet's whole face, top edge included, with
  * the grabber floating over it — for a sheet that opens on a picture.
@@ -33,6 +43,9 @@ export function Sheet({
 }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const window = useWindowDimensions();
+  const sheetWidth = useSheetWidth();
+  const side = (window.width - sheetWidth) / 2;
   // Kept mounted while the closing animation plays.
   const [wasOpen, setWasOpen] = useState(open);
   const [closing, setClosing] = useState(false);
@@ -92,7 +105,15 @@ export function Sheet({
             onLayout={(e) => setHeight(e.nativeEvent.layout.height)}
             style={[
               styles.sheet,
-              { backgroundColor: colors.background, borderColor: colors.border, paddingBottom: insets.bottom + 16 },
+              {
+                backgroundColor: colors.background,
+                borderColor: colors.border,
+                paddingBottom: insets.bottom + 16,
+                left: side,
+                right: side,
+                maxHeight: window.height - insets.top - 8,
+              },
+              side > 0 && styles.floatingSides,
               bare && styles.bare,
               sheetStyle,
             ]}
@@ -123,6 +144,8 @@ const styles = StyleSheet.create({
   },
   handle: { alignSelf: "center", width: 44, height: 4.4, borderRadius: 2.2, opacity: 0.4, marginBottom: 13 },
   bare: { paddingTop: 0, overflow: "hidden" },
+  // Clear of the window's edges, it has sides to draw.
+  floatingSides: { borderLeftWidth: 1, borderRightWidth: 1 },
   // Over a banner, whatever its colours: white, a little stronger.
   floating: { position: "absolute", top: 8, zIndex: 1, opacity: 0.7 },
 });
