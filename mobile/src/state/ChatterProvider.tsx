@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { AppState as RNAppState } from "react-native";
 import Constants from "expo-constants";
 import {
@@ -34,6 +34,10 @@ import { useCallService } from "@/voice/useCallService";
 import { signOutThisDevice } from "@/platform/signOut";
 import { socketUrl } from "@/platform/server";
 import { hasStoredSession } from "@/platform/tokenStore";
+import { createPublisher, createViewers, localStream, setLocalStream } from "@/voice/viewing";
+import { emit, on } from "@/platform/events";
+import { mediaDevices, type MediaStream, type MediaStreamTrack } from "react-native-webrtc";
+import { getWebcamPublishProfile } from "@chatter/core/webrtc";
 
 /**
  * The mobile app's store: the web client's state, reducer, socket handling and
@@ -79,6 +83,16 @@ export interface ChatterActions extends StoreActions {
     isSpeaking(): boolean;
     /** The call's sending connection, for its quality. */
     peer(): VoicePeer | null;
+    /** Watch someone's screen share or webcam: opens the viewer on them,
+     *  which is the consent to watch anyone sharing in the call. */
+    watch(userId: string, kind: "screen" | "webcam"): void;
+    /** Close the viewer, letting go of every stream. */
+    stopWatching(): void;
+    /** Show this phone's camera to the call; off again with `stopCamera`. */
+    startCamera(): Promise<void>;
+    stopCamera(): void;
+    /** Front camera to back, or back again. */
+    flipCamera(): void;
   };
 }
 
@@ -166,6 +180,73 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
   }, [state.inVoiceChannel]);
   useEffect(() => subscribeVoiceSettings(() => voice.applySettings()), [voice]);
   useCallService(state, voice);
+
+  // Watching screen shares and webcams. The viewer being open is the consent:
+  // nobody is watched until it is, and closing it lets go of everyone. The
+  // refs are read in the viewers' callbacks, later, never in this render.
+  // eslint-disable-next-line react-hooks/refs
+  const [viewers] = useState(() =>
+    createViewers({
+      send: (frame) => {
+        const ws = socketRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        ws.send(JSON.stringify(frame));
+        return true;
+      },
+      roomId: () => stateRef.current.voiceRoomId || stateRef.current.currentRoomId,
+      userId: () => stateRef.current.userId,
+    }),
+  );
+  // This phone's camera, sent to the call.
+  // eslint-disable-next-line react-hooks/refs
+  const [camera] = useState(() =>
+    createPublisher("webcam", {
+      send: (frame) => {
+        const ws = socketRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        ws.send(JSON.stringify(frame));
+        return true;
+      },
+      roomId: () => stateRef.current.voiceRoomId || stateRef.current.currentRoomId,
+      channelId: () => stateRef.current.voiceChannelId,
+      // Heard below, where turning the camera off lives.
+      onGiveUp: (message) => emit("camera-gave-up", message),
+    }),
+  );
+  const stopCamera = useCallback(() => {
+    const s = stateRef.current;
+    const had = !!localStream("webcam");
+    camera.stop();
+    localStream("webcam")?.getTracks().forEach((t) => t.stop());
+    setLocalStream("webcam", s.userId, null);
+    if (!had) return;
+    dispatch({ type: "SET_VOICE_STATE", payload: { isWebcamActive: false } });
+    if (s.userId) dispatch({ type: "WEBCAM_SHARE_STOPPED", payload: s.userId });
+    const ws = socketRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "webcam_share_stop", room_id: s.voiceRoomId || s.currentRoomId, channel_id: s.voiceChannelId || undefined }));
+    }
+  }, [camera]);
+  useEffect(
+    () =>
+      on<string>("camera-gave-up", (message) => {
+        stopCamera();
+        showToast({ message, tone: "error" });
+      }),
+    [stopCamera],
+  );
+  // Leaving the call turns the camera off.
+  useEffect(() => {
+    if (!state.inVoiceChannel) stopCamera();
+  }, [state.inVoiceChannel, stopCamera]);
+
+  const watching = state.inVoiceChannel && state.screenViewerOpen;
+  useEffect(() => {
+    viewers.screen.setWanted(watching ? state.activeScreenSharers : []);
+  }, [viewers, watching, state.activeScreenSharers]);
+  useEffect(() => {
+    viewers.webcam.setWanted(watching ? state.activeWebcamStreamers : []);
+  }, [viewers, watching, state.activeWebcamStreamers]);
 
   // ─── Session ───────────────────────────────────────────────────────────────
 
@@ -283,6 +364,9 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         const frame = JSON.parse(event.data);
         handleFrame(frame);
         void voice.handleFrame(frame);
+        void viewers.screen.handleFrame(frame);
+        void viewers.webcam.handleFrame(frame);
+        void camera.handleFrame(frame);
         noteSpeakingFrame(frame);
       } catch (e) {
         console.warn("socket: could not handle a frame", e);
@@ -426,6 +510,48 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         setUserVolume: (userId, volume) => voice.setUserVolume(userId, volume),
         isSpeaking: () => voice.connections.mic?.isSpeaking() ?? false,
         peer: () => voice.connections.publisher,
+        watch: (userId, kind) =>
+          dispatch({
+            type: "SET_SCREEN_VIEWER",
+            payload: kind === "screen" ? { open: true, sharer: userId } : { open: true, webcamStreamer: userId },
+          }),
+        stopWatching: () => dispatch({ type: "SET_SCREEN_VIEWER", payload: { open: false } }),
+        async startCamera() {
+          const s = stateRef.current;
+          if (!s.inVoiceChannel || localStream("webcam")) return;
+          const profile = getWebcamPublishProfile(30);
+          let stream: MediaStream;
+          try {
+            stream = await mediaDevices.getUserMedia({
+              audio: false,
+              video: { facingMode: "user", width: 1280, height: 720, frameRate: profile.targetFps },
+            });
+          } catch {
+            showToast({ message: "Couldn't open the camera", description: "Chatter needs the camera permission to show it.", tone: "error" });
+            return;
+          }
+          const track = stream.getVideoTracks()[0];
+          if (!track) return;
+          setLocalStream("webcam", s.userId, stream);
+          dispatch({ type: "SET_VOICE_STATE", payload: { isWebcamActive: true } });
+          if (s.userId) dispatch({ type: "WEBCAM_SHARE_STARTED", payload: s.userId });
+          const ws = socketRef.current;
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "webcam_share_start", room_id: s.voiceRoomId || s.currentRoomId, channel_id: s.voiceChannelId || undefined }));
+          }
+          try {
+            await camera.start(track, stream, { maxBitrateBps: profile.maxBitrateBps, maxFramerate: profile.targetFps, degradationPreference: "maintain-framerate" });
+          } catch {
+            stopCamera();
+            showToast({ message: "Couldn't start the camera", tone: "error" });
+          }
+        },
+        stopCamera,
+        flipCamera: () => {
+          // react-native-webrtc's own way to swap a camera track between lenses.
+          const track = localStream("webcam")?.getVideoTracks()[0] as (MediaStreamTrack & { _switchCamera?(): void }) | undefined;
+          track?._switchCamera?.();
+        },
       },
       async signIn(username, password, totpCode) {
         const data = await apiLogin(username, password, totpCode);
@@ -474,7 +600,7 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "SET_SESSION_RESTORE", payload: "absent" });
       },
     }),
-    [shared, voice],
+    [shared, voice, camera, stopCamera],
   );
 
   return (

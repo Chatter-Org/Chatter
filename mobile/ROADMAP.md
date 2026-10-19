@@ -70,8 +70,11 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Audio routing: speaker by default, headsets win when connected, tap to switch
 - [x] Proximity screen-off while on the earpiece (`ProximityLock` in `modules/chatter-call`, following the audio route; not yet tried on a phone with an earpiece — the emulators have none)
 - [ ] Spatial channels' floor (heard by distance today, no map yet)
-- [ ] Watch screen shares and webcams; picture-in-picture
-- [ ] Share screen (MediaProjection) and camera
+- [x] Watch screen shares and webcams: the shared `StreamViewer` (core) on react-native-webrtc; "is streaming / View stream" bar, LIVE buttons in the call sheet, a full-screen viewer with a strip to switch feeds; opt-in like the web (nothing is fetched until the viewer is open)
+- [x] Picture-in-picture: leaving the app while watching (or the button) floats the stream over other apps, just the picture
+- [x] Camera: send this phone's camera to the call (the shared `StreamPublisher`), mirrored self-preview, switch lenses, off from the call sheet or the viewer
+- [ ] Share screen (MediaProjection)
+- [ ] Picture-in-picture window shaped to the stream (it is 16:9 for now; a portrait camera has bars)
 
 ### Design (match the web)
 - [x] Shared control recipes (`packages/core/src/ui/recipes.ts`) used by the web's shadcn files and `src/ui/controls.tsx`; the web's 17.6px rem

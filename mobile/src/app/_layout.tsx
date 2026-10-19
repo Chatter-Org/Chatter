@@ -16,7 +16,7 @@ import { SessionGate } from "@/components/SessionGate";
 import { ProfileProvider } from "@/components/ProfileSheet";
 
 /** Screens that lay out the whole window themselves rather than a reading column. */
-const FULL_WIDTH = new Set(["index", "sign-in"]);
+const FULL_WIDTH = new Set(["index", "sign-in", "watch"]);
 
 export default function RootLayout() {
   return (
@@ -70,6 +70,7 @@ function Root() {
             <Stack.Screen name="forum-new" options={{ animation: "slide_from_bottom" }} />
             <Stack.Screen name="forum-tags" options={{ animation: "slide_from_right" }} />
             <Stack.Screen name="share" options={{ animation: "slide_from_bottom" }} />
+            <Stack.Screen name="watch" options={{ animation: "fade" }} />
           </Stack.Protected>
           <Stack.Protected guard={!signedIn}>
             <Stack.Screen name="sign-in" />

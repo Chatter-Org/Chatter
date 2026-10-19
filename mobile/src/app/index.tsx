@@ -5,6 +5,7 @@ import { PanelLayout, usePanels } from "@/components/PanelLayout";
 import { NavPanel, type RailSelection } from "@/components/NavPanel";
 import { MembersPanel } from "@/components/MembersPanel";
 import { ChatHeader } from "@/components/ChatHeader";
+import { StreamOptInBar } from "@/components/StreamOptInBar";
 import { ChatView } from "@/components/ChatView";
 import { ThreadView } from "./thread";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -70,6 +71,7 @@ function Conversation() {
   return (
     <View className="flex-1 bg-background" style={leftDocked ? { borderLeftWidth: 0 } : undefined}>
       <ChatHeader />
+      <StreamOptInBar />
       {forum ? <ForumView key={`${state.currentRoomId}|${channel?.channel_id ?? ""}`} /> : <ChatView />}
     </View>
   );

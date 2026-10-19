@@ -12,11 +12,15 @@ import {
   Hand,
   Mic,
   MicOff,
+  Monitor,
   PhoneOff,
   Smartphone,
+  Video,
+  VideoOff,
   Volume2,
   VolumeX,
 } from "lucide-react-native";
+import { router } from "expo-router";
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react-native";
 import { displayUserId } from "@chatter/core/utils";
@@ -287,6 +291,12 @@ function CallSheet({
             volumeOpen={volumeFor === id}
             onToggleVolume={() => setVolumeFor((v) => (v === id ? null : id))}
             onVolume={(v) => setVolume(id, v)}
+            sharing={state.activeScreenSharers.includes(id) ? "screen" : state.activeWebcamStreamers.includes(id) ? "webcam" : null}
+            onWatch={(kind) => {
+              onClose();
+              voice.watch(id, kind);
+              router.push("/watch");
+            }}
           />
         ))}
       </ScrollView>
@@ -312,6 +322,21 @@ function CallSheet({
           label={state.voiceInputMode === "ptt" ? "Push to talk" : "Open mic"}
           tone="neutral"
           onPress={voice.toggleInputMode}
+        />
+        <CallAction
+          icon={state.isWebcamActive ? VideoOff : Video}
+          label={state.isWebcamActive ? "Stop camera" : "Camera"}
+          tone={state.isWebcamActive ? "danger" : "neutral"}
+          onPress={() => {
+            if (state.isWebcamActive) return voice.stopCamera();
+            onClose();
+            void voice.startCamera().then(() => {
+              // What the call sees, as the web shows it: one's own picture.
+              if (!state.userId) return;
+              voice.watch(state.userId, "webcam");
+              router.push("/watch");
+            });
+          }}
         />
         {route ? (
           <CallAction
@@ -351,6 +376,8 @@ const Participant = memo(function Participant({
   volumeOpen,
   onToggleVolume,
   onVolume,
+  sharing,
+  onWatch,
 }: {
   userId: string;
   isSelf: boolean;
@@ -359,6 +386,9 @@ const Participant = memo(function Participant({
   volumeOpen: boolean;
   onToggleVolume(): void;
   onVolume(volume: number): void;
+  /** What they are streaming, a screen before a camera; null for neither. */
+  sharing: "screen" | "webcam" | null;
+  onWatch(kind: "screen" | "webcam"): void;
 }) {
   const state = useChatter();
   const { colors } = useTheme();
@@ -392,6 +422,17 @@ const Participant = memo(function Participant({
             <T className="text-[11px] text-muted-foreground">{deafened ? "Deafened" : muted ? "Muted" : "Open"}</T>
           </View>
         </View>
+        {!isSelf && sharing ? (
+          <Pressable
+            onPress={() => onWatch(sharing)}
+            accessibilityRole="button"
+            accessibilityLabel={`Watch ${name}'s ${sharing === "screen" ? "screen" : "camera"}`}
+            className="h-9 flex-row items-center gap-1.5 rounded-md bg-red-600 px-2.5 active:bg-red-700"
+          >
+            <Icon as={sharing === "screen" ? Monitor : Video} size={14} color="#fff" />
+            <T className="text-xs font-bold text-white">LIVE</T>
+          </Pressable>
+        ) : null}
         {!isSelf ? (
           <Pressable
             onPress={onToggleVolume}

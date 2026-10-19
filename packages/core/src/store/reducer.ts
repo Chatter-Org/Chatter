@@ -47,6 +47,9 @@ function deriveRoomVoice(state: AppState): AppState {
     { muted: boolean; deafened: boolean; screen_sharing: boolean }
   > = {};
   const sharers: string[] = [];
+  // Cameras too: someone who joins after a camera came on hears of it only
+  // from the member list, not from the "started" broadcast they missed.
+  const streamers: string[] = [];
   if (roomId) {
     for (const [channelId, channelMembers] of Object.entries(state.voiceChannelMembers)) {
       if (state.voiceChannelRooms[channelId] !== roomId) continue;
@@ -63,14 +66,21 @@ function deriveRoomVoice(state: AppState): AppState {
         if (member.screen_sharing && !sharers.includes(member.userId)) {
           sharers.push(member.userId);
         }
+        if (member.webcam_sharing && !streamers.includes(member.userId)) {
+          streamers.push(member.userId);
+        }
       }
     }
   }
+  // One's own camera counts from the moment it is on, before the server's
+  // member list catches up with it.
+  if (state.isWebcamActive && state.userId && !streamers.includes(state.userId)) streamers.push(state.userId);
   return {
     ...state,
     voiceMembers: members,
     voiceMemberStates: states,
     activeScreenSharers: sharers,
+    activeWebcamStreamers: streamers,
   };
 }
 

@@ -15,17 +15,23 @@ class ChatterCallModule : Module() {
 
   private var router: AudioRouter? = null
   private var proximity: ProximityLock? = null
+  private val pip = PictureInPicture { active -> sendEvent("onPipChanged", mapOf("active" to active)) }
 
   override fun definition() = ModuleDefinition {
     Name("ChatterCall")
 
-    Events("onCallAction", "onAudioRoutesChanged")
+    Events("onCallAction", "onAudioRoutesChanged", "onPipChanged")
 
     OnCreate {
       CallService.onAction = { action -> sendEvent("onCallAction", mapOf("action" to action)) }
     }
 
+    OnActivityEntersForeground { pip.attach(appContext.currentActivity) }
+
+    OnActivityDestroys { pip.detach() }
+
     OnDestroy {
+      pip.detach()
       CallService.onAction = null
       router?.stop()
       router = null
@@ -63,6 +69,23 @@ class ChatterCallModule : Module() {
 
     Function("setAudioRoute") { id: String ->
       router?.choose(id)
+    }
+
+    /** While a stream is on screen, leaving the app takes it along in a small window. */
+    Function("setAutoPictureInPicture") { enabled: Boolean, width: Int, height: Int ->
+      val activity = appContext.currentActivity ?: return@Function
+      pip.attach(activity)
+      pip.setAuto(activity, enabled, width, height)
+    }
+
+    Function("enterPictureInPicture") { width: Int, height: Int ->
+      val activity = appContext.currentActivity ?: return@Function false
+      pip.attach(activity)
+      pip.enter(activity, width, height)
+    }
+
+    Function("isInPictureInPicture") {
+      pip.isActive(appContext.currentActivity)
     }
   }
 

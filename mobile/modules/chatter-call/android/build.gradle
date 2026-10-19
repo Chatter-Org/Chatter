@@ -16,4 +16,6 @@ android {
 
 dependencies {
   implementation 'androidx.core:core-ktx:1.13.1'
+  // Picture-in-picture changes, from the activity (ComponentActivity).
+  implementation 'androidx.activity:activity:1.9.3'
 }
