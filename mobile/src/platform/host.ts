@@ -7,14 +7,15 @@ import { deferArrivalSound, dropDeferredArrivalSound } from "@chatter/core/sound
 import { playDeferredArrivalSound, playSound, playSoundUrl } from "./sounds";
 import { adoptGifFavorites } from "@chatter/core/gifFavorites";
 import type { GifFavoritesPayload } from "@chatter/core/api";
+import { closeNotificationsReadElsewhere, closeReadNotifications, notify } from "./notifications";
 
 /**
  * The phone's side of the shared core's host contract
  * (packages/core/src/platform.ts). Installed by install.ts.
  *
- * Pieces that need a native module of their own (notifications, saving
- * files) start inert here and are filled in as those land; the core
- * treats an inert host as "nothing shown, nothing played", which is safe.
+ * Pieces that need a native module of their own (saving files) start inert
+ * here and are filled in as those land; the core treats an inert host as
+ * "nothing shown, nothing played", which is safe.
  */
 export const nativeHost: Partial<Host> = {
   origin: currentServer,
@@ -23,6 +24,9 @@ export const nativeHost: Partial<Host> = {
   emit,
   toast: (message, options) => showToast({ message, description: options?.description }),
   toastError: (message) => showToast({ message, tone: "error" }),
+  notify,
+  closeReadNotifications,
+  closeNotificationsReadElsewhere,
   playSound,
   playSoundUrl,
   deferArrivalSound,

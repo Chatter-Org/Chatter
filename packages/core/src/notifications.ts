@@ -71,7 +71,48 @@ export interface DesktopNotification {
   /** The message's server timestamp, so a read on another device can tell
    *  whether it covered this notification (`closeReadNotifications`). */
   ts?: number;
+  /** Where opening it leads. `onClick` goes there too; this is the same
+   *  destination as data, for a host whose notification outlives the page
+   *  or process that raised it (a phone's notification shade). */
+  target?: NotificationTarget;
   onClick?: () => void;
+}
+
+/** A notification's destination: the payload of `notification-navigate`. */
+export interface NotificationTarget {
+  roomId: string;
+  channelId?: string;
+  threadId?: string;
+  postId?: string;
+  panel?: "events";
+}
+
+/**
+ * A destination as query parameters — `room`, `channel`, `thread`, `post`,
+ * `panel` — the form a push opens the web app with (`sw.js`) and the phone's
+ * `chatter://open?…` links use.
+ */
+export function notificationTargetQuery(target: NotificationTarget): string {
+  const params = new URLSearchParams();
+  params.set("room", target.roomId);
+  if (target.channelId) params.set("channel", target.channelId);
+  if (target.threadId) params.set("thread", target.threadId);
+  if (target.postId) params.set("post", target.postId);
+  if (target.panel) params.set("panel", target.panel);
+  return params.toString();
+}
+
+/** The destination in a query (`notificationTargetQuery`), or null without a room. */
+export function notificationTargetFromQuery(params: URLSearchParams): NotificationTarget | null {
+  const roomId = params.get("room");
+  if (!roomId) return null;
+  return {
+    roomId,
+    channelId: params.get("channel") || undefined,
+    threadId: params.get("thread") || undefined,
+    postId: params.get("post") || undefined,
+    panel: params.get("panel") === "events" ? "events" : undefined,
+  };
 }
 
 /** The tag a channel's (or a channel-less room's) notifications collapse under.

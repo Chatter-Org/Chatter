@@ -72,6 +72,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     [
       "expo-notifications",
       {
+        // The web's push badge: a white chat bubble Android tints itself.
+        icon: "./assets/notification-icon.png",
         color: "#0a0a0a",
       },
     ],

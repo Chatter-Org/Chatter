@@ -9,6 +9,7 @@ import {
   resolveNotificationLevel,
   shouldNotify,
   threadNotificationTag,
+  type NotificationTarget,
 } from "../notifications";
 import { arrivalSound, type SoundPack } from "../soundRules";
 import { host } from "../platform";
@@ -209,8 +210,7 @@ function notifyThreadReply(
     icon: roomInfo?.icon_url || undefined,
     tag: threadNotificationTag(msg.room_id, msg.thread_id),
     ts: msg.origin_server_ts,
-    onClick: () =>
-      host.emit("notification-navigate", { roomId: msg.room_id, channelId: msg.channel_id, threadId: msg.thread_id }),
+    ...goTo({ roomId: msg.room_id, channelId: msg.channel_id, threadId: msg.thread_id }),
   });
 }
 
@@ -299,9 +299,13 @@ function notifyForumMention(
     body: notificationBody(body),
     icon: roomInfo?.icon_url || undefined,
     tag: `${roomId}|forum|${postId}`,
-    onClick: () =>
-      host.emit("notification-navigate", { roomId, channelId, postId }),
+    ...goTo({ roomId, channelId, postId }),
   });
+}
+
+/** A notification's destination, as data and as what clicking it does. */
+function goTo(target: NotificationTarget) {
+  return { target, onClick: () => host.emit("notification-navigate", target) };
 }
 
 /** The room's sound pack, for effects that belong to a room. */
@@ -425,8 +429,7 @@ export function createWsMessageHandler(
       // One notification per channel — a burst collapses instead of stacking.
       tag: channelNotificationTag(roomId, channelId),
       ts: msg.origin_server_ts,
-      onClick: () =>
-        host.emit("notification-navigate", { roomId, channelId }),
+      ...goTo({ roomId, channelId }),
     });
   };
 
@@ -610,8 +613,7 @@ export function createWsMessageHandler(
         body: `${msg.when} · ${roomInfo?.name || "a room"}`,
         icon: roomInfo?.icon_url || undefined,
         tag: `${msg.room_id}|event|${msg.event_id}`,
-        onClick: () =>
-          host.emit("notification-navigate", {
+        ...goTo({
             roomId: msg.room_id,
             // The channel is only carried when the event is held in one, so
             // a reminder for a voice event lands in the voice channel and

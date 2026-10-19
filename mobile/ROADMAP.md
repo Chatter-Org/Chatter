@@ -99,9 +99,9 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Data: animated pictures, link previews, cache size and clearing
 
 ### Notifications
-- [ ] In-app banners while the app is open (host.notify)
-- [ ] Local notifications while the socket is alive in the background
-- [ ] Tapping a notification opens the conversation (deep links: `chatter://`)
+- [x] In-app banners while the app is open (host.notify): who and where, the message; tap to go there, push up to dismiss; a read elsewhere takes it away
+- [x] Local notifications while the socket is alive in the background (the grace period, and calls), on a "Messages" channel with the web's badge as the icon; reads close them, as on the web
+- [x] Tapping a notification opens the conversation, thread, forum post or events, including after Android restarted the app; `chatter://open?room=…&channel=…&thread=…&post=…&panel=…` links do the same (the query the web's push opens with)
 - [ ] **Last:** FCM push — device token registration endpoint, FCM sender beside `webpush.rs`, the same mute rules (`push.rs`), mobile-aware "connected" gate
 
 ### Release

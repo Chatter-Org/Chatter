@@ -11,6 +11,7 @@ import { ThemeProvider, useTheme } from "@/theme/ThemeProvider";
 import { AppearanceSync } from "@/theme/AppearanceSync";
 import { useReadingColumn } from "@/ui/windowLayout";
 import { ToastHost } from "@/components/ToastHost";
+import { BannerHost } from "@/components/BannerHost";
 import { SessionGate } from "@/components/SessionGate";
 import { ProfileProvider } from "@/components/ProfileSheet";
 
@@ -74,6 +75,7 @@ function Root() {
         </Stack>
         </ProfileProvider>
       </SessionGate>
+      <BannerHost />
       <ToastHost />
     </View>
   );
