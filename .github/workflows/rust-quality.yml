@@ -10,10 +10,10 @@ on:
   # deploy.yml runs this gate before deploying, without the advisory scan.
   workflow_call:
     inputs:
-      security:
-        description: Also run the advisory and licence scan
+      skip_security:
+        description: Skip the advisory and licence scan
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
@@ -62,7 +62,10 @@ jobs:
     name: Security
     # Off when deploying: a newly published advisory can fail it with nothing
     # to do with the change being deployed. It still runs on every push and PR.
-    if: ${{ inputs.security != false }}
+    # Phrased as a skip because a push or PR has no inputs at all, and an
+    # absent input compares equal to false: `inputs.security != false` skipped
+    # this job everywhere but the one place it was meant to run.
+    if: ${{ !inputs.skip_security }}
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
