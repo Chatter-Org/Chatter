@@ -44,8 +44,13 @@ export interface PublisherPeer {
   setLocalDescription(desc: { sdp?: string; type: string }): Promise<void>;
   setRemoteDescription(desc: { type: "answer"; sdp: string }): Promise<void>;
   addIceCandidate(candidate: unknown): Promise<void>;
+  /** The connection's statistics, where the implementation has them. */
+  getStats?(): Promise<{ forEach(cb: (report: Record<string, unknown>) => void): void }>;
   close(): void;
 }
+
+/** How long after connecting the first frames must have gone out. */
+export const FIRST_FRAMES_MS = 6_000;
 
 export interface StreamPublisherDeps {
   kind: ViewedKind;
@@ -95,6 +100,17 @@ export class StreamPublisher {
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "failed") giveUp(`Your ${what} lost its connection. Try turning it on again.`);
+      // Connected is not the same as sending: a capture the phone refused
+      // after the prompt connects and then sends nothing, while the person
+      // believes they are sharing. Check that pictures are going out.
+      if (pc.connectionState === "connected" && pc.getStats) {
+        setTimeout(() => {
+          if (this.pc !== pc) return;
+          void sentFrames(pc).then((frames) => {
+            if (frames === 0) giveUp(`Your ${what} isn't sending anything. Try turning it on again.`);
+          });
+        }, FIRST_FRAMES_MS);
+      }
     };
     this.timer = setTimeout(() => {
       if (pc.connectionState === "new" || pc.connectionState === "connecting") {
@@ -164,5 +180,22 @@ export class StreamPublisher {
     } catch {
       // Not every implementation lets these be written.
     }
+  }
+}
+
+/** Video frames sent so far on this connection; null when it cannot say. */
+async function sentFrames(pc: PublisherPeer): Promise<number | null> {
+  try {
+    const stats = await pc.getStats!();
+    let frames: number | null = null;
+    stats.forEach((report) => {
+      if (report.type === "outbound-rtp" && (report.kind === "video" || report.mediaType === "video")) {
+        const sent = Number(report.framesSent ?? report.framesEncoded ?? 0);
+        frames = (frames ?? 0) + (Number.isFinite(sent) ? sent : 0);
+      }
+    });
+    return frames;
+  } catch {
+    return null;
   }
 }

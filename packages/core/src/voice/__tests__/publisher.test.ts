@@ -40,6 +40,11 @@ class FakePeer implements PublisherPeer {
   async addIceCandidate(c: unknown) {
     this.added.push(c);
   }
+  framesSent: number | null = null;
+  async getStats() {
+    const reports = this.framesSent === null ? [] : [{ type: "outbound-rtp", kind: "video", framesSent: this.framesSent }];
+    return { forEach: (cb: (r: Record<string, unknown>) => void) => reports.forEach(cb) };
+  }
   close() {
     this.closed = true;
   }
@@ -114,5 +119,26 @@ describe("StreamPublisher", () => {
     pub.stop();
     await vi.advanceTimersByTimeAsync(16_000);
     expect(onGiveUp).not.toHaveBeenCalled();
+  });
+
+  it("gives up when connected but sending no pictures", async () => {
+    const { pub, peer, onGiveUp } = setup();
+    await pub.start("track", "stream", tuning);
+    peer.framesSent = 0;
+    peer.connectionState = "connected";
+    peer.onconnectionstatechange!();
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(onGiveUp).toHaveBeenCalledWith(expect.stringContaining("isn't sending anything"));
+  });
+
+  it("keeps a connection that is sending", async () => {
+    const { pub, peer, onGiveUp } = setup();
+    await pub.start("track", "stream", tuning);
+    peer.framesSent = 120;
+    peer.connectionState = "connected";
+    peer.onconnectionstatechange!();
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(onGiveUp).not.toHaveBeenCalled();
+    expect(pub.active).toBe(true);
   });
 });

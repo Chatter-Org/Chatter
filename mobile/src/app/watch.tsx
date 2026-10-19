@@ -35,8 +35,12 @@ export default function Watch() {
 
   // Leaving the app while watching takes the stream along in a small window;
   // closing that window is putting the stream away.
+  // Shaped like the picture being watched, once its size is known.
+  const [videoSize, setVideoSize] = useState({ width: 16, height: 9 });
   useEffect(() => {
-    pictureInPicture.auto(true);
+    pictureInPicture.auto(true, videoSize.width, videoSize.height);
+  }, [videoSize]);
+  useEffect(() => {
     const off = pictureInPicture.onChange((active) => {
       setPip(active);
       if (!active) {
@@ -125,7 +129,7 @@ export default function Watch() {
       ) : null}
       {pictureInPicture.available ? (
         <Pressable
-          onPress={() => pictureInPicture.enter()}
+          onPress={() => pictureInPicture.enter(videoSize.width, videoSize.height)}
           accessibilityRole="button"
           accessibilityLabel="Keep watching in a small window"
           hitSlop={8}
@@ -179,7 +183,7 @@ export default function Watch() {
     return (
       <View className="flex-1 bg-black">
         <StatusBar hidden />
-        <View style={{ height: tabletop.y }}>{chosen ? <Feed feed={chosen} fill mirror={chosen.kind === "webcam" && chosen.userId === state.userId} /> : null}</View>
+        <View style={{ height: tabletop.y }}>{chosen ? <Feed feed={chosen} fill mirror={chosen.kind === "webcam" && chosen.userId === state.userId} onSize={setVideoSize} /> : null}</View>
         <View style={{ height: tabletop.height }} />
         <View style={{ flex: 1, gap: 12, paddingTop: 12, paddingBottom: insets.bottom + 16, backgroundColor: "#0a0a0a" }}>
           <View className="flex-row items-center gap-2 px-3">{headerRow}</View>
@@ -198,7 +202,7 @@ export default function Watch() {
     <View className="flex-1 bg-black">
       <StatusBar hidden={!chrome || pip} />
       <Pressable className="flex-1" onPress={() => setChrome((c) => !c)} accessibilityLabel={chrome ? "Hide controls" : "Show controls"}>
-        {chosen ? <Feed feed={chosen} fill mirror={chosen.kind === "webcam" && chosen.userId === state.userId} /> : null}
+        {chosen ? <Feed feed={chosen} fill mirror={chosen.kind === "webcam" && chosen.userId === state.userId} onSize={setVideoSize} /> : null}
       </Pressable>
 
       {chrome && !pip && headerRow ? (
@@ -238,7 +242,17 @@ function DeckButton({ icon, label, on, hangup, onPress }: { icon: LucideIcon; la
 }
 
 /** One person's screen or camera, or a spinner until it arrives. */
-function Feed({ feed, fill, mirror }: { feed: Source; fill?: boolean; mirror?: boolean }) {
+function Feed({
+  feed,
+  fill,
+  mirror,
+  onSize,
+}: {
+  feed: Source;
+  fill?: boolean;
+  mirror?: boolean;
+  onSize?(size: { width: number; height: number }): void;
+}) {
   const url = useWatchedStream(feed.kind, feed.userId);
   if (!url) {
     return (
@@ -249,6 +263,12 @@ function Feed({ feed, fill, mirror }: { feed: Source; fill?: boolean; mirror?: b
   }
   // One's own camera, mirrored as a camera app shows it; the call sees it the right way round.
   return (
-    <RTCView streamURL={url} mirror={mirror} objectFit={fill || feed.kind === "screen" ? "contain" : "cover"} style={{ flex: 1, backgroundColor: "#000" }} />
+    <RTCView
+      streamURL={url}
+      mirror={mirror}
+      onDimensionsChange={onSize ? (e) => e.nativeEvent.width > 0 && e.nativeEvent.height > 0 && onSize({ width: e.nativeEvent.width, height: e.nativeEvent.height }) : undefined}
+      objectFit={fill || feed.kind === "screen" ? "contain" : "cover"}
+      style={{ flex: 1, backgroundColor: "#000" }}
+    />
   );
 }

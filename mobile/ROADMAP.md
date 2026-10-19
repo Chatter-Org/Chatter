@@ -74,8 +74,8 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Picture-in-picture: leaving the app while watching (or the button) floats the stream over other apps, just the picture
 - [x] Camera: send this phone's camera to the call (the shared `StreamPublisher`), mirrored self-preview, switch lenses, off from the call sheet or the viewer
 - [x] Share screen (MediaProjection): Share screen in the call sheet, Android's own prompt (one app or the whole screen), a "You are sharing your screen · Stop" strip instead of a hall-of-mirrors preview; sent with the shared `StreamPublisher` at the web's detail profile
-- [ ] A capture that fails after the prompt still shows as sharing until the connection gives up; check that frames are going out
-- [ ] Picture-in-picture window shaped to the stream (it is 16:9 for now; a portrait camera has bars)
+- [x] A camera or screen share that connects but sends no pictures (a capture refused after the prompt) gives up and says so, rather than showing as live
+- [x] Picture-in-picture window shaped to the stream
 
 ### Design (match the web)
 - [x] Shared control recipes (`packages/core/src/ui/recipes.ts`) used by the web's shadcn files and `src/ui/controls.tsx`; the web's 17.6px rem
