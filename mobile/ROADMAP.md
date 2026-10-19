@@ -110,7 +110,7 @@ FCM push notifications are deliberately **last**: everything else first.
 - [ ] **Last:** FCM push — device token registration endpoint, FCM sender beside `webpush.rs`, the same mute rules (`push.rs`), mobile-aware "connected" gate
 
 ### Release
-- [ ] App icon/splash in Chatter's identity
+- [x] App icon/splash in Chatter's identity: the web's mark (client/public/icon.svg) drawn by `scripts/make-icons.py` into the launcher icon, adaptive layers (with a monochrome one for themed icons) and the splash, on Chatter's dark tile
 - [ ] Release signing, versioning, EAS build profile
 - [ ] Replace the Kotlin app (`io.zgaf.chatter`)
 

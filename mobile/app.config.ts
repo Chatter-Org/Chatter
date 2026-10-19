@@ -47,6 +47,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   plugins: [
     "expo-router",
+    [
+      "expo-splash-screen",
+      {
+        // Chatter's mark on the app's own background, until the first screen draws.
+        image: "./assets/splash-icon.png",
+        imageWidth: 160,
+        backgroundColor: "#0a0a0a",
+        resizeMode: "contain",
+      },
+    ],
     "expo-secure-store",
     "expo-sqlite",
     [
