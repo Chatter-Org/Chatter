@@ -6,7 +6,14 @@
  * component and the constants around it cannot hot-reload either.
  */
 import { normalizeToHex } from "@/lib/color";
-import { deriveThemeVars, isSafeThemeId, type ThemeColors, type ThemeDefinition } from "@chatter/core/theme";
+import {
+  deriveThemeVars,
+  isSafeThemeId,
+  type ThemeAdvanced,
+  type ThemeColors,
+  type ThemeDefinition,
+  type ThemeMode,
+} from "@chatter/core/theme";
 import type { DisplaySettings } from "./display";
 
 // The theme model itself is shared with the phone (packages/core/src/theme.ts);

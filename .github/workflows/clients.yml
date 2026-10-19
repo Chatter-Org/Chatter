@@ -1,0 +1,87 @@
+name: Client checks
+
+# The web client and the mobile app both compile packages/core into themselves,
+# so a change to core can break either app without touching a file in it. This
+# runs all three wherever any of them changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - packages/core/**
+      - client/**
+      - mobile/**
+      - .github/workflows/clients.yml
+  pull_request:
+    paths:
+      - packages/core/**
+      - client/**
+      - mobile/**
+      - .github/workflows/clients.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Shared core
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/core
+    steps:
+      - uses: actions/checkout@v5
+      # Node 24 brings npm 11; npm 10.9 trips an arborist bug on vitest's peers.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: packages/core/package-lock.json
+      - run: npm ci
+      - name: Typecheck, lint and test
+        run: npm run check
+
+  web:
+    name: Web client
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      # What the Docker image runs (tsc -b, then vite build): if this fails,
+      # a deploy of this commit fails to build.
+      - name: Typecheck and build
+        run: npm run build
+      # Reported, not enforced: the client has lint errors from before this
+      # check existed. Make it blocking once they are cleared.
+      - name: Lint (not enforced yet)
+        run: npm run lint
+        continue-on-error: true
+
+  mobile:
+    name: Mobile app
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      # Typechecks the app and the core source it builds from, so a change to
+      # core's types that the app relies on fails here rather than in an APK.
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
