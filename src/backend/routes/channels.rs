@@ -6,7 +6,7 @@ use super::super::{
     },
     helpers::{
         broadcast_to_room, effective_permissions, error_response, extract_token, generate_id,
-        get_user_custom_role_ids, get_user_from_token, get_user_role, now_millis,
+        get_allowed_channel_ids, get_user_from_token, get_user_role, now_millis,
     },
     state::{
         AppState, ChannelCategoryRecord, ChannelRecord, PermissionOverwrite, RolePermissions,
@@ -55,18 +55,18 @@ pub(crate) async fn list_channels(
         .await
         .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "DB query failed"))?;
 
-    let role = get_user_role(&state, &room_id, &user_id).await;
-    let is_privileged = role == "owner" || role == "moderator";
-    let user_custom_roles = get_user_custom_role_ids(&state, &room_id, &user_id).await;
+    // The same view check every message route makes (overwrites, category
+    // inherited). This read the legacy view_roles, which the startup
+    // migration folds into overwrites, so a channel hidden by an overwrite
+    // still listed its name and topic to everyone.
+    let allowed = get_allowed_channel_ids(&state, &room_id, &user_id).await;
 
     let mut channels: Vec<Value> = Vec::new();
     while let Ok(Some(ch)) = cursor.try_next().await {
-        // Filter by view_roles: if non-empty, only privileged users or users with a matching role can see it
-        if !ch.view_roles.is_empty()
-            && !is_privileged
-            && !ch.view_roles.iter().any(|r| user_custom_roles.contains(r))
-        {
-            continue;
+        if let Some(ref allowed) = allowed {
+            if !allowed.contains(&ch.channel_id) {
+                continue;
+            }
         }
         channels.push(json!({
             "channel_id": ch.channel_id,
