@@ -1,15 +1,19 @@
 import { useEffect, useEffectEvent, useRef, useSyncExternalStore } from "react";
 import * as Notifications from "expo-notifications";
 import type { AppState } from "@chatter/core/store/types";
-import { callService, type AudioRoute } from "../../modules/chatter-call";
+import { callService, type AudioRoute, type CallAction } from "../../modules/chatter-call";
 
 /**
  * Hold the call up natively while there is one: the foreground service and
  * its notification start with the call, follow its channel and mute, and stop
- * when it ends. The notification's Mute and Leave come back here.
+ * when it ends. The notification's Mute and Leave come back here, as do
+ * Android's hold and resume around a phone call and a car's or watch's
+ * hang-up (the call's Telecom connection, Telecom.kt).
  */
-export function useCallService(state: AppState, voice: { leave(): Promise<void>; toggleMute(): void }) {
+export function useCallService(state: AppState, voice: { leave(): Promise<void>; toggleMute(): void; toggleDeafen(): void }) {
   const running = useRef(false);
+  // Whether a phone call's hold deafened the call, so resuming undoes only that.
+  const heldDeaf = useRef(false);
 
   const title = state.voiceChannelName ? `In a call · ${state.voiceChannelName}` : "In a call";
   const text = (state.voiceRoomId && state.roomInfoMap[state.voiceRoomId]?.name) || "";
@@ -40,9 +44,18 @@ export function useCallService(state: AppState, voice: { leave(): Promise<void>;
 
   // The notification outlives renders, so its buttons reach whichever voice
   // the latest one had.
-  const onAction = useEffectEvent((action: "leave" | "toggleMute") => {
+  const onAction = useEffectEvent((action: CallAction) => {
     if (action === "leave") void voice.leave();
-    else voice.toggleMute();
+    else if (action === "toggleMute") voice.toggleMute();
+    else if (action === "hold") {
+      // A phone call is answered over this one: nobody here hears it, and it
+      // hears nobody here, until it is over.
+      heldDeaf.current = !state.isDeafened;
+      if (heldDeaf.current) voice.toggleDeafen();
+    } else if (action === "resume") {
+      if (heldDeaf.current && state.isDeafened) voice.toggleDeafen();
+      heldDeaf.current = false;
+    }
   });
   useEffect(() => callService.onAction((action) => onAction(action)), []);
 

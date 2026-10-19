@@ -24,6 +24,10 @@ class ChatterCallModule : Module() {
 
     OnCreate {
       CallService.onAction = { action -> sendEvent("onCallAction", mapOf("action" to action)) }
+      Telecom.onAction = { action ->
+        if (action == "resume") router?.reclaim()
+        sendEvent("onCallAction", mapOf("action" to action))
+      }
       enableScreenCaptureService()
     }
 
@@ -34,6 +38,8 @@ class ChatterCallModule : Module() {
     OnDestroy {
       pip.detach()
       CallService.onAction = null
+      Telecom.onAction = null
+      Telecom.stop()
       router?.stop()
       router = null
       proximity?.release()
@@ -44,6 +50,7 @@ class ChatterCallModule : Module() {
     Function("startCall") { title: String, text: String, muted: Boolean ->
       CallService.startedAt = System.currentTimeMillis()
       startService(title, text, muted)
+      Telecom.start(context, title)
       val r = router ?: AudioRouter(context) {
         sendEvent("onAudioRoutesChanged", mapOf("routes" to router?.routes()))
         // The earpiece means the phone is at an ear: dark against it.
@@ -56,10 +63,12 @@ class ChatterCallModule : Module() {
     /** The call changed (a different channel, mute): redraw its notification. */
     Function("updateCall") { title: String, text: String, muted: Boolean ->
       startService(title, text, muted)
+      Telecom.rename(title)
     }
 
     Function("stopCall") {
       context.stopService(Intent(context, CallService::class.java))
+      Telecom.stop()
       router?.stop()
       proximity?.release()
     }

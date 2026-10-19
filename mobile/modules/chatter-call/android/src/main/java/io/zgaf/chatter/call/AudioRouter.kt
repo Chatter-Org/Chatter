@@ -67,6 +67,17 @@ class AudioRouter(context: Context, private val onChange: () -> Unit) {
     apply()
   }
 
+  /**
+   * Take the call's audio back after something else had it (a phone call
+   * that held this one): communication mode, focus, and the route.
+   */
+  fun reclaim() {
+    if (!active) return
+    audio.mode = AudioManager.MODE_IN_COMMUNICATION
+    requestFocus()
+    apply()
+  }
+
   fun stop() {
     if (!active) return
     active = false

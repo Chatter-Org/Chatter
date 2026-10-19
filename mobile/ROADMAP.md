@@ -66,7 +66,7 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Join/leave, mute/deafen, slots, per-person volume, speaking rings, rejoin after a dropped socket
 - [x] Push-to-talk: switch in the call sheet, hold-to-talk on the bar
 - [x] Calls keep running in the background: foreground service with Mute/Leave in its notification, wake and Wi-Fi locks (`modules/chatter-call`)
-- [ ] ConnectionService (self-managed Telecom): a phone call interrupting, car/watch controls
+- [x] ConnectionService (self-managed Telecom, `Telecom.kt` in `modules/chatter-call`): answering a phone call holds the Chatter call (deafened), and it comes back as it was when the phone call ends; Telecom's own hang-up (a car, a watch) leaves it
 - [x] Audio routing: speaker by default, headsets win when connected, tap to switch
 - [x] Proximity screen-off while on the earpiece (`ProximityLock` in `modules/chatter-call`, following the audio route; not yet tried on a phone with an earpiece — the emulators have none)
 - [x] Spatial channels' floor (the web's SpatialVoiceArea): everyone where they stand, faded with distance, a halo for what you can hear; tap or drag to walk (`voice_move`, metered with the last always sent). Tapping a spatial channel joins and opens it; the call sheet has Floor

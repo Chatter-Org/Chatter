@@ -8,6 +8,13 @@ import { requireOptionalNativeModule, type EventSubscription } from "expo-module
  * every call here does nothing.
  */
 
+/**
+ * What the call is asked to do from outside the app: the notification's Mute
+ * and Leave, and Android's phone system holding it for a phone call,
+ * resuming it after, or ending it (a car's or a watch's hang-up).
+ */
+export type CallAction = "leave" | "toggleMute" | "hold" | "resume";
+
 export interface AudioRoute {
   id: "speaker" | "earpiece" | "wired" | "bluetooth";
   label: string;
@@ -20,7 +27,7 @@ interface ChatterCallNative {
   stopCall(): void;
   getAudioRoutes(): AudioRoute[];
   setAudioRoute(id: string): void;
-  addListener(event: "onCallAction", listener: (e: { action: "leave" | "toggleMute" }) => void): EventSubscription;
+  addListener(event: "onCallAction", listener: (e: { action: CallAction }) => void): EventSubscription;
   addListener(event: "onAudioRoutesChanged", listener: (e: { routes: AudioRoute[] }) => void): EventSubscription;
   addListener(event: "onPipChanged", listener: (e: { active: boolean }) => void): EventSubscription;
   setAutoPictureInPicture(enabled: boolean, width: number, height: number): void;
@@ -37,7 +44,7 @@ export const callService = {
   stop: () => native?.stopCall(),
   routes: (): AudioRoute[] => native?.getAudioRoutes() ?? [],
   setRoute: (id: AudioRoute["id"]) => native?.setAudioRoute(id),
-  onAction(listener: (action: "leave" | "toggleMute") => void): () => void {
+  onAction(listener: (action: CallAction) => void): () => void {
     const sub = native?.addListener("onCallAction", (e) => listener(e.action));
     return () => sub?.remove();
   },

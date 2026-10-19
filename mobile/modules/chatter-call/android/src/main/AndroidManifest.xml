@@ -9,11 +9,22 @@
   <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
   <!-- Choosing the speaker, earpiece or headset for the call. -->
   <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+  <!-- The call's place in Android's phone system (Telecom), self-managed:
+       a phone call holds it, a car or watch can end it. -->
+  <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
 
   <application>
     <service
       android:name="io.zgaf.chatter.call.CallService"
       android:exported="false"
       android:foregroundServiceType="microphone" />
+    <service
+      android:name="io.zgaf.chatter.call.ChatterConnectionService"
+      android:exported="true"
+      android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE">
+      <intent-filter>
+        <action android:name="android.telecom.ConnectionService" />
+      </intent-filter>
+    </service>
   </application>
 </manifest>
