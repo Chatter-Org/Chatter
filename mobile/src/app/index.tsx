@@ -13,6 +13,7 @@ import { router } from "expo-router";
 import type { NotificationTarget } from "@chatter/core/notifications";
 import { on } from "@/platform/events";
 import { askToNotify, listenForOpenedNotifications } from "@/platform/notifications";
+import { listenForShares, useIncomingShare } from "@/platform/shareIn";
 
 /** The signed-in shell: panels around the open conversation. */
 export default function Home() {
@@ -53,6 +54,7 @@ export default function Home() {
     <PanelLayout left={<NavPanel rail={rail} onRail={setRail} />} right={<MembersPanel />} thread={<ThreadPane />}>
       <Conversation />
       <NotificationNavigator onNavigate={() => (landed.current = true)} />
+      <ShareReceiver />
     </PanelLayout>
   );
 }
@@ -130,5 +132,21 @@ function NotificationNavigator({ onNavigate }: { onNavigate(): void }) {
     void askToNotify();
   }, []);
 
+  return null;
+}
+
+/**
+ * Something shared from another app: once the conversations are in, the
+ * screen that asks where it goes (/share).
+ */
+function ShareReceiver() {
+  const loaded = useChatter().joinedRoomIds.length > 0;
+  const share = useIncomingShare();
+  useEffect(() => listenForShares(), []);
+  useEffect(() => {
+    if (!loaded || !share) return;
+    if (router.canDismiss()) router.dismissAll();
+    router.push("/share");
+  }, [loaded, share]);
   return null;
 }

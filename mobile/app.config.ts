@@ -38,6 +38,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       monochromeImage: "./assets/android-icon-monochrome.png",
     },
     predictiveBackGestureEnabled: true,
+    // In other apps' share sheets: text, links, pictures and files, one or
+    // several (modules/chatter-share takes them from here).
+    intentFilters: [
+      { action: "SEND", category: ["DEFAULT"], data: [{ mimeType: "*/*" }] },
+      { action: "SEND_MULTIPLE", category: ["DEFAULT"], data: [{ mimeType: "*/*" }] },
+    ],
   },
   plugins: [
     "expo-router",

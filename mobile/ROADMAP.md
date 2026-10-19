@@ -53,7 +53,7 @@ FCM push notifications are deliberately **last**: everything else first.
 
 ### Uploads
 - [x] Attach from gallery, camera, files; progress; chunked resumable upload (`uploadResume` in core)
-- [ ] Share into Chatter from other apps (Android share sheet)
+- [x] Share into Chatter from other apps (Android share sheet): text, links, pictures and files, one or several (`modules/chatter-share`); pick a DM or a server's text channel, and it waits in that conversation's box to be finished and sent
 - [x] Save/share received files
 
 ### Forums

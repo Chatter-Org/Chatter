@@ -68,6 +68,7 @@ function Root() {
             <Stack.Screen name="event-edit" options={{ animation: "slide_from_bottom" }} />
             <Stack.Screen name="forum-post" options={{ animation: "slide_from_right" }} />
             <Stack.Screen name="forum-new" options={{ animation: "slide_from_bottom" }} />
+            <Stack.Screen name="share" options={{ animation: "slide_from_bottom" }} />
           </Stack.Protected>
           <Stack.Protected guard={!signedIn}>
             <Stack.Screen name="sign-in" />

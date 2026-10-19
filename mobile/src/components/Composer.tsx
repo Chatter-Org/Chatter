@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, TextInput, View } from "react-native";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -9,6 +9,7 @@ import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { useOutgoingUploads } from "@/state/outgoing";
 import { nativeUploadSource, type PickedFile } from "@/platform/uploads";
 import { showToast } from "@/platform/toast";
+import { takeShareForComposer, useShareForComposer, type AddressedShare } from "@/platform/shareIn";
 import { can } from "@chatter/core/permissions";
 import { GifPickerSheet } from "./GifPickerSheet";
 import { AttachSheet, MAX_ATTACHMENTS } from "./AttachSheet";
@@ -62,6 +63,25 @@ export function Composer({
   // The web's own placeholder; where it goes is in the header.
   const placeholder = "Type your message...";
   const canSend = !!text.trim() || staged.length > 0;
+
+  // Something shared from another app into this conversation (/share): into
+  // the box and the attachments, for the person to finish and send. Taken as
+  // it arrives, then let go of once this render has it.
+  const shared = useShareForComposer(state.currentRoomId, state.currentChannelId ?? "");
+  const [takenShare, setTakenShare] = useState<AddressedShare | null>(null);
+  if (!threadEventId && shared && shared !== takenShare) {
+    setTakenShare(shared);
+    if (shared.text) setText((t) => (t.trim() ? `${t.trimEnd()}
+${shared.text}` : shared.text));
+    if (shared.files.length > 0) setStaged((s) => [...s, ...shared.files].slice(0, MAX_ATTACHMENTS));
+  }
+  useEffect(() => {
+    if (!shared || shared !== takenShare) return;
+    takeShareForComposer();
+    if (shared.files.length > MAX_ATTACHMENTS) {
+      showToast({ message: `Only ${MAX_ATTACHMENTS} files fit in a message`, description: "The rest were left out." });
+    }
+  }, [shared, takenShare]);
 
   // Where the caret is, for the "@" and ":" suggestions; and a caret position
   // to put it at after a suggestion is taken (the box otherwise leaves it at
