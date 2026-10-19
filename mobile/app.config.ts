@@ -91,8 +91,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           // org.jni_zero.JniZero by name at start-up, and with it removed every
           // release build aborted before drawing anything. CxxReactPackage is
           // the one other class native code names that R8 removed. The AV1
-          // decoder stub is referred to but not shipped, and only needs R8 to
-          // not stop at it.
+          // decoder stub and two generated jni_zero classes are referred to
+          // but not shipped, and only need R8 to not stop at them.
           extraProguardRules: [
             "-keep class org.jni_zero.** { *; }",
             "-keepclasseswithmembers class * { @org.jni_zero.CalledByNative <methods>; }",
@@ -100,6 +100,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
             "-keepclasseswithmembers class * { @org.jni_zero.AccessedByNative <fields>; }",
             "-keep class com.facebook.react.runtime.cxxreactpackage.** { *; }",
             "-dontwarn org.webrtc.Dav1dDecoder$Natives",
+            "-dontwarn org.jni_zero.CommonApisJni",
+            "-dontwarn org.jni_zero.JniZeroJni",
           ].join("\n"),
         },
       },

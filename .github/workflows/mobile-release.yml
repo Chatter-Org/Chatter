@@ -97,6 +97,11 @@ jobs:
         # quadruple the native build and outgrow the runner's memory.
         run: ./gradlew app:assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
 
+      # R8 cannot see which classes native code finds by name; one it strips
+      # builds fine and crashes the app at launch (see the script).
+      - name: Check classes native code needs survived R8
+        run: python3 scripts/check-native-names.py android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/mapping/release
+
       - name: Name the APK
         run: |
           mkdir -p dist
