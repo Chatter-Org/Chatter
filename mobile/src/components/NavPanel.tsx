@@ -417,15 +417,17 @@ const ChannelRow = memo(function ChannelRow({
 function ThreadPreviews({ channel }: { channel: Channel }) {
   const state = useChatter();
   const { selectChannel, openThread } = useChatterActions();
-  const { close } = usePanels();
+  const panels = usePanels();
   const threads = state.channelThreads[channel.channel_id];
   if (!threads?.length) return null;
   const open = async (threadId: string) => {
     tick();
-    close();
+    panels.close();
     if (state.currentChannelId !== channel.channel_id) await selectChannel(channel.channel_id).catch(() => {});
     void openThread(threadId).catch(() => {});
-    router.push("/thread");
+    // Beside the conversation where there is room; over it on a phone.
+    if (panels.threadBeside) panels.openThread();
+    else router.push("/thread");
   };
   return (
     <View className="ml-5 pb-1 pr-1">

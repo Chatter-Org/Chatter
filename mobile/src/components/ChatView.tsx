@@ -1,4 +1,6 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
+import { usePanels } from "./PanelLayout";
+import { useWindowLayout } from "@/ui/windowLayout";
 import { ActivityIndicator, AppState, Pressable, TextInput, View, type ScrollViewProps } from "react-native";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import { KeyboardChatScrollView, useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
@@ -43,6 +45,8 @@ export function ChatView() {
     transform: [{ translateY: Math.min(0, keyboard.height.value + below) }],
   }));
   const listRef = useRef<FlashListRef<Row>>(null);
+  const rootRef = useRef<ComponentRef<typeof View>>(null);
+  const [topInWindow, setTopInWindow] = useState<number | null>(null);
   const [replyTo, setReplyTo] = useState<MatrixMessage | null>(null);
   const [acting, setActing] = useState<MatrixMessage | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
@@ -84,14 +88,18 @@ export function ChatView() {
   }, [state.messages, firstUnread]);
 
   const { rowData, nameOf } = useMessageRows();
+  const panels = usePanels();
 
-  // A thread opens as a screen of its own, over the conversation.
+  // A thread opens beside the conversation where there is room for it, and
+  // as a screen of its own over it on a phone.
   const openThread = useCallback(
     (eventId: string) => {
       void actions.openThread(eventId).catch(() => showToast({ message: "Couldn't open the thread", tone: "error" }));
-      router.push("/thread");
+      // Beside the conversation where there is room; over it on a phone.
+      if (panels.threadBeside) panels.openThread();
+      else router.push("/thread");
     },
-    [actions],
+    [actions, panels],
   );
 
   // The channel's pins, for the header's pin dot and the pins screen.
@@ -186,17 +194,30 @@ export function ChatView() {
     actions.clearPendingJump();
   }, [jump, roomId, channelId, rows, state.messages, actions]);
 
+  // A foldable half open like a laptop (useWindowLayout): the list ends at
+  // the hinge, wherever this view starts in the window.
+  const { tabletop } = useWindowLayout();
+  const tabletopListHeight = tabletop && topInWindow !== null ? Math.max(160, tabletop.y - topInWindow) : null;
+
   if (!roomId) {
     return (
       <View className="flex-1 items-center justify-center px-8">
-        <T className="text-center text-muted-foreground">Swipe right to pick a server or a conversation.</T>
+        <T className="text-center text-muted-foreground">
+          {panels.leftDocked ? "Pick a server or a conversation." : "Swipe right to pick a server or a conversation."}
+        </T>
       </View>
     );
   }
 
   return (
-    <View className="flex-1">
+    <View
+      className="flex-1"
+      ref={rootRef}
+      onLayout={() => rootRef.current?.measureInWindow((_x, y) => setTopInWindow(y))}
+    >
       <UnreadBanner />
+      {/* Tabletop: the messages stand on the top half, above the hinge. */}
+      <View style={tabletopListHeight !== null ? { height: tabletopListHeight } : { flex: 1 }}>
       <FlashList
         ref={listRef}
         data={rows}
@@ -224,6 +245,9 @@ export function ChatView() {
         }
         ListFooterComponent={<View style={{ height: 12 }} />}
       />
+      </View>
+      {/* Below the hinge, the composer sits at the bottom of the lower half. */}
+      {tabletopListHeight !== null ? <View className="flex-1 border-t border-border" /> : null}
       {!atBottom && (
         <Pressable
           onPress={() => listRef.current?.scrollToEnd({ animated: true })}

@@ -23,7 +23,7 @@ const SECTIONS: { href: Href; icon: ComponentType<LucideProps>; label: string; h
   { href: "/settings/notifications", icon: Bell, label: "Notifications", hint: "What each server tells you, and sounds" },
   { href: "/settings/voice", icon: Mic, label: "Voice", hint: "Push to talk, volume, mic test" },
   { href: "/settings/account", icon: ShieldCheck, label: "Account", hint: "Two-factor, password, sessions" },
-  { href: "/settings/data", icon: Database, label: "Data and storage", hint: "Media, and what is kept on this phone" },
+  { href: "/settings/data", icon: Database, label: "Data and storage", hint: "Media, and what is kept on this device" },
 ];
 
 export default function Settings() {

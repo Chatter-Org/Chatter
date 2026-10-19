@@ -1,6 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useChatter } from "@/state/ChatterProvider";
-import { BackHandler, Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
+import { BackHandler, Pressable, StyleSheet, View } from "react-native";
+import { useWindowLayout } from "@/ui/windowLayout";
 import { GestureDetector, usePanGesture } from "react-native-gesture-handler";
 import Animated, {
   interpolate,
@@ -25,7 +26,7 @@ import * as Haptics from "expo-haptics";
  *
  * With room to spare — an open foldable, a tablet, landscape — the channels
  * stay beside the conversation and the members open beside it too, as on the
- * web.
+ * web. An unfolded foldable splits at its hinge.
  */
 
 export type PanelSide = "left" | "right";
@@ -36,6 +37,7 @@ export const SIDE_BY_SIDE_MIN_WIDTH = 720;
 const MEMBERS_BESIDE_MIN_WIDTH = 1040;
 const LEFT_PANEL_WIDTH = 360;
 const RIGHT_PANEL_WIDTH = 280;
+const THREAD_PANEL_WIDTH = 400;
 /** The strip at the right edge that starts a swipe for the member list: narrow
  *  enough to leave the controls at the end of a message (its "…") tappable. */
 const RIGHT_EDGE = 16;
@@ -53,6 +55,13 @@ interface PanelsValue {
   show(side: PanelSide): void;
   close(): void;
   toggleRight(): void;
+  /** Whether a thread opens beside the conversation (wide windows) rather
+   *  than as a screen over it. */
+  threadBeside: boolean;
+  /** The thread pane is showing in place of the members. */
+  threadOpen: boolean;
+  openThread(): void;
+  closeThread(): void;
 }
 
 const PanelsContext = createContext<PanelsValue | null>(null);
@@ -63,8 +72,19 @@ export function usePanels(): PanelsValue {
   return value;
 }
 
-export function PanelLayout({ left, right, children }: { left: ReactNode; right: ReactNode; children: ReactNode }) {
-  const { width } = useWindowDimensions();
+export function PanelLayout({
+  left,
+  right,
+  thread,
+  children,
+}: {
+  left: ReactNode;
+  right: ReactNode;
+  /** The open thread, beside the conversation where there is room for it. */
+  thread: ReactNode;
+  children: ReactNode;
+}) {
+  const { width, book } = useWindowLayout();
   const leftDocked = width >= SIDE_BY_SIDE_MIN_WIDTH;
   const rightDocked = width >= MEMBERS_BESIDE_MIN_WIDTH;
   const leftWidth = Math.min(LEFT_PANEL_WIDTH, Math.round(width * 0.86));
@@ -72,6 +92,7 @@ export function PanelLayout({ left, right, children }: { left: ReactNode; right:
 
   const [open, setOpen] = useState<PanelSide | null>(null);
   const [rightBeside, setRightBeside] = useState(true);
+  const [threadOpen, setThreadOpen] = useState(false);
   const offset = useSharedValue(0);
 
   const animateTo = useCallback(
@@ -90,13 +111,24 @@ export function PanelLayout({ left, right, children }: { left: ReactNode; right:
 
   // Another conversation (a DM opened from a profile, say) is a new list of
   // members; the old one, left open over it, would be someone else's.
-  const roomId = useChatter().currentRoomId;
+  const { currentRoomId: roomId, activeThreadEventId } = useChatter();
   useEffect(() => {
     setOpen((side) => {
       if (side === "right") offset.value = withSpring(0, SPRING);
       return side === "right" ? null : side;
     });
   }, [roomId, offset]);
+
+  // The pane shows the store's open thread. Opening one from the channel list
+  // switches channel first and the thread arrives after, so the pane waits
+  // for it; the store dropping a thread it had (another room or channel, the
+  // thread deleted) closes the pane.
+  const hadThread = useRef(false);
+  useEffect(() => {
+    if (hadThread.current && !activeThreadEventId) setThreadOpen(false);
+    hadThread.current = !!activeThreadEventId;
+  }, [activeThreadEventId]);
+  const showThread = threadOpen && !!activeThreadEventId;
 
   // Back closes an open panel before it leaves the screen.
   useEffect(() => {
@@ -113,7 +145,7 @@ export function PanelLayout({ left, right, children }: { left: ReactNode; right:
       open,
       leftDocked,
       rightDocked,
-      rightVisible: rightDocked ? rightBeside : open === "right",
+      rightVisible: rightDocked ? rightBeside && !showThread : open === "right",
       show: (side) => {
         if (side === "left" && leftDocked) return;
         if (side === "right" && rightDocked) return setRightBeside(true);
@@ -124,11 +156,19 @@ export function PanelLayout({ left, right, children }: { left: ReactNode; right:
         if (!leftDocked || open) animateTo(null);
       },
       toggleRight: () => {
-        if (rightDocked) return setRightBeside((v) => !v);
+        if (rightDocked) {
+          // The members button, with a thread open, goes back to the members.
+          if (showThread) return (setThreadOpen(false), setRightBeside(true));
+          return setRightBeside((v) => !v);
+        }
         animateTo(open === "right" ? null : "right");
       },
+      threadBeside: rightDocked,
+      threadOpen: rightDocked && showThread,
+      openThread: () => setThreadOpen(true),
+      closeThread: () => setThreadOpen(false),
     }),
-    [open, leftDocked, rightDocked, rightBeside, animateTo],
+    [open, leftDocked, rightDocked, rightBeside, showThread, animateTo],
   );
 
   if (leftDocked) {
@@ -136,10 +176,20 @@ export function PanelLayout({ left, right, children }: { left: ReactNode; right:
       <PanelsContext.Provider value={value}>
         {/* Cards on the conversation's own background, so the panels and the chat read as one surface. */}
         <View className="flex-1 flex-row bg-background">
-          <View style={{ width: LEFT_PANEL_WIDTH }}>{left}</View>
+          {/* On an unfolded foldable the channels end at the hinge and the
+              conversation starts after it, so nothing sits in the crease. */}
+          <View style={{ width: book ? book.x : LEFT_PANEL_WIDTH }}>{left}</View>
+          {book && book.width > 0 ? <View style={{ width: book.width }} /> : null}
           <View className="flex-1 overflow-hidden">{children}</View>
           {rightDocked ? (
-            rightBeside ? <View style={{ width: RIGHT_PANEL_WIDTH }}>{right}</View> : null
+            showThread ? (
+              // A thread wants more room than the member list (the web's ThreadPanel).
+              <View style={{ width: THREAD_PANEL_WIDTH }} className="border-l border-border">
+                {thread}
+              </View>
+            ) : rightBeside ? (
+              <View style={{ width: RIGHT_PANEL_WIDTH }}>{right}</View>
+            ) : null
           ) : (
             <Drawer side="right" open={open === "right"} width={rightWidth} onClose={() => animateTo(null)}>
               {right}

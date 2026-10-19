@@ -77,13 +77,17 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Shared control recipes (`packages/core/src/ui/recipes.ts`) used by the web's shadcn files and `src/ui/controls.tsx`; the web's 17.6px rem
 - [x] Drawer (rail + channel list), header, messages, composer, members, call bar, sheets, settings, sign-in rebuilt from the web components
 - [x] Header tool row: notifications, pins, mentions, search
-- [ ] Events in the tool row (with polls/events)
+- [x] Events in the tool row (with polls/events)
 - [x] GIF picker (from the composer's + sheet): search, trending first; favourites and categories synced with the account; hold a GIF anywhere to favourite or file it
 
 ### Adaptive layout
 - [x] Side-by-side panels on wide windows
-- [ ] Fold posture module (Jetpack WindowManager): hinge-aware split, tabletop mode for calls
-- [ ] Tablet/landscape polish
+- [x] Fold posture module (`modules/chatter-fold`, Jetpack WindowManager): the window's hinges, live as the phone folds and bends
+- [x] Book posture: an unfolded foldable splits at the hinge, channels on one side and the conversation on the other, nothing in the crease
+- [x] Tabletop posture: half open on its side, the conversation sits above the hinge and the composer below it
+- [ ] Tabletop for calls: video and screen shares above the hinge, controls below (with screen and webcam viewing)
+- [x] Tablets: three columns (channels, conversation, members); a thread opens beside the conversation in place of the members, and the members button swaps back
+- [x] Pushed screens (settings, profiles, a post) keep to a 760 dp reading column on wide windows
 
 ### Settings (native screens)
 - [x] Appearance: Match phone + the 8 web themes

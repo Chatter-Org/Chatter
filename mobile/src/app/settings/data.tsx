@@ -81,7 +81,7 @@ export default function DataSettings() {
     <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
       <ScreenHeader title="Data and storage" />
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 24 }} contentContainerClassName="gap-4 p-4">
-        <T className={UI_HINT}>These stay on this phone rather than on your account, and take effect as soon as you change them.</T>
+        <T className={UI_HINT}>These stay on this device rather than on your account, and take effect as soon as you change them.</T>
 
         <SettingsSection title="Media">
           <Toggle
@@ -100,7 +100,7 @@ export default function DataSettings() {
 
         <SettingsSection title="Storage" hint="Pictures and videos already seen, and files you opened or shared. Cleared, they are fetched again when needed.">
           <View className="flex-row items-center justify-between">
-            <T className="text-sm">Cached on this phone</T>
+            <T className="text-sm">Cached on this device</T>
             <T className="text-sm text-muted-foreground">{cacheBytes === null ? "…" : formatBytes(cacheBytes)}</T>
           </View>
           <Button variant="outline" icon={Trash2} className="self-start" disabled={clearing} onPress={() => void clear()}>

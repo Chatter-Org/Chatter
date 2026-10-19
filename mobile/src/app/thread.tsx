@@ -27,6 +27,16 @@ import { UI_HEADING, UI_META } from "@/ui/roles";
  * the gesture or the system's) closes it.
  */
 export default function ThreadScreen() {
+  const insets = useSafeAreaInsets();
+  return <ThreadView onClose={() => router.back()} top={insets.top} />;
+}
+
+/**
+ * The thread itself, for the screen above and for the pane beside the
+ * conversation on a wide window (PanelLayout). `onClose` is how it is left;
+ * `top` is the status bar it must clear, if it reaches the top of the window.
+ */
+export function ThreadView({ onClose, top }: { onClose(): void; top: number }) {
   const state = useChatter();
   const actions = useChatterActions();
   const insets = useSafeAreaInsets();
@@ -37,7 +47,7 @@ export default function ThreadScreen() {
   const threadId = state.activeThreadEventId;
   const channel = state.channels.find((c) => c.channel_id === state.currentChannelId);
 
-  // Leaving the screen, by any way out, closes the thread in the store.
+  // Leaving, by any way out, closes the thread in the store.
   useEffect(() => () => actions.closeThread(), [actions]);
 
   const keyboard = useReanimatedKeyboardAnimation();
@@ -60,11 +70,11 @@ export default function ThreadScreen() {
   const title = root?.thread_name || "Thread";
 
   return (
-    <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
+    <View className="flex-1 bg-background" style={{ paddingTop: top }}>
       {/* ThreadPanel's header, as the phone's header. */}
       <View className="flex-row items-center gap-1 border-b border-border px-2 py-1.5">
         <Pressable
-          onPress={() => router.back()}
+          onPress={onClose}
           accessibilityRole="button"
           accessibilityLabel="Back to chat"
           className="h-10 w-10 items-center justify-center rounded-lg active:bg-accent"

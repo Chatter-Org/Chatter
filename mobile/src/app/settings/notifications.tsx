@@ -86,7 +86,7 @@ export default function NotificationSettings() {
     <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
       <ScreenHeader title="Notifications" />
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 24 }} contentContainerClassName="gap-6 p-4">
-        <SettingsSection title="Sound effects" hint="Mentions, voice joins, and other people's entrance sounds. Rooms can replace these with their own. Kept on this phone.">
+        <SettingsSection title="Sound effects" hint="Mentions, voice joins, and other people's entrance sounds. Rooms can replace these with their own. Kept on this device.">
           <View className="flex-row items-center justify-between gap-3">
             <T className="flex-1 text-sm">Play sound effects</T>
             <Switch value={sounds.enabled} onValueChange={(enabled) => updateSounds({ enabled })} accessibilityLabel="Play sound effects" />

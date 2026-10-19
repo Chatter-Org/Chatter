@@ -6,6 +6,8 @@ import { NavPanel, type RailSelection } from "@/components/NavPanel";
 import { MembersPanel } from "@/components/MembersPanel";
 import { ChatHeader } from "@/components/ChatHeader";
 import { ChatView } from "@/components/ChatView";
+import { ThreadView } from "./thread";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ForumView } from "@/components/forum/ForumView";
 
 /** The signed-in shell: panels around the open conversation. */
@@ -38,7 +40,7 @@ export default function Home() {
   }, [state.currentRoomId, state.roomInfoMap]);
 
   return (
-    <PanelLayout left={<NavPanel rail={rail} onRail={setRail} />} right={<MembersPanel />}>
+    <PanelLayout left={<NavPanel rail={rail} onRail={setRail} />} right={<MembersPanel />} thread={<ThreadPane />}>
       <Conversation />
     </PanelLayout>
   );
@@ -58,4 +60,11 @@ function Conversation() {
       {forum ? <ForumView key={`${state.currentRoomId}|${channel?.channel_id ?? ""}`} /> : <ChatView />}
     </View>
   );
+}
+
+/** The thread beside the conversation (wide windows). */
+function ThreadPane() {
+  const { closeThread } = usePanels();
+  const insets = useSafeAreaInsets();
+  return <ThreadView onClose={closeThread} top={insets.top} />;
 }
