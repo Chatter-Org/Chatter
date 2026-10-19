@@ -8,7 +8,7 @@ import type { MessageRowProps } from "./MessageRow";
 
 type RowData = Pick<
   MessageRowProps,
-  "senderName" | "senderColor" | "avatarUrl" | "senderBadge" | "replySenderName" | "reactions" | "myUserId" | "mentionsMe" | "formatOptions" | "onReact"
+  "senderName" | "senderColor" | "senderFontUrl" | "avatarUrl" | "senderBadge" | "replySenderName" | "reactions" | "myUserId" | "mentionsMe" | "formatOptions" | "onReact"
 >;
 
 /**
@@ -46,6 +46,7 @@ export function useMessageRows() {
       return {
         senderName: external ? external.name : nameOf(m.sender),
         senderColor: external ? undefined : senderNameColor(state, roomInfo, m.sender),
+        senderFontUrl: external ? undefined : state.userPresence[m.sender]?.nameFontUrl,
         avatarUrl: external ? external.avatarUrl : state.userPresence[m.sender]?.avatarUrl,
         senderBadge: external?.badge,
         replySenderName: m.content.reply_to_sender ? nameOf(m.content.reply_to_sender) : undefined,

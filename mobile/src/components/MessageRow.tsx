@@ -18,6 +18,7 @@ import { MessageMedia } from "./MessageMedia";
 import { EmojiGlyph } from "./EmojiPickerSheet";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
+import { useNameFont } from "@/ui/nameFonts";
 
 /** The web's avatar size below 768px (h-7). */
 const AVATAR = 31;
@@ -30,6 +31,8 @@ export interface MessageRowProps {
   grouped: boolean;
   senderName: string;
   senderColor?: string;
+  /** Their own font for their name (useNameFont). */
+  senderFontUrl?: string;
   avatarUrl?: string;
   /** BOT or HOOK: the sender is not a member, and has no profile to open. */
   senderBadge?: "BOT" | "HOOK";
@@ -140,6 +143,7 @@ function RowContent({
   grouped,
   senderName,
   senderColor,
+  senderFontUrl,
   avatarUrl,
   senderBadge,
   status,
@@ -152,6 +156,7 @@ function RowContent({
   onOpenThread,
 }: MessageRowProps) {
   const showProfile = useShowProfile();
+  const nameFont = useNameFont(senderFontUrl);
   const deleted = isDeletedMessage(message);
   const body = message.content.body ?? "";
   const media = extractMedia(body);
@@ -212,7 +217,7 @@ function RowContent({
               </>
             ) : (
               <Tap onPress={() => showProfile(message.sender)} label={`${senderName}'s profile`} className="shrink rounded">
-                <T className="text-sm font-semibold" style={senderColor ? { color: senderColor } : undefined} numberOfLines={1}>
+                <T className="text-sm font-semibold" style={[senderColor ? { color: senderColor } : null, nameFont]} numberOfLines={1}>
                   {senderName}
                 </T>
               </Tap>

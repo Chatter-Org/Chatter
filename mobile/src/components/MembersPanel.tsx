@@ -9,6 +9,7 @@ import { useShowProfile } from "./ProfileSheet";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { UI_HEADING } from "@/ui/roles";
+import { NameText } from "./NameText";
 
 /**
  * The room's members — the web's MembersPanel: a "MEMBERS n" heading, then
@@ -72,13 +73,14 @@ export function MembersPanel() {
                 />
                 <View className="min-w-0 flex-1">
                   <View className="flex-row items-center gap-1">
-                    <T
+                    <NameText
+                      fontUrl={p?.nameFontUrl}
                       className={cn("shrink text-sm", offline && "text-muted-foreground")}
                       style={color && !offline ? { color } : undefined}
                       numberOfLines={1}
                     >
                       {p?.displayName || item.displayName}
-                    </T>
+                    </NameText>
                     {item.role === "owner" ? <Icon as={Crown} size={13} tone="warning" /> : null}
                     {item.role === "moderator" ? <Icon as={Shield} size={13} color="#60a5fa" /> : null}
                     {p?.isMobile && !offline ? <Icon as={Smartphone} size={13} tone="success" /> : null}

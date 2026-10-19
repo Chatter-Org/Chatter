@@ -48,7 +48,7 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Events: the header's events button (live/soon dot), RSVP, guest list, add to calendar (.ics share); schedule, edit, cancel, delete with the phone's date and time pickers
 - [x] Unread marker line and "jump to unread" (the web's "New" line and unread bar)
 - [x] Profiles: a sheet from any avatar, name or member (banner, status, about, Steam game, mutual friends, roles, profile colour); Message, friend and block from it
-- [ ] Name fonts (people's own fonts on their names)
+- [x] Name fonts (people's own fonts on their names): in messages, the member list and profiles; fetched with the session and cached; checked with a .ttf (a .woff or .woff2 that Android will not load stays in the app's font; not yet tried on a device)
 - [x] Friends and DMs: new message / group DM picker, adding people to a DM, Friends screen (requests, pending, add by username, blocked)
 
 ### Uploads

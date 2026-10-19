@@ -16,6 +16,7 @@ import { cn } from "@/ui/cn";
 import { serverImage } from "@/ui/media";
 import { UI_HINT, UI_META } from "@/ui/roles";
 import { Avatar } from "./Avatar";
+import { NameText } from "./NameText";
 
 /**
  * Someone's profile — the web's UserProfileDialog as a sheet: their banner and
@@ -141,9 +142,9 @@ function Profile({ userId, onClose }: { userId: string; onClose(): void }) {
 
       <View className="gap-4 px-5 pb-1 pt-1">
         <View className="items-center gap-1">
-          <T className="text-lg font-semibold" numberOfLines={2}>
+          <NameText fontUrl={presence?.nameFontUrl} className="text-lg font-semibold" numberOfLines={2}>
             {name}
-          </T>
+          </NameText>
           {presence?.displayName ? <T className={UI_HINT}>{username}</T> : null}
         </View>
 
