@@ -3,7 +3,7 @@ import { Alert, Pressable, ScrollView, View } from "react-native";
 import { router, type Href } from "expo-router";
 import Constants from "expo-constants";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Bell, ChevronRight, Database, LogOut, Mic, Palette, ShieldCheck, type LucideProps } from "lucide-react-native";
+import { Bell, ChevronRight, Database, LogOut, Mic, Palette, Server, ShieldCheck, type LucideProps } from "lucide-react-native";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { currentServer } from "@/platform/server";
@@ -16,7 +16,8 @@ import { UI_HEADING, UI_HINT, UI_META } from "@/ui/roles";
 /**
  * Settings: who you are, then a row per section — the web's settings dialogs
  * (Appearance, the profile dialog's Device and Account tabs, Voice Settings)
- * as a phone lays settings out, one screen each — and signing this device out.
+ * as a phone lays settings out, one screen each — and signing this device out,
+ * or out and off this server.
  */
 const SECTIONS: { href: Href; icon: ComponentType<LucideProps>; label: string; hint: string }[] = [
   { href: "/settings/appearance", icon: Palette, label: "Appearance", hint: "Themes, and your own" },
@@ -101,6 +102,23 @@ export default function Settings() {
             }
           >
             Sign out of this device
+          </Button>
+          <Button
+            variant="outline"
+            icon={Server}
+            className="self-start"
+            onPress={() =>
+              Alert.alert(
+                "Change server?",
+                "This signs you out of this device, and you'll enter the new server's address when you sign in.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Change server", style: "destructive", onPress: () => void signOut({ forgetServer: true }) },
+                ],
+              )
+            }
+          >
+            Change server
           </Button>
           <T className={UI_HINT}>Chatter {Constants.expoConfig?.version ?? ""}</T>
         </View>

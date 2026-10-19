@@ -17,9 +17,12 @@ const IS_DEV = process.env.APP_VARIANT === "development";
 const VERSION = process.env.CHATTER_VERSION ?? "0.1.0";
 const VERSION_CODE = Number(process.env.CHATTER_VERSION_CODE ?? "1");
 
-/** The server the sign-in screen offers first. Anyone self-hosting types their own. */
-const DEFAULT_SERVER =
-  process.env.CHATTER_ORIGIN ?? (IS_DEV ? "http://localhost:8000" : "https://chatter.zgaf.io");
+/**
+ * The server the sign-in screen offers first. A release offers none: Chatter
+ * is self-hosted, and the app is no one server's. A development build offers
+ * the local dev server.
+ */
+const DEFAULT_SERVER = process.env.CHATTER_ORIGIN ?? (IS_DEV ? "http://localhost:8000" : "");
 
 const jetbrains = (weight: string) =>
   `./node_modules/@expo-google-fonts/jetbrains-mono/${weight}/JetBrainsMono_${weight}.ttf`;

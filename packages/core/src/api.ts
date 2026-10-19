@@ -267,6 +267,12 @@ async function authenticatedFetch(
 
 // ─── Auth ───────────────────────────────────────────────────────────────────
 
+/**
+ * The server did not answer at all. Said for any server, not the dev one: the
+ * apps sign in to whatever address someone typed.
+ */
+const UNREACHABLE = "Cannot reach the server. Check the address, and that the server is running.";
+
 export async function apiLogin(username: string, password: string, totpCode?: string) {
   let res: Response;
   try {
@@ -276,7 +282,7 @@ export async function apiLogin(username: string, password: string, totpCode?: st
       body: JSON.stringify({ username, password, totp_code: totpCode }),
     });
   } catch {
-    throw new Error("Cannot reach server. Is the backend running on :8000?");
+    throw new Error(UNREACHABLE);
   }
   if (!res.ok) {
     try {
@@ -286,7 +292,7 @@ export async function apiLogin(username: string, password: string, totpCode?: st
       if (e.message && !e.message.includes("JSON")) throw e;
       throw new Error(
         res.status === 502 || res.status === 504
-          ? "Cannot reach server. Is the backend running on :8000?"
+          ? UNREACHABLE
           : "Login failed"
       );
     }
@@ -312,7 +318,7 @@ export async function apiRegister(username: string, password: string, passwordCo
       body: JSON.stringify({ username, password, password_confirm: passwordConfirm, invite_code: inviteCode || undefined }),
     });
   } catch {
-    throw new Error("Cannot reach server. Is the backend running on :8000?");
+    throw new Error(UNREACHABLE);
   }
   if (!res.ok) {
     try {
@@ -322,7 +328,7 @@ export async function apiRegister(username: string, password: string, passwordCo
       if (e.message && !e.message.includes("JSON")) throw e;
       throw new Error(
         res.status === 502 || res.status === 504
-          ? "Cannot reach server. Is the backend running on :8000?"
+          ? UNREACHABLE
           : "Registration failed"
       );
     }

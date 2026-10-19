@@ -5,16 +5,27 @@ import { configureApi } from "@chatter/core/api";
  * Which Chatter server this app talks to.
  *
  * Chatter is self-hosted, so the server is the person's choice, made on the
- * sign-in screen and remembered. A build carries a default (app.config.ts):
- * chatter.zgaf.io for a release, the local dev server for a development build.
+ * sign-in screen and remembered — across signing out too, so signing back in
+ * is only a username and password. Changing it (Settings → Change server)
+ * signs out and forgets it. A release build has no default; a development
+ * build offers the local dev server (app.config.ts).
  */
 const KEY = "chatter.server";
 
 const extra = (Constants.expoConfig?.extra ?? {}) as { defaultServer?: string; isDev?: boolean };
-export const DEFAULT_SERVER = extra.defaultServer ?? "https://chatter.zgaf.io";
+export const DEFAULT_SERVER = extra.defaultServer ?? "";
 export const IS_DEV_BUILD = !!extra.isDev;
 
-/** The saved server's origin, or the build's default. */
+/** The server this device has signed in to, if any. */
+export function savedServer(): string | null {
+  try {
+    return localStorage.getItem(KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The saved server's origin, or the build's default (none, for a release). */
 export function currentServer(): string {
   try {
     return localStorage.getItem(KEY) || DEFAULT_SERVER;
@@ -59,6 +70,16 @@ export function setServer(origin: string): void {
     // Storage unavailable: it holds for this run.
   }
   configureApi({ origin });
+}
+
+/** Forget the saved server, so the sign-in screen asks for one again. */
+export function forgetServer(): void {
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    // Storage unavailable: nothing was saved.
+  }
+  configureApi({ origin: DEFAULT_SERVER });
 }
 
 /** The socket endpoint for the current server. */

@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Constants from "expo-constants";
 import { LOGIN_CONNECTION_STEPS } from "@chatter/core/loginScreen";
 import { useChatterActions } from "@/state/ChatterProvider";
-import { currentServer, normalizeServer, setServer } from "@/platform/server";
+import { currentServer, forgetServer, normalizeServer, savedServer, setServer } from "@/platform/server";
 import { CrtBackground, type CrtClearance } from "@/components/CrtBackground";
 
 /**
@@ -35,6 +35,9 @@ export default function SignIn() {
   const { signIn } = useChatterActions();
   const insets = useSafeAreaInsets();
   const [server, setServerText] = useState(currentServer());
+  // A device that has signed in before keeps its server across signing out,
+  // so it is shown, not asked for; "change" opens the field again.
+  const [editServer, setEditServer] = useState(() => !savedServer());
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -76,6 +79,9 @@ export default function SignIn() {
     }
     setBusy(true);
     setSteps(1);
+    // The API has to point at the server to ask it, but only a sign-in that
+    // works makes it this device's server: a typo is not remembered.
+    const previous = savedServer();
     try {
       setServer(origin);
       const result = await signIn(username.trim(), password, needsCode ? code.trim() : undefined);
@@ -86,6 +92,8 @@ export default function SignIn() {
         setSteps(LOGIN_CONNECTION_STEPS.length);
       }
     } catch (e) {
+      if (previous) setServer(previous);
+      else forgetServer();
       setError(e instanceof Error ? e.message : "sign-in failed");
     } finally {
       setBusy(false);
@@ -148,16 +156,26 @@ export default function SignIn() {
               <Sequence shown={steps} />
             ) : (
               <>
-                <Field
-                  label="server"
-                  value={server}
-                  onChangeText={setServerText}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="url"
-                  textContentType="URL"
-                  editable={!needsCode}
-                />
+                {editServer ? (
+                  <Field
+                    label="server"
+                    placeholder="> chat.example.com"
+                    value={server}
+                    onChangeText={setServerText}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    textContentType="URL"
+                    editable={!needsCode}
+                  />
+                ) : (
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 13 }}>
+                    <Text numberOfLines={1} style={{ flexShrink: 1, fontFamily: MONO, fontSize: 12.1, letterSpacing: 1.1, color: C.dim }}>
+                      {server.replace(/^https?:\/\//, "")}
+                    </Text>
+                    {needsCode ? null : <Link text="change" onPress={() => setEditServer(true)} />}
+                  </View>
+                )}
                 <Field
                   label="username"
                   value={username}

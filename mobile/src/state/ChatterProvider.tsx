@@ -32,7 +32,7 @@ import { createNativeVoiceBackend } from "@/voice/nativeBackend";
 import { clearSpeaking, noteSpeakingFrame } from "@/voice/speaking";
 import { useCallService } from "@/voice/useCallService";
 import { signOutThisDevice } from "@/platform/signOut";
-import { socketUrl } from "@/platform/server";
+import { forgetServer, socketUrl } from "@/platform/server";
 import { hasStoredSession } from "@/platform/tokenStore";
 import { createViewers } from "@/voice/viewing";
 import { LocalShares } from "@/voice/sharing";
@@ -62,7 +62,8 @@ const RESTORE_MAX_MS = 30_000;
 
 export interface ChatterActions extends StoreActions {
   signIn(username: string, password: string, totpCode?: string): Promise<{ requiresTotp?: boolean }>;
-  signOut(): Promise<void>;
+  /** Sign this device out. `forgetServer` also forgets the server (Change server). */
+  signOut(options?: { forgetServer?: boolean }): Promise<void>;
   /** Turn two-factor on with the first code from the authenticator: the
    *  server answers with fresh tokens, and the recovery codes to keep. */
   enrollTotp(code: string): Promise<{ recoveryCodes: string[] }>;
@@ -544,12 +545,15 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "LOGOUT" });
         dispatch({ type: "SET_SESSION_RESTORE", payload: "absent" });
       },
-      async signOut() {
+      async signOut(options) {
         if (stateRef.current.inVoiceChannel) await voice.leave();
         closeSocket("signed out");
         // This device only: the account stays signed in everywhere else.
         await signOutThisDevice();
         clearTokens();
+        // After the logout, which still needs the server; before LOGOUT,
+        // which brings up the sign-in screen that reads it.
+        if (options?.forgetServer) forgetServer();
         // What one account was allowed to read is not what the next one is.
         clearMessagePreviews();
         hasConnectedRef.current = false;
