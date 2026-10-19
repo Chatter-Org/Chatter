@@ -51,7 +51,9 @@ export function OutgoingUploads({ batches, here, className }: OutgoingUploadsPro
               {batch.files.map((entry) => (
                 <AttachmentTile
                   key={entry.id}
-                  file={entry.file}
+                  // The web only ever queues browser Files; the shared queue
+                  // also takes a phone's sources, hence the wider type.
+                  file={entry.file as File}
                   previewUrl={entry.previewUrl}
                   progress={{ status: entry.status, pct: entry.pct }}
                 />

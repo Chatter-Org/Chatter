@@ -56,7 +56,7 @@ import { displayUserId } from "@/lib/utils";
 import { lazyRetry } from "@/lib/lazyRetry";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { syncPushSubscription } from "@/lib/push";
-import { decideVoiceRejoin, parseStoredVoiceSession } from "@/lib/voiceRejoin";
+import { decideVoiceRejoin, parseStoredVoiceSession, voiceChannelNameToFill } from "@/lib/voiceRejoin";
 import type { VoiceRestoreState } from "@/lib/voiceRejoin";
 import { toast } from "sonner";
 import { requestForumPost } from "@/lib/pendingForumPost";
@@ -368,11 +368,11 @@ export function ChatLayout() {
       sessionStorage.removeItem("voiceSession");
       if (!session) return;
 
-      // Navigate to the room then join voice after a short delay for state to settle
+      // Navigate to the room then join voice after a short delay for state to
+      // settle. The room's channels may not have arrived by then, so the
+      // channel's name is filled in by the effect below once they do.
       selectRoom(session.roomId);
       setTimeout(() => {
-        const ch = state.channels.find((c) => c.channel_id === session.channelId);
-        if (ch) dispatch({ type: "SET_VOICE_STATE", payload: { voiceChannelName: ch.name } });
         // The refresh threw away the mute and deafen this call was left in, so
         // they travel with the session rather than defaulting to a fresh join.
         joinVoiceRef.current?.(session.channelId ?? undefined, {
@@ -383,7 +383,19 @@ export function ChatLayout() {
     } catch {
       sessionStorage.removeItem("voiceSession");
     }
-  }, [state.wsConnected, state.roomInfoMap, state.channels, selectRoom, dispatch]);
+  }, [state.wsConnected, state.roomInfoMap, selectRoom]);
+
+  // A call joined before its room's channels loaded (a refresh rejoin) has no
+  // name yet; give it one as soon as the channel shows up.
+  useEffect(() => {
+    const name = voiceChannelNameToFill({
+      inVoiceChannel: state.inVoiceChannel,
+      voiceChannelId: state.voiceChannelId,
+      voiceChannelName: state.voiceChannelName,
+      channels: state.channels,
+    });
+    if (name) dispatch({ type: "SET_VOICE_STATE", payload: { voiceChannelName: name } });
+  }, [state.inVoiceChannel, state.voiceChannelId, state.voiceChannelName, state.channels, dispatch]);
 
   const isDmRoom = state.currentRoomId
     ? state.roomInfoMap[state.currentRoomId]?.is_direct === true

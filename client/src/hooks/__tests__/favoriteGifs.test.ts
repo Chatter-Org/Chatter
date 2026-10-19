@@ -15,8 +15,7 @@ const api = vi.hoisted(() => ({
   apiGetGifFavorites: vi.fn(),
   apiGifFavoritesOp: vi.fn(),
 }));
-vi.mock("@/lib/api", () => api);
-vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
+vi.mock("@chatter/core/api", () => api);
 
 let storage: Map<string, string>;
 

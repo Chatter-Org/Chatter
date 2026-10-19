@@ -1,0 +1,622 @@
+import type { AppState } from "./store/types";
+import type { RoomSummary } from "./api";
+import { displayUserId } from "./utils";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+export interface CommandResult {
+  output: string;
+  type: "success" | "error" | "info";
+  closeAfter?: boolean;
+}
+
+export interface CommandContext {
+  state: AppState;
+  createRoom: (name: string, topic: string) => Promise<void>;
+  joinRoom: (roomId: string) => Promise<void>;
+  leaveRoom: (roomId: string) => Promise<void>;
+  selectRoom: (roomId: string) => Promise<void>;
+  getAllRooms: () => Promise<RoomSummary[]>;
+  setCustomStatus: (status: string) => void;
+  sendMessage: (body: string) => Promise<void>;
+  loadRooms: () => Promise<void>;
+  updateTopic: (roomId: string, topic: string) => Promise<void>;
+  kickMember: (roomId: string, userId: string) => Promise<void>;
+  banMember: (roomId: string, userId: string) => Promise<void>;
+  unbanMember: (roomId: string, userId: string) => Promise<void>;
+  setMemberRole: (roomId: string, userId: string, role: string) => Promise<void>;
+  setNameColors: (roomId: string, ownerColor?: string, modColor?: string) => Promise<void>;
+}
+
+export interface Command {
+  name: string;
+  aliases: string[];
+  description: string;
+  usage: string;
+  execute: (args: string[], ctx: CommandContext) => Promise<CommandResult>;
+}
+
+// ─── Ephemeral message (Elden Ring style) ────────────────────────────────────
+
+let graceMessage: { text: string; author: string; appraisals: number } | null = null;
+
+// ─── Commands ────────────────────────────────────────────────────────────────
+
+const commands: Command[] = [
+  {
+    name: "help",
+    aliases: ["h", "?"],
+    description: "List commands or show help for a specific command",
+    usage: "/help [command]",
+    execute: async (args) => {
+      if (args.length > 0) {
+        const cmd = findCommand(args[0]);
+        if (!cmd) return { output: `Unknown command: ${args[0]}`, type: "error" };
+        const aliases = cmd.aliases.length ? ` (aliases: ${cmd.aliases.join(", ")})` : "";
+        return {
+          output: `${cmd.name}${aliases}\n  ${cmd.description}\n  Usage: ${cmd.usage}`,
+          type: "info",
+        };
+      }
+      const lines = commands
+        .filter((c) => !["cowsay", "braindance", "starfield", "grace", "skull"].includes(c.name))
+        .map((c) => `  /${c.name.padEnd(10)} ${c.description}`);
+      return { output: `Available commands:\n${lines.join("\n")}`, type: "info" };
+    },
+  },
+  {
+    name: "create",
+    aliases: ["new"],
+    description: "Create a new room and join it",
+    usage: "/create <room-name>",
+    execute: async (args, ctx) => {
+      const name = args.join(" ").trim();
+      if (!name) return { output: "Usage: /create <room-name>", type: "error" };
+      try {
+        await ctx.createRoom(name, "");
+        await ctx.loadRooms();
+        return { output: `Room "${name}" created and joined.`, type: "success", closeAfter: true };
+      } catch (err: any) {
+        return { output: `Failed to create room: ${err.message || err}`, type: "error" };
+      }
+    },
+  },
+  {
+    name: "join",
+    aliases: ["j"],
+    description: "Join a room by name (fuzzy match)",
+    usage: "/join <room-name>",
+    execute: async (args, ctx) => {
+      const query = args.join(" ").trim().toLowerCase();
+      if (!query) return { output: "Usage: /join <room-name>", type: "error" };
+      try {
+        const allRooms = await ctx.getAllRooms();
+        const exact = allRooms.find((r) => r.name.toLowerCase() === query);
+        const match = exact || allRooms.find((r) => r.name.toLowerCase().includes(query));
+        if (!match) return { output: `No room matching "${query}" found.`, type: "error" };
+        await ctx.joinRoom(match.room_id);
+        await ctx.loadRooms();
+        await ctx.selectRoom(match.room_id);
+        return { output: `Joined "${match.name}".`, type: "success", closeAfter: true };
+      } catch (err: any) {
+        return { output: `Failed to join: ${err.message || err}`, type: "error" };
+      }
+    },
+  },
+  {
+    name: "leave",
+    aliases: ["part"],
+    description: "Leave the current room",
+    usage: "/leave",
+    execute: async (_args, ctx) => {
+      if (!ctx.state.currentRoomId) return { output: "No room selected.", type: "error" };
+      const roomName = ctx.state.roomInfoMap[ctx.state.currentRoomId]?.name || "this room";
+      try {
+        await ctx.leaveRoom(ctx.state.currentRoomId);
+        await ctx.loadRooms();
+        return { output: `Left "${roomName}".`, type: "success", closeAfter: true };
+      } catch (err: any) {
+        return { output: `Failed to leave: ${err.message || err}`, type: "error" };
+      }
+    },
+  },
+  {
+    name: "rooms",
+    aliases: ["ls"],
+    description: "List your joined rooms",
+    usage: "/rooms",
+    execute: async (_args, ctx) => {
+      const ids = ctx.state.joinedRoomIds;
+      if (ids.length === 0) return { output: "You haven't joined any rooms.", type: "info" };
+      const lines = ids.map((id) => {
+        const info = ctx.state.roomInfoMap[id];
+        const name = info?.name || id;
+        const current = id === ctx.state.currentRoomId ? " <-" : "";
+        return `  ${name}${current}`;
+      });
+      return { output: `Joined rooms (${ids.length}):\n${lines.join("\n")}`, type: "info" };
+    },
+  },
+  {
+    name: "switch",
+    aliases: ["sw", "go"],
+    description: "Switch to a joined room by name",
+    usage: "/switch <room-name>",
+    execute: async (args, ctx) => {
+      const query = args.join(" ").trim().toLowerCase();
+      if (!query) return { output: "Usage: /switch <room-name>", type: "error" };
+      const match = ctx.state.joinedRoomIds.find((id) => {
+        const name = ctx.state.roomInfoMap[id]?.name?.toLowerCase() || "";
+        return name === query || name.includes(query);
+      });
+      if (!match) return { output: `No joined room matching "${query}".`, type: "error" };
+      await ctx.selectRoom(match);
+      const name = ctx.state.roomInfoMap[match]?.name || match;
+      return { output: `Switched to "${name}".`, type: "success", closeAfter: true };
+    },
+  },
+  {
+    name: "topic",
+    aliases: [],
+    description: "Set the topic of the current room",
+    usage: "/topic <text>",
+    execute: async (args, ctx) => {
+      if (!ctx.state.currentRoomId) return { output: "No room selected.", type: "error" };
+      const topic = args.join(" ").trim();
+      if (!topic) return { output: "Usage: /topic <text>", type: "error" };
+      try {
+        await ctx.updateTopic(ctx.state.currentRoomId, topic);
+        return { output: `Topic set to: ${topic}`, type: "success" };
+      } catch (err: any) {
+        return { output: `Failed to set topic: ${err.message || err}`, type: "error" };
+      }
+    },
+  },
+  {
+    name: "status",
+    aliases: [],
+    description: "Set your custom status",
+    usage: "/status <text>",
+    execute: async (args, ctx) => {
+      const status = args.join(" ").trim();
+      if (!status) return { output: "Usage: /status <text>", type: "error" };
+      ctx.setCustomStatus(status);
+      return { output: `Status set to: ${status}`, type: "success" };
+    },
+  },
+  {
+    name: "ping",
+    aliases: ["info"],
+    description: "Show current room info and your user ID",
+    usage: "/ping",
+    execute: async (_args, ctx) => {
+      const lines: string[] = [];
+      lines.push(`User: ${ctx.state.userId ? displayUserId(ctx.state.userId) : "unknown"}`);
+      if (ctx.state.currentRoomId) {
+        const info = ctx.state.roomInfoMap[ctx.state.currentRoomId];
+        lines.push(`Room: ${info?.name || ctx.state.currentRoomId}`);
+        if (info?.topic) lines.push(`Topic: ${info.topic}`);
+        lines.push(`Members: ${ctx.state.roomMembers.length}`);
+      } else {
+        lines.push("No room selected.");
+      }
+      return { output: lines.join("\n"), type: "info" };
+    },
+  },
+  {
+    name: "clear",
+    aliases: ["cls"],
+    description: "Clear CLI output history",
+    usage: "/clear",
+    execute: async () => {
+      // Handled specially by CommandBar — it checks for this name
+      return { output: "", type: "success" };
+    },
+  },
+  {
+    name: "kick",
+    aliases: [],
+    description: "Kick a user from the current room",
+    usage: "/kick <username>",
+    execute: async (args, ctx) => {
+      if (!ctx.state.currentRoomId) return { output: "No room selected.", type: "error" };
+      const username = args[0]?.trim();
+      if (!username) return { output: "Usage: /kick <username>", type: "error" };
+      const target = ctx.state.roomMembers.find(
+        (m) => m.displayName.toLowerCase() === username.toLowerCase()
+      );
+      if (!target) return { output: `User "${username}" not found in this room.`, type: "error" };
+      try {
+        await ctx.kickMember(ctx.state.currentRoomId, target.userId);
+        return { output: `Kicked ${username}.`, type: "success" };
+      } catch (err: any) {
+        return { output: `Failed: ${err.message || err}`, type: "error" };
+      }
+    },
+  },
+  {
+    name: "ban",
+    aliases: [],
+    description: "Ban a user from the current room",
+    usage: "/ban <username>",
+    execute: async (args, ctx) => {
+      if (!ctx.state.currentRoomId) return { output: "No room selected.", type: "error" };
+      const username = args[0]?.trim();
+      if (!username) return { output: "Usage: /ban <username>", type: "error" };
+      const target = ctx.state.roomMembers.find(
+        (m) => m.displayName.toLowerCase() === username.toLowerCase()
+      );
+      if (!target) return { output: `User "${username}" not found in this room.`, type: "error" };
+      try {
+        await ctx.banMember(ctx.state.currentRoomId, target.userId);
+        return { output: `Banned ${username}.`, type: "success" };
+      } catch (err: any) {
+        return { output: `Failed: ${err.message || err}`, type: "error" };
+      }
+    },
+  },
+  {
+    name: "unban",
+    aliases: [],
+    description: "Unban a user from the current room (owner only)",
+    usage: "/unban <username>",
+    execute: async (args, ctx) => {
+      if (!ctx.state.currentRoomId) return { output: "No room selected.", type: "error" };
+      const username = args[0]?.trim();
+      if (!username) return { output: "Usage: /unban <username>", type: "error" };
+      const userId = `@${username}:localhost`;
+      try {
+        await ctx.unbanMember(ctx.state.currentRoomId, userId);
+        return { output: `Unbanned ${username}.`, type: "success" };
+      } catch (err: any) {
+        return { output: `Failed: ${err.message || err}`, type: "error" };
+      }
+    },
+  },
+  {
+    name: "promote",
+    aliases: ["mod"],
+    description: "Promote a user to moderator (owner only)",
+    usage: "/promote <username>",
+    execute: async (args, ctx) => {
+      if (!ctx.state.currentRoomId) return { output: "No room selected.", type: "error" };
+      const username = args[0]?.trim();
+      if (!username) return { output: "Usage: /promote <username>", type: "error" };
+      const target = ctx.state.roomMembers.find(
+        (m) => m.displayName.toLowerCase() === username.toLowerCase()
+      );
+      if (!target) return { output: `User "${username}" not found in this room.`, type: "error" };
+      try {
+        await ctx.setMemberRole(ctx.state.currentRoomId, target.userId, "moderator");
+        return { output: `${username} promoted to moderator.`, type: "success" };
+      } catch (err: any) {
+        return { output: `Failed: ${err.message || err}`, type: "error" };
+      }
+    },
+  },
+  {
+    name: "demote",
+    aliases: ["unmod"],
+    description: "Demote a moderator to member (owner only)",
+    usage: "/demote <username>",
+    execute: async (args, ctx) => {
+      if (!ctx.state.currentRoomId) return { output: "No room selected.", type: "error" };
+      const username = args[0]?.trim();
+      if (!username) return { output: "Usage: /demote <username>", type: "error" };
+      const target = ctx.state.roomMembers.find(
+        (m) => m.displayName.toLowerCase() === username.toLowerCase()
+      );
+      if (!target) return { output: `User "${username}" not found in this room.`, type: "error" };
+      try {
+        await ctx.setMemberRole(ctx.state.currentRoomId, target.userId, "member");
+        return { output: `${username} demoted to member.`, type: "success" };
+      } catch (err: any) {
+        return { output: `Failed: ${err.message || err}`, type: "error" };
+      }
+    },
+  },
+  {
+    name: "namecolor",
+    aliases: ["nc"],
+    description: "Set name color for owner or moderators",
+    usage: "/namecolor <owner|mod> <#hex>",
+    execute: async (args, ctx) => {
+      if (!ctx.state.currentRoomId) return { output: "No room selected.", type: "error" };
+      const target = args[0]?.toLowerCase();
+      const color = args[1];
+      if (!target || !color) return { output: "Usage: /namecolor <owner|mod> <#hex>", type: "error" };
+      if (target !== "owner" && target !== "mod") {
+        return { output: "First argument must be 'owner' or 'mod'.", type: "error" };
+      }
+      if (!/^#[0-9a-fA-F]{6}$/.test(color)) {
+        return { output: "Color must be a hex code like #ff5500.", type: "error" };
+      }
+      try {
+        await ctx.setNameColors(
+          ctx.state.currentRoomId,
+          target === "owner" ? color : undefined,
+          target === "mod" ? color : undefined
+        );
+        return { output: `Name color for ${target} set to ${color}.`, type: "success" };
+      } catch (err: any) {
+        return { output: `Failed: ${err.message || err}`, type: "error" };
+      }
+    },
+  },
+  {
+    name: "starfield",
+    aliases: ["stars", "space"],
+    description: "Generate a random ASCII starfield",
+    usage: "/starfield [density]",
+    execute: async (args) => {
+      const density = Math.min(Math.max(parseInt(args[0]) || 3, 1), 10);
+      const width = 48;
+      const height = 14;
+      const chars = [" ", " ", " ", " ", ".", ".", "*", "+", ".", " ", " ", " "];
+      const sparseChars = [" ", " ", " ", " ", " ", " ", " ", ".", ".", "*"];
+      const palette = density > 5 ? chars : sparseChars;
+
+      const lines: string[] = [];
+      for (let y = 0; y < height; y++) {
+        let line = "";
+        for (let x = 0; x < width; x++) {
+          line += palette[Math.floor(Math.random() * palette.length)];
+        }
+        lines.push(line);
+      }
+
+      // Add a little ship or planet
+      const mid = Math.floor(height / 2);
+      const row = lines[mid].split("");
+      const shipPos = Math.floor(width * 0.7);
+      row.splice(shipPos, 3, "<", "=", ">");
+      lines[mid] = row.join("");
+
+      return { output: lines.join("\n"), type: "info" };
+    },
+  },
+  {
+    name: "braindance",
+    aliases: ["bd"],
+    description: "Slot in a braindance, choom",
+    usage: "/braindance",
+    execute: async () => {
+      const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+
+      const intros = [
+        "Got a nova BD for you, choom. Straight from Jig-Jig Street.",
+        "Slotting you in, choomba. This one's preem.",
+        "Fresh off the black market — Judy'd be proud.",
+        "Wraith-sourced BD. No corpo filter. Raw scroll.",
+        "This one flatlined three editors. You ready, gonk?",
+        "Ripper says your chrome can handle it. Jack in.",
+      ];
+
+      const outros = [
+        "Stay chrome out there.",
+        "Don't burn out on me, choom.",
+        "Never fade away.",
+        "See you in the Afterlife.",
+        "A thing of beauty, I know what I have to do.",
+        "What's one more corpo secret between chooms?",
+      ];
+
+      const lines: string[] = [];
+      lines.push(">> BRAINDANCE LINK DETECTED");
+      lines.push(`>> ${pick(intros)}`);
+      lines.push("");
+      lines.push("  https://youtu.be/KvMY1uzSC1E?si=xU-Qy8hCHgAqrQ5I");
+      lines.push("");
+      lines.push(`>> ${pick(outros)}`);
+
+      return { output: lines.join("\n"), type: "info" };
+    },
+  },
+  {
+    name: "grace",
+    aliases: ["tarnished", "bonfire", "rest"],
+    description: "Leave or read a message at the Site of Grace",
+    usage: "/grace [message]",
+    execute: async (args, ctx) => {
+      const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+      const msg = args.join(" ").trim();
+
+      // Leave a message
+      if (msg) {
+        graceMessage = { text: msg, author: ctx.state.userId || "Tarnished", appraisals: 0 };
+        return {
+          output: [
+            "  \\`,,'/",
+            "   (o )",
+            "────╨────",
+            "",
+            `  Message left by ${graceMessage.author}:`,
+            `  "${msg}"`,
+          ].join("\n"),
+          type: "success",
+        };
+      }
+
+      // Read the current message
+      const lines: string[] = [
+        "  \\`,,'/",
+        "   (o )",
+        "────╨────",
+        "",
+      ];
+
+      if (graceMessage) {
+        graceMessage.appraisals += 1;
+        lines.push(`  Message from ${graceMessage.author}:`);
+        lines.push(`  "${graceMessage.text}"`);
+        lines.push(`  Appraisals: ${graceMessage.appraisals}`);
+      } else {
+        const defaults = [
+          "Try fingers, but hole.",
+          "Could this be a dog?",
+          "Fort, night.",
+          "Behold, pickle!",
+          "Why is it always suffering?",
+          "Hidden path ahead.",
+          "No maidens?",
+          "Time for rump!",
+          "Praise the message!",
+          "Didn't expect edge.",
+        ];
+        lines.push(`  "${pick(defaults)}"`);
+        lines.push(`  Appraisals: ${Math.floor(Math.random() * 9999)}`);
+      }
+
+      return { output: lines.join("\n"), type: "info" };
+    },
+  },
+  {
+    name: "skull",
+    aliases: ["halo", "spartan", "chief"],
+    description: "Skull activated!",
+    usage: "/skull",
+    execute: async () => {
+      const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+
+      const moments = [
+        {
+          quote: "Wort wort wort!",
+          source: "Elite Combat Dialogue",
+          confetti: false,
+        },
+        {
+          quote: "Wort wort wort! Ahhh, wubba wubba wubba!",
+          source: "Elite Combat Dialogue",
+          confetti: false,
+        },
+        {
+          quote: "Remember Reach.",
+          source: "NOBLE Team",
+          confetti: false,
+        },
+        {
+          quote: "I'm ready. How 'bout you?",
+          source: "Emile-A239, NOBLE Four",
+          confetti: false,
+        },
+        {
+          quote: "Wake me... when you need me.",
+          source: "Master Chief, SPARTAN-117",
+          confetti: false,
+        },
+        {
+          quote: "I need a weapon.",
+          source: "Master Chief, SPARTAN-117",
+          confetti: false,
+        },
+        {
+          quote: "Were it so easy.",
+          source: "Thel 'Vadam, The Arbiter",
+          confetti: false,
+        },
+        {
+          quote: "Dear Humanity... we regret being alien bastards.",
+          source: "Sgt. Avery Johnson",
+          confetti: false,
+        },
+        {
+          quote: "Send me out... with a bang.",
+          source: "Sgt. Avery Johnson",
+          confetti: false,
+        },
+        {
+          quote: "Don't make a girl a promise you can't keep.",
+          source: "Cortana",
+          confetti: false,
+        },
+        {
+          quote: "This cave is not a natural formation.",
+          source: "Cortana",
+          confetti: false,
+        },
+        {
+          quote: "I am a monument to all your sins.",
+          source: "Gravemind",
+          confetti: false,
+        },
+        {
+          quote: "GRUNT BIRTHDAY PARTY ACTIVATED!",
+          source: "Skull Found",
+          confetti: true,
+        },
+        {
+          quote: "Thought I'd try shooting my way out. Mix things up a little.",
+          source: "Master Chief, SPARTAN-117",
+          confetti: false,
+        },
+        {
+          quote: "To give the Covenant back their bomb.",
+          source: "Master Chief, SPARTAN-117",
+          confetti: false,
+        },
+        {
+          quote: "Tell 'em to make it count.",
+          source: "Jorge-052, NOBLE Five",
+          confetti: false,
+        },
+        {
+          quote: "Spartans never die. They're just missing in action.",
+          source: "Dr. Catherine Halsey",
+          confetti: false,
+        },
+      ];
+
+      const moment = pick(moments);
+      const lines: string[] = [];
+
+      if (moment.confetti) {
+        lines.push("  *  . * .  *  . *  . * .");
+        lines.push(" . *  *  . *  *  . *  *  .");
+        lines.push("  . * .  *  . * .  *  . *");
+        lines.push("");
+        lines.push("  GRUNT BIRTHDAY PARTY!");
+        lines.push("  *pop* *pop* yayyy!");
+        lines.push("");
+        lines.push("  *  . * .  *  . *  . * .");
+        lines.push(" . *  *  . *  *  . *  *  .");
+        lines.push("  . * .  *  . * .  *  . *");
+      } else {
+        lines.push(`  "${moment.quote}"`);
+        lines.push(`   — ${moment.source}`);
+      }
+
+      return { output: lines.join("\n"), type: "info" };
+    },
+  },
+];
+
+// ─── Registry helpers ────────────────────────────────────────────────────────
+
+export function findCommand(input: string): Command | undefined {
+  const name = input.toLowerCase().replace(/^\//, "");
+  return commands.find(
+    (c) => c.name === name || c.aliases.includes(name)
+  );
+}
+
+export function getAllCommands(): Command[] {
+  return commands;
+}
+
+export function parseCommandLine(line: string): { name: string; args: string[] } {
+  const trimmed = line.trim().replace(/^\//, "");
+  const [name, ...args] = trimmed.split(/\s+/);
+  return { name: name || "", args };
+}
+
+export async function executeCommand(
+  line: string,
+  ctx: CommandContext
+): Promise<CommandResult> {
+  const { name, args } = parseCommandLine(line);
+  const cmd = findCommand(name);
+  if (!cmd) {
+    return { output: `Unknown command: /${name}. Type /help for a list.`, type: "error" };
+  }
+  return cmd.execute(args, ctx);
+}

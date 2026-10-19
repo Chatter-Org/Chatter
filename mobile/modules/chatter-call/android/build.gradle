@@ -1,0 +1,22 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'io.zgaf.chatter'
+version = '0.1.0'
+
+android {
+  namespace "io.zgaf.chatter.call"
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+    consumerProguardFiles 'consumer-rules.pro'
+  }
+}
+
+dependencies {
+  implementation 'androidx.core:core-ktx:1.13.1'
+  // Picture-in-picture changes, from the activity (ComponentActivity).
+  implementation 'androidx.activity:activity:1.9.3'
+}

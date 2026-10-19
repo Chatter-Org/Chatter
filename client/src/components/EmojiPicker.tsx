@@ -1,10 +1,12 @@
 import { useState, useMemo, useRef, useEffect, type ReactNode } from "react";
-import { STANDARD_SHORTCODES } from "../lib/emojiShortcodes";
+import {
+  filterEmojiCatalog,
+  getFrequentEmojis,
+  isCustomEmojiUrl,
+  recordEmojiUsage,
+} from "@chatter/core/emojiCatalog";
 
-/** Check if a string is a custom emoji URL */
-export function isCustomEmojiUrl(s: string): boolean {
-  return s.startsWith("/") || s.startsWith("http");
-}
+export { isCustomEmojiUrl };
 
 /** Render a text string that may contain :emoji{url}: markers into React nodes */
 export function renderInlineEmojis(text: string): ReactNode[] {
@@ -25,53 +27,6 @@ export function renderInlineEmojis(text: string): ReactNode[] {
     parts.push(text.slice(lastIndex));
   }
   return parts;
-}
-
-const emojiCategories: Record<string, string[]> = {
-  Smileys: ["😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😚","😙","🥲","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔","😐","😑","😶","😏","😒","🙄","😬","🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮","🤧","🥵","🥶","🥴","😵","🤯","🤠","🥳","🥸","😎","🤓","🧐","😕","😟","🙁","☹️","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱","😖","😣","😞","😓","😩","😫","🥱","😤","😠","😡","🤬","😈","👿","💀","☠️","💩","🤡","👹","👺","👻","👽","👾","🤖"],
-  Gestures: ["👍","👎","👊","✊","🤛","🤜","🤞","✌️","🤟","🤘","👌","🤌","🤏","👈","👉","👆","👇","☝️","🫵","👋","🤚","🖐️","✋","🖖","🫱","🫲","🫳","🫴","👏","🙌","🤲","🤝","🙏","✍️","💅","🤳","💪","🦾","🫀","🧠","👀","👁️","👅","👄","🫦","👣"],
-  Hearts: ["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","🩷","🩵","🩶","💔","❤️‍🔥","❤️‍🩹","💕","💞","💓","💗","💖","💘","💝","💟","💌","💋","😻","💑","👫","👬","👭"],
-  Animals: ["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐻‍❄️","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🙈","🙉","🙊","🐔","🐧","🐦","🦆","🦅","🦉","🦇","🐺","🐗","🐴","🦄","🐝","🐛","🦋","🐌","🐞","🦟","🕷️","🦂","🐢","🐍","🦎","🐙","🦑","🦐","🦀","🐡","🐠","🐟","🐬","🐳","🦈","🐊","🐅","🐆","🦓","🐘","🦒","🦘","🦬","🐄","🐎","🐑","🦙","🐐","🦌","🐕","🐈","🪶","🦃","🦚","🦜","🦢","🐇","🦝","🦦","🦥","🐁","🐿️","🦔","🐾"],
-  Nature: ["🌱","🌲","🌳","🌴","🌵","🌾","🌿","☘️","🍀","🍁","🍂","🍃","🍄","🌺","🌻","🌹","🥀","🌷","🌸","💐","🌼","🌰","⭐","🌟","✨","💫","⚡","🔥","🌊","💧","🌍","🌎","🌏","🏔️","🌋","🏝️","🌅","🌄","🌠","🌌","🌈","☀️","🌤️","⛅","☁️","🌧️","⛈️","🌩️","❄️","☃️","⛄","🌬️","🌀","☂️","🌫️"],
-  Food: ["🍕","🍔","🍟","🌭","🍿","🥓","🥚","🍳","🥞","🍞","🥐","🧀","🥗","🌮","🌯","🥪","🍖","🍗","🥙","🧆","🍱","🍜","🍝","🍣","🍤","🥟","🍦","🍧","🍨","🍩","🍪","🎂","🍰","🧁","🍫","🍬","🍭","🍷","🍸","🍹","🍺","🥂","🥃","🧋","☕","🍵","🧃","🥛","🍾","🧊","🫖","🍎","🍊","🍋","🍇","🍓","🫐","🍑","🥭","🍍","🥥","🥝","🍅","🥑","🥦","🥕","🌽","🍆","🧅","🧄","🥔"],
-  Activities: ["⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🥏","🎱","🏓","🏸","🥊","🥋","⛳","🏹","🛹","🛼","⛸️","🛷","🥌","🎿","🏂","🏋️","🤸","🏄","🏊","🚴","🧘","🧗","🏆","🥇","🥈","🥉","🎮","🎲","♟️","🎯","🎳","🧩","🎰","🎭","🎨","🎬","🎤","🎧","🎼","🎹","🥁","🎷","🎺","🎸","🎻","🪗","🎣","🤿","🪁","🎡","🎢","🎠","🎪"],
-  Travel: ["🚗","🚕","🚙","🚌","🏎️","🚓","🚑","🚒","🚐","🛻","🚚","🚜","🏍️","🛵","🚲","🛴","✈️","🚀","🛸","🚁","⛵","🚢","🚂","🚇","🚉","🚊","🚝","⚓","🚦","🗺️","🗽","🗼","🏰","🏯","🏟️","⛩️","🏛️","⛪","🕌","🏠","🏡","🏢","🏥","🏦","🏨","🏪","🏫","🏬","🏭","🌁","🌃","🌆","🌇","🌉","🏙️"],
-  Objects: ["📱","💻","⌨️","🖥️","🖱️","💾","💿","📷","📸","📹","🎥","📞","☎️","📺","📻","⏰","🔋","🔌","💡","🔦","🕯️","💸","💵","💳","💎","⚖️","🧲","🔧","🔨","🛠️","🔩","🔑","🗝️","🔐","🔒","🔓","🚪","🪑","🛋️","🛏️","🛁","🧴","🧹","🧺","🧻","🧼","🧽","🛒","🎁","🎀","🎊","🎉","🎈","🧨","🪄","🔮","💈","🪞","🛍️","📚","📖","✏️","🖊️","📝","📌","📎","✂️","🗑️","🔍","🔎","🔏","💊","🩺","🩹","🧬","🔭","📡","🧪","🧫","🧯","🛢️","⚗️"],
-  Symbols: ["✅","❌","❓","❗","💯","🔴","🟠","🟡","🟢","🔵","🟣","⚫","⚪","🟤","🔶","🔷","🔸","🔹","🔺","🔻","♻️","⭕","🚫","⛔","📵","🔞","🔃","🔄","🔙","🔚","🔛","🔜","🔝","🏧","♿","💤","🔔","🔕","🎵","🎶","💱","💲","Ⓜ️","🅰️","🅱️","🆎","🆑","🅾️","🆘","🆒","🆓","🆕","🆖","🆗","🆙","🆚","🈺","🈷️","✴️","🌐","💠","🔱","📛","🔰","⚜️","🏁","🚩","🎌","🏴","🏳️"],
-};
-
-// Build a reverse map: emoji → shortcode names for searching
-const emojiToNames: Record<string, string[]> = {};
-for (const [name, emoji] of Object.entries(STANDARD_SHORTCODES)) {
-  if (!emojiToNames[emoji]) emojiToNames[emoji] = [];
-  emojiToNames[emoji].push(name);
-}
-
-// --- Frequently Used emoji tracking via localStorage ---
-const FREQ_STORAGE_KEY = "emoji_freq";
-const FREQ_TOP_N = 20;
-
-function getEmojiFrequencies(): Record<string, number> {
-  try {
-    const raw = localStorage.getItem(FREQ_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-function recordEmojiUsage(emoji: string) {
-  const freq = getEmojiFrequencies();
-  freq[emoji] = (freq[emoji] || 0) + 1;
-  localStorage.setItem(FREQ_STORAGE_KEY, JSON.stringify(freq));
-}
-
-function getFrequentEmojis(): string[] {
-  const freq = getEmojiFrequencies();
-  return Object.entries(freq)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, FREQ_TOP_N)
-    .map(([emoji]) => emoji);
 }
 
 interface EmojiPickerProps {
@@ -97,43 +52,10 @@ export function EmojiPicker({ onSelect, roomCustomEmojis, emojiAliases }: EmojiP
     inputRef.current?.focus();
   }, []);
 
-  // Build a reverse map from custom emoji value → alias names for searching
-  const customEmojiToAliases = useMemo(() => {
-    const map: Record<string, string[]> = {};
-    if (emojiAliases) {
-      for (const [name, value] of Object.entries(emojiAliases)) {
-        if (!map[value]) map[value] = [];
-        map[value].push(name);
-      }
-    }
-    return map;
-  }, [emojiAliases]);
-
-  const filteredCategories = useMemo(() => {
-    if (!query) return Object.entries(emojiCategories);
-    return Object.entries(emojiCategories)
-      .map(([cat, emojis]) => {
-        const filtered = emojis.filter((e) => {
-          const names = emojiToNames[e];
-          const aliases = customEmojiToAliases[e];
-          const allNames = [...(names || []), ...(aliases || [])];
-          if (allNames.length === 0) return false;
-          return allNames.some((n) => n.replace(/_/g, "").includes(query));
-        });
-        return [cat, filtered] as [string, string[]];
-      })
-      .filter(([, emojis]) => emojis.length > 0);
-  }, [query, customEmojiToAliases]);
-
-  const filteredCustomEmojis = useMemo(() => {
-    if (!roomCustomEmojis || roomCustomEmojis.length === 0) return [];
-    if (!query) return roomCustomEmojis;
-    return roomCustomEmojis.filter((e) => {
-      const aliases = customEmojiToAliases[e];
-      if (!aliases || aliases.length === 0) return false;
-      return aliases.some((n) => n.replace(/_/g, "").includes(query));
-    });
-  }, [query, roomCustomEmojis, customEmojiToAliases]);
+  const { categories: filteredCategories, custom: filteredCustomEmojis } = useMemo(
+    () => filterEmojiCatalog(search, roomCustomEmojis, emojiAliases),
+    [search, roomCustomEmojis, emojiAliases],
+  );
 
   return (
     <div className="w-72 max-h-64 overflow-y-auto p-3">

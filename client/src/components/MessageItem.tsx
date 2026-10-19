@@ -1,9 +1,11 @@
 import { memo, useMemo, useState, useEffect, useRef, useCallback } from "react";
+import { externalSender } from "@chatter/core/messageFormat";
+import { DEFAULT_EMBED_COLOR, embedActionRows, embedSelectRows } from "@chatter/core/embeds";
 import { EyeOff, Star, Play, Copy, Check, Cast, Subtitles, Link2, Pin, PinOff, Reply, MessagesSquare, SmilePlus, Pencil, Trash2, X, MoreHorizontal } from "lucide-react";
 import { useAppContext } from "@/lib/store";
 import { useVideoResume } from "@/hooks/useVideoResume";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import type { MatrixMessage, Embed, EmbedAction, EmbedSelect } from "@/lib/api";
+import type { MatrixMessage, Embed } from "@/lib/api";
 import {
   apiGetLinkPreview,
   type LinkPreview,
@@ -693,45 +695,19 @@ function LightboxVideo({
 
 /** Discord-style embed card for bot/webhook messages */
 function EmbedCard({ embed, eventId }: { embed: Embed; eventId?: string }) {
-  const { wsRef, state } = useAppContext();
-  const borderColor = embed.color || "#5865F2";
+  const { embedInteraction } = useAppContext();
+  const borderColor = embed.color || DEFAULT_EMBED_COLOR;
 
-  const sendInteraction = useCallback((componentId: string, componentType: "button" | "select", values?: string[]) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN || !eventId || !state.currentRoomId) return;
-    ws.send(JSON.stringify({
-      type: "embed_interaction",
-      room_id: state.currentRoomId,
-      event_id: eventId,
-      component_id: componentId,
-      component_type: componentType,
-      values: values || [],
-    }));
-  }, [wsRef, eventId, state.currentRoomId]);
+  const sendInteraction = useCallback(
+    (componentId: string, componentType: "button" | "select", values?: string[]) => {
+      if (eventId) embedInteraction(eventId, componentId, componentType, values);
+    },
+    [embedInteraction, eventId],
+  );
 
-  // Group actions into rows
-  const actionRows = useMemo(() => {
-    if (!embed.actions?.length) return [];
-    const rows: Map<number, EmbedAction[]> = new Map();
-    for (const action of embed.actions) {
-      const row = action.row ?? 0;
-      if (!rows.has(row)) rows.set(row, []);
-      rows.get(row)!.push(action);
-    }
-    return Array.from(rows.entries()).sort((a, b) => a[0] - b[0]).map(([, actions]) => actions);
-  }, [embed.actions]);
-
-  // Group selects into rows
-  const selectRows = useMemo(() => {
-    if (!embed.selects?.length) return [];
-    const rows: Map<number, EmbedSelect[]> = new Map();
-    for (const sel of embed.selects) {
-      const row = sel.row ?? 99;
-      if (!rows.has(row)) rows.set(row, []);
-      rows.get(row)!.push(sel);
-    }
-    return Array.from(rows.entries()).sort((a, b) => a[0] - b[0]).map(([, selects]) => selects);
-  }, [embed.selects]);
+  // The rows the bot asked for (core/embeds.ts).
+  const actionRows = useMemo(() => embedActionRows(embed.actions), [embed.actions]);
+  const selectRows = useMemo(() => embedSelectRows(embed.selects), [embed.selects]);
 
   const actionStyleClasses: Record<string, string> = {
     primary: "bg-indigo-500 hover:bg-indigo-600 text-white",
@@ -1098,14 +1074,9 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
       : message.content.msgtype === "m.poll_results"
         ? "results"
         : null;
-  const isWebhook = message.content.webhook === true;
-  const isBot = message.content.bot === true;
-  const isExternal = isWebhook || isBot;
-  const senderUsername = isWebhook
-    ? (message.content.webhook_name || "Webhook")
-    : isBot
-    ? (message.content.bot_name || "Bot")
-    : displayUserId(message.sender);
+  const external = externalSender(message);
+  const isExternal = !!external;
+  const senderUsername = external ? external.name : displayUserId(message.sender);
   const sender = isExternal
     ? senderUsername
     : (state.userPresence[message.sender]?.displayName || senderUsername);
@@ -1114,11 +1085,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
     hour: "2-digit",
     minute: "2-digit",
   });
-  const avatarUrl = isWebhook
-    ? (message.content.webhook_avatar_url || undefined)
-    : isBot
-    ? (message.content.bot_avatar_url || undefined)
-    : state.userPresence[message.sender]?.avatarUrl;
+  const avatarUrl = external ? external.avatarUrl : state.userPresence[message.sender]?.avatarUrl;
   const isDeleted = message.redacted || message.content.body === "[deleted]";
   const isOwn = message.sender === state.userId;
   const myUsername = state.userId ? displayUserId(state.userId) : null;
@@ -1491,7 +1458,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
                 {sender}
               </span>
               {isExternal && (
-                <span className="text-3xs font-semibold px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-400 leading-none">{isBot ? "BOT" : "HOOK"}</span>
+                <span className="text-3xs font-semibold px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-400 leading-none">{external?.badge}</span>
               )}
               <span className="text-xs text-muted-foreground">{time}</span>
             </div>

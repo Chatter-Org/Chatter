@@ -27,8 +27,10 @@
     /* Path aliases */
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@chatter/core/*": ["../packages/core/src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "../packages/core/src"],
+  "exclude": ["../packages/core/src/**/__tests__"]
 }

@@ -4,6 +4,8 @@ WORKDIR /app/client
 COPY client/package.json client/package-lock.json ./
 RUN npm ci
 COPY client/ .
+# Shared with the mobile app and compiled as part of the client (see vite.config.ts).
+COPY packages/core/src/ /app/packages/core/src/
 RUN npm run build
 
 # Build backend

@@ -7,6 +7,7 @@ import { useConnectionStats } from "@/hooks/useConnectionStats";
 import { useSpeakingDetection } from "@/hooks/useSpeakingDetection";
 import type { VoiceRestoreState } from "@/lib/voiceRejoin";
 import { CameraSelectModal } from "./CameraSelectModal";
+import { scoreCallQuality } from "@chatter/core/voice/quality";
 
 export type ConnectionQuality = 0 | 1 | 2 | 3 | 4;
 export interface ConnQualityData { quality: ConnectionQuality; pingMs: number | null; }
@@ -29,19 +30,9 @@ interface VoiceControlsProps {
 }
 
 function computeQuality(connStats: Record<string, import("@/lib/webrtc").PeerStats>): ConnectionQuality {
+  // The scoring is shared with the mobile app (@chatter/core/voice/quality).
   const pub = connStats["voice-pub"];
-  if (!pub || pub.connectionState === "new" || pub.connectionState === "connecting") return 0;
-  if (pub.connectionState === "failed" || pub.connectionState === "disconnected" || pub.connectionState === "closed") return 0;
-
-  const rttMs = (pub.rtt ?? 0) * 1000;
-  const jitterMs = (pub.audioJitter ?? 0) * 1000;
-  const loss = pub.audioPacketsLost ?? 0;
-
-  // Score: 4 = excellent, 3 = good, 2 = fair, 1 = poor
-  if (rttMs < 80 && jitterMs < 20 && loss < 5) return 4;
-  if (rttMs < 150 && jitterMs < 40 && loss < 20) return 3;
-  if (rttMs < 300 && jitterMs < 80 && loss < 50) return 2;
-  return 1;
+  return scoreCallQuality(pub && { connectionState: pub.connectionState, rtt: pub.rtt, audioJitter: pub.audioJitter, audioPacketsLost: pub.audioPacketsLost });
 }
 
 export function VoiceControls({ joinVoiceRef, leaveVoiceRef, releaseVoiceRef, toggleMuteRef, toggleDeafenRef, startScreenShareRef, stopScreenShareRef, startWebcamRef, stopWebcamRef, connQualityRef, setUserVolumeRef, speakingUsersRef }: VoiceControlsProps) {

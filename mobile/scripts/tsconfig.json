@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "module": "esnext", "target": "es2022", "types": ["node"] },
+  "include": ["*.ts", "*.mts"]
+}

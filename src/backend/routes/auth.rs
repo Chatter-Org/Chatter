@@ -925,10 +925,32 @@ pub(crate) async fn delete_account(
     Ok(Json(json!({ "deleted": true })))
 }
 
+/// Sign out.
+///
+/// Without a body this ends every session the account has — every refresh
+/// token and every open socket — which is what signing out of the web client
+/// has always meant. A client that holds its own refresh token (the mobile
+/// app, which has no cookie) can instead name it in the body,
+/// `{ "refresh_token": "…" }`, to end just that device's session: only that
+/// token is revoked, and the account stays signed in everywhere else. Holding
+/// the token is the proof; it is the same credential `/refresh` accepts.
 pub(crate) async fn logout(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    let device_token = serde_json::from_slice::<RefreshTokenRequest>(&body)
+        .ok()
+        .and_then(|req| req.refresh_token)
+        .filter(|token| !token.is_empty());
+    if let Some(device_token) = device_token {
+        let refresh_tokens = state.db.collection::<RefreshTokenRecord>("refresh_tokens");
+        let _ = refresh_tokens
+            .delete_one(doc! { "token": &device_token })
+            .await;
+        return (clear_cookie_headers(), Json(json!({})));
+    }
+
     if let Some(token) = extract_token(&headers) {
         if let Some(uid) = get_user_from_token(&state, &token) {
             state.active_websockets.write().await.remove(&uid);

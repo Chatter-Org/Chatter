@@ -3,3 +3,4 @@ client/node_modules/
 client/dist/
 .git/
 .claude/
+packages/*/node_modules/

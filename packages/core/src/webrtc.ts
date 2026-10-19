@@ -1,0 +1,564 @@
+import type { VoicePeer } from "./voice/media";
+import { getAccessToken, serverUrl } from "./api";
+
+// Fallback config used until the server responds
+const DEFAULT_WEBRTC_CONFIG: RTCConfiguration = {
+  iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+};
+
+// Populated from /api/ice-servers on startup
+let _cachedConfig: RTCConfiguration | null = null;
+
+export async function fetchIceServers(): Promise<void> {
+  try {
+    const token = getAccessToken();
+    if (!token) return;
+    const res = await fetch(serverUrl("/api/ice-servers"), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      _cachedConfig = await res.json();
+    }
+  } catch {
+    // Use default config
+  }
+}
+
+export function getWebRTCConfig(): RTCConfiguration {
+  return _cachedConfig ?? DEFAULT_WEBRTC_CONFIG;
+}
+
+export const VOICE_SUBSCRIBE_RETRY_MS = 1500;
+export const SCREEN_SUBSCRIBE_RETRY_MS = 1500;
+export const VOICE_SUBSCRIBE_MAX_RETRIES = 8;
+export const VOICE_SUBSCRIBE_MAX_BACKOFF_MS = 30_000;
+// Publisher retries should be fast — it's the critical path for voice
+export const VOICE_PUBLISH_INITIAL_RETRY_MS = 300;
+export const VOICE_PUBLISH_MAX_BACKOFF_MS = 5_000;
+// Timeouts for detecting stuck peer connections
+export const VOICE_SUB_STUCK_NEW_MS = 2500;
+export const VOICE_SUB_STUCK_CONNECTING_MS = 10_000;
+
+// A connection with no answer, or one that never reaches "connected", is
+// given this long before it is rebuilt. Covers the answer going missing and
+// ICE stalling alike; a relay over TCP is the slowest honest path and settles
+// well inside it.
+export const VOICE_CONNECT_TIMEOUT_MS = 15_000;
+// How long "disconnected" may last before the connection is rebuilt. Browsers
+// report a blip there and usually recover on their own, but one that does not
+// only reaches "failed" after ICE consent runs out — around thirty seconds of
+// silence in a call nobody can tell is broken.
+export const VOICE_DISCONNECTED_GRACE_MS = 4_000;
+
+// ─── Local ICE candidates ───────────────────────────────────────────────────
+// A peer's own candidates must not reach the server ahead of its offer. They
+// can: the voice publisher waits on its bitrate before offering, screen and
+// webcam publishers tune their senders, and the desktop app's engine reports
+// candidates before setLocalDescription resolves. The server has nothing to add
+// them to yet and drops them — or, on a rejoin, adds them to the connection
+// being replaced — so whether a connection came up depended on timing.
+
+/** Hold candidates passed to `add` until `offerSent`, then send them in order
+ *  and everything after straight through. */
+export function candidatesAfterOffer<C>(send: (candidate: C) => void): {
+  add: (candidate: C) => void;
+  offerSent: () => void;
+} {
+  let sent = false;
+  const early: C[] = [];
+  return {
+    add: (candidate) => {
+      if (sent) send(candidate);
+      else early.push(candidate);
+    },
+    offerSent: () => {
+      sent = true;
+      early.splice(0).forEach(send);
+    },
+  };
+}
+
+// ─── Remote ICE candidates ──────────────────────────────────────────────────
+// The SFU trickles its candidates as it gathers them, and they can overtake
+// the answer on the socket. A candidate added before the remote description
+// is rejected — and was silently dropped, so whether a call connected came
+// down to which message the server happened to send first. Candidates for a
+// connection still waiting on its answer are held here and added once it lands.
+const heldCandidates = new WeakMap<object, RTCIceCandidateInit[]>();
+
+/** Start holding remote candidates for `pc` until its answer is applied. */
+export function holdCandidatesUntilAnswer(pc: object): void {
+  heldCandidates.set(pc, []);
+}
+
+/** Whether `pc` has sent an offer and not yet had an answer applied. */
+export function isAwaitingAnswer(pc: object): boolean {
+  return heldCandidates.has(pc);
+}
+
+export async function addRemoteCandidate(
+  pc: Pick<VoicePeer, "addIceCandidate">,
+  candidate: RTCIceCandidateInit,
+): Promise<void> {
+  const held = heldCandidates.get(pc);
+  if (held) {
+    held.push(candidate);
+    return;
+  }
+  try {
+    await pc.addIceCandidate(candidate);
+  } catch {
+    // A candidate for a connection that has since closed.
+  }
+}
+
+/** The answer is applied: add everything that arrived ahead of it. */
+export async function releaseHeldCandidates(pc: Pick<VoicePeer, "addIceCandidate">): Promise<void> {
+  const held = heldCandidates.get(pc);
+  heldCandidates.delete(pc);
+  for (const candidate of held ?? []) {
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch {
+      // As above.
+    }
+  }
+}
+
+export interface PeerStats {
+  rtt: number | null;
+  bitrate: number | null;
+  audioBitrate: number | null;
+  videoBitrate: number | null;
+  packetsLost: number | null;
+  audioPacketsLost: number | null;
+  framesPerSecond: number | null;
+  resolution: string | null;
+  connectionState: string;
+  // Audio quality indicators
+  audioJitter: number | null;       // seconds (display as ms)
+  audioLevel: number | null;        // 0-1 instantaneous level from media-source
+  concealmentRatio: number | null;  // fraction of samples concealed due to packet loss
+  audioCodec: string | null;        // e.g. "opus/48000/2"
+}
+
+export function canSignal(wsRef: { current: WebSocket | null }) {
+  return wsRef.current && wsRef.current.readyState === WebSocket.OPEN;
+}
+
+/**
+ * Whether this browser can capture a screen at all.
+ *
+ * No mobile browser implements getDisplayMedia — iOS Safari and Chrome for
+ * Android both leave it undefined — so on a phone the share button is an
+ * offer that can only end in an error toast. Better not to make it.
+ */
+export function canShareScreen(): boolean {
+  return (
+    // eslint-disable-next-line no-restricted-globals -- guarded; absent on a phone, which shares through its own module
+    typeof navigator !== "undefined" &&
+    // eslint-disable-next-line no-restricted-globals -- guarded on the line above
+    typeof navigator.mediaDevices?.getDisplayMedia === "function"
+  );
+}
+
+// ─── Voice speaker slots ────────────────────────────────────────────────────
+// A subscription offers this many receive-only transceivers, and the server
+// puts whoever is currently loudest into them. Keep in sync with
+// VOICE_MAX_ACTIVE_SPEAKERS in src/backend/constants.rs — the server answers
+// with exactly this many tracks.
+export const VOICE_SLOT_COUNT = 12;
+
+// ─── Voice packetisation ────────────────────────────────────────────────────
+// How much audio a publisher puts in one packet, in milliseconds.
+//
+// A voice stream's cost on the wire is mostly headers, not Opus: at the 32 kbps
+// default a 20 ms packet carries 80 bytes of payload under 50 bytes of
+// IP/UDP/RTP/SRTP. Doubling the frame takes about a fifth off the bandwidth and
+// halves the packet rate — and the packet rate is what the SFU spends its CPU
+// on, once per listener, so this is the cheapest capacity there is. The price
+// is 20 ms of latency against a mouth-to-ear budget of roughly 150.
+//
+// Keep in sync with VOICE_PTIME_MS in src/backend/constants.rs, which derives
+// the SFU's frame size from it.
+export const VOICE_PTIME_MS = 40;
+// The longest frame we will accept. Opus supports up to 120 ms; anything that
+// long is a client deciding latency matters less than we do.
+export const VOICE_MAXPTIME_MS = 120;
+
+// ─── Voice channel bitrate ──────────────────────────────────────────────────
+// Per-channel Opus bitrate, configured by room owners/moderators and applied by
+// every publisher in that channel. Keep in sync with VOICE_BITRATE_* in
+// src/backend/constants.rs.
+export const VOICE_BITRATE_MIN_BPS = 8_000;
+export const VOICE_BITRATE_MAX_BPS = 256_000;
+export const VOICE_BITRATE_DEFAULT_BPS = 32_000;
+
+export function clampVoiceBitrate(bps: number | null | undefined): number {
+  if (bps == null || !Number.isFinite(bps)) return VOICE_BITRATE_DEFAULT_BPS;
+  return Math.min(Math.max(Math.round(bps), VOICE_BITRATE_MIN_BPS), VOICE_BITRATE_MAX_BPS);
+}
+
+// Rewrite the opus fmtp line to target the channel bitrate. For Opus it is the
+// *receiver's* SDP that tells our encoder what to send, so this is applied to
+// the SFU's answer before setRemoteDescription — not to our own offer.
+export function mungeVoiceAudioSdp(sdp: string, bitrateBps: number): string {
+  const opusMatch = sdp.match(/a=rtpmap:(\d+) opus\/48000/i);
+  if (!opusMatch) return sdp;
+  const pt = opusMatch[1];
+  const bitrate = clampVoiceBitrate(bitrateBps);
+  const existingFmtp = new RegExp(`a=fmtp:${pt} [^\r\n]+`);
+  const existing = sdp.match(existingFmtp);
+  const params = (existing?.[0].slice(`a=fmtp:${pt} `.length) ?? "minptime=10;useinbandfec=1")
+    .split(";")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0 && !/^maxaveragebitrate=/i.test(p) && !/^usedtx=/i.test(p));
+  params.push(`maxaveragebitrate=${bitrate}`);
+  // Discontinuous transmission. Without it a silent or muted publisher still
+  // sends full-rate encoded silence, which the SFU then fans out to everyone —
+  // so a mostly-listening call costs the same as one where everybody talks.
+  params.push("usedtx=1");
+  const line = `a=fmtp:${pt} ${params.join(";")}`;
+  const withFmtp = existing
+    ? sdp.replace(existingFmtp, line)
+    : // No existing fmtp line — insert one after the rtpmap line
+      sdp.replace(
+        new RegExp(`(a=rtpmap:${pt} opus\\/48000[^\r\n]*\r?\n)`),
+        `$1${line}\r\n`,
+      );
+  return withVoicePtime(withFmtp, line);
+}
+
+/**
+ * Ask the publisher's encoder for longer frames.
+ *
+ * `ptime` is a media-level attribute rather than an fmtp parameter, so it
+ * cannot ride along with the bitrate above. Like the bitrate it belongs in the
+ * SDP the encoder *receives* — this is applied to the SFU's answer, and the
+ * browser reads it as "send me packets this long", clamping to the frame
+ * lengths Opus actually supports.
+ *
+ * The publish answer describes a single audio m-section, so the existing lines
+ * can be replaced wherever they appear.
+ */
+function withVoicePtime(sdp: string, afterLine: string): string {
+  const stripped = sdp.replace(/\r?\na=(?:max)?ptime:\d+/g, "");
+  const ptimeLines = `\r\na=ptime:${VOICE_PTIME_MS}\r\na=maxptime:${VOICE_MAXPTIME_MS}`;
+  // Anchored to the fmtp line just written, so the attributes land inside the
+  // audio section rather than wherever the first match happens to be.
+  const anchor = stripped.indexOf(afterLine);
+  if (anchor === -1) return stripped;
+  const insertAt = anchor + afterLine.length;
+  return stripped.slice(0, insertAt) + ptimeLines + stripped.slice(insertAt);
+}
+
+// Cap the publisher's outgoing audio bitrate. Unlike SDP munging this takes
+// effect live, so a mid-call bitrate change needs no renegotiation.
+export async function applyVoiceSenderBitrate(
+  pc: Pick<VoicePeer, "getSenders">,
+  bitrateBps: number,
+): Promise<void> {
+  const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
+  if (!sender) return;
+  const params = sender.getParameters();
+  if (!params.encodings || params.encodings.length === 0) {
+    params.encodings = [{}];
+  }
+  params.encodings[0].maxBitrate = clampVoiceBitrate(bitrateBps);
+  try {
+    await sender.setParameters(params);
+  } catch {
+    // Some browsers reject setParameters before negotiation completes — the
+    // SDP-level maxaveragebitrate still applies.
+  }
+}
+
+export interface ScreenShareAudioSdpTuning {
+  maxAverageBitrate: number;
+}
+
+/**
+ * What the share is of, which decides what the encoder protects when it cannot
+ * have everything.
+ *
+ * `detail` keeps the picture sharp and lets the frame rate go; `motion` does
+ * the opposite. Both profiles used to say `motion` unconditionally, which is
+ * the wrong answer for the ordinary case — somebody sharing an editor or a
+ * spreadsheet gets soft, ringing text during every scroll, and no amount of
+ * bitrate fixes it, because the encoder is doing what it was told.
+ */
+export type ScreenContentMode = "detail" | "motion";
+
+export interface ScreenSharePublishProfile {
+  targetFps: 30 | 60;
+  contentHint: ScreenContentMode;
+  /**
+   * What the encoder gives up first. The pair is the whole point: protecting
+   * detail means dropping frames, protecting motion means dropping pixels, and
+   * saying `motion` while preferring resolution — as this did — asks for both
+   * and gets a muddle.
+   */
+  degradationPreference: RTCDegradationPreference;
+  maxBitrateBps: number;
+  /**
+   * The capture is pinned to this, not merely asked for it. `ideal` alone is a
+   * hint: on a 1440p or 4K monitor the browser may hand back the native size,
+   * and then the bitrate everything here is reasoned about is being spread over
+   * four times the pixels it was chosen for.
+   */
+  maxWidth: number;
+  maxHeight: number;
+  audioMaxAverageBitrate: number;
+}
+
+// ─── Screen share bitrate ───────────────────────────────────────────────────
+// What a share costs in upload is the sharer's problem, not the channel's: the
+// same room holds someone on fibre and someone on a phone tether. So the
+// ceiling is theirs to set, alongside the frame rate.
+
+export const SCREEN_BITRATE_MIN_BPS = 1_000_000;
+// The top of the range is set by the one case that actually needs it: 1080p60
+// of full motion — a game, a film — on VP8 or H.264, which is what the browser
+// and the SFU usually settle on. Static text and code are transparent at a
+// fifth of it; the headroom is there so the hard case is not the one that
+// looks soft. Above this the encoder is no longer the limit.
+export const SCREEN_BITRATE_MAX_BPS = 25_000_000;
+export const SCREEN_BITRATE_STEP_BPS = 500_000;
+
+/**
+ * What a share costs before anybody touches the slider.
+ *
+ * Frame rate implied the bitrate outright before this was adjustable, and these
+ * are the two values it implied. Kept as the untouched defaults so nobody's
+ * share quietly drops on the release that made it adjustable — a 60fps sharer
+ * who never opens the control keeps the 12 Mbps they had.
+ */
+export function defaultScreenShareBitrate(fps: 30 | 60): number {
+  return fps === 60 ? 12_000_000 : 8_000_000;
+}
+
+/** Into the supported range, with anything unreadable falling back to `fallback`. */
+export function clampScreenShareBitrate(value: unknown, fallback: number): number {
+  const bps = typeof value === "string" ? Number(value) : value;
+  if (typeof bps !== "number" || !Number.isFinite(bps)) return fallback;
+  return Math.min(SCREEN_BITRATE_MAX_BPS, Math.max(SCREEN_BITRATE_MIN_BPS, Math.round(bps)));
+}
+
+export const SCREEN_MAX_WIDTH = 1920;
+export const SCREEN_MAX_HEIGHT = 1080;
+
+export function getScreenSharePublishProfile(
+  fps: 30 | 60,
+  bitrateBps?: number,
+  content: ScreenContentMode = "detail",
+): ScreenSharePublishProfile {
+  return {
+    targetFps: fps,
+    contentHint: content,
+    degradationPreference:
+      content === "motion" ? "maintain-framerate" : "maintain-resolution",
+    maxBitrateBps:
+      bitrateBps === undefined
+        ? defaultScreenShareBitrate(fps)
+        : clampScreenShareBitrate(bitrateBps, defaultScreenShareBitrate(fps)),
+    maxWidth: SCREEN_MAX_WIDTH,
+    maxHeight: SCREEN_MAX_HEIGHT,
+    audioMaxAverageBitrate: 128_000,
+  };
+}
+
+// The chosen frame rate is a per-device preference, so it outlives the tab that
+// set it. Storage throws in private mode and with site data blocked, so every
+// access is guarded — a lost preference is not worth breaking screen share for.
+export const SCREEN_FPS_STORAGE_KEY = "chatter_screen_share_fps";
+// Broadcast so every surface showing the control (voice panel, share viewer,
+// voice toolbar) and the publisher itself stay in step without prop drilling.
+export const SCREEN_FPS_CHANGE_EVENT = "screen-share-fps-change";
+
+export function loadScreenShareFps(): 30 | 60 {
+  try {
+    return localStorage.getItem(SCREEN_FPS_STORAGE_KEY) === "60" ? 60 : 30;
+  } catch {
+    return 30;
+  }
+}
+
+export function storeScreenShareFps(fps: 30 | 60): void {
+  try {
+    localStorage.setItem(SCREEN_FPS_STORAGE_KEY, String(fps));
+  } catch {
+    // The preference just will not survive the reload.
+  }
+}
+
+// ─── Codec preference ───────────────────────────────────────────────────────
+
+/**
+ * Which video codecs a screen share would rather use, best first.
+ *
+ * Neither end expresses a preference otherwise: the browser makes the offer
+ * with its own default order and the SFU answers from `register_default_codecs`,
+ * so a share commonly lands on VP8 — the least efficient of the set. VP9 reaches
+ * the same quality at roughly half to two-thirds the bitrate, which is worth
+ * more on a 1080p60 share than doubling the ceiling would be.
+ */
+export const SCREEN_CODEC_PREFERENCE = ["video/VP9", "video/VP8", "video/H264"];
+
+/**
+ * Reorder, never filter.
+ *
+ * Dropping a codec from the offer would mean a peer that only has that one
+ * cannot receive the share at all. Everything unlisted keeps its relative
+ * order at the back, so this can only change which of two mutually supported
+ * codecs wins — never whether one exists.
+ */
+export function orderVideoCodecs<T extends { mimeType: string }>(
+  codecs: readonly T[],
+  preference: readonly string[] = SCREEN_CODEC_PREFERENCE,
+): T[] {
+  const rank = (codec: T) => {
+    const i = preference.findIndex(
+      (mime) => mime.toLowerCase() === codec.mimeType.toLowerCase(),
+    );
+    return i === -1 ? preference.length : i;
+  };
+  // A stable sort, so codecs of equal rank stay in the order the browser gave
+  // them — it knows things about its own encoders that this does not.
+  return codecs
+    .map((codec, index) => ({ codec, index, rank: rank(codec) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.codec);
+}
+
+/**
+ * Ask for {@link SCREEN_CODEC_PREFERENCE} on this transceiver, if the browser
+ * allows it. Must be called before `createOffer`.
+ *
+ * Entirely best-effort: `setCodecPreferences` is missing on older Safari and
+ * throws if it dislikes the list, and a share on VP8 is enormously better than
+ * no share at all.
+ */
+export function preferScreenVideoCodecs(transceiver: RTCRtpTransceiver | undefined): void {
+  if (!transceiver || typeof transceiver.setCodecPreferences !== "function") return;
+  try {
+    const capabilities = RTCRtpSender.getCapabilities("video");
+    if (!capabilities?.codecs?.length) return;
+    transceiver.setCodecPreferences(orderVideoCodecs(capabilities.codecs));
+  } catch {
+    // Left to negotiate however the browser would have on its own.
+  }
+}
+
+export const SCREEN_CONTENT_STORAGE_KEY = "chatter_screen_share_content";
+export const SCREEN_CONTENT_CHANGE_EVENT = "screen-share-content-change";
+
+/**
+ * What the sharer says they are sharing, defaulting to `detail`.
+ *
+ * The spec's own recommendation for a screen capture of documents or UI, and
+ * much the commoner case — somebody sharing a game or a film says so and gets
+ * `motion` back.
+ */
+export function loadScreenContentMode(): ScreenContentMode {
+  try {
+    return localStorage.getItem(SCREEN_CONTENT_STORAGE_KEY) === "motion"
+      ? "motion"
+      : "detail";
+  } catch {
+    return "detail";
+  }
+}
+
+export function storeScreenContentMode(mode: ScreenContentMode): void {
+  try {
+    localStorage.setItem(SCREEN_CONTENT_STORAGE_KEY, mode);
+  } catch {
+    // As with the others: the preference just will not survive the reload.
+  }
+}
+
+export const SCREEN_BITRATE_STORAGE_KEY = "chatter_screen_share_bitrate";
+export const SCREEN_BITRATE_CHANGE_EVENT = "screen-share-bitrate-change";
+
+/**
+ * The chosen ceiling, or the frame rate's own default where none has been
+ * chosen.
+ *
+ * `fps` is only consulted for that fallback: once somebody sets a value it is
+ * theirs, and changing frame rate afterwards does not move it. Before they do,
+ * the slider tracks whatever the frame rate used to imply, which is what makes
+ * this change invisible to anyone who does not want it.
+ */
+export function loadScreenShareBitrate(fps: 30 | 60): number {
+  const fallback = defaultScreenShareBitrate(fps);
+  try {
+    const stored = localStorage.getItem(SCREEN_BITRATE_STORAGE_KEY);
+    if (stored === null) return fallback;
+    return clampScreenShareBitrate(stored, fallback);
+  } catch {
+    return fallback;
+  }
+}
+
+/** Mbps to one decimal, without a trailing `.0` on the round numbers. */
+export function formatScreenBitrate(bps: number): string {
+  const mbps = bps / 1_000_000;
+  return `${Number.isInteger(mbps) ? mbps : mbps.toFixed(1)} Mbps`;
+}
+
+export function storeScreenShareBitrate(bps: number): void {
+  try {
+    localStorage.setItem(SCREEN_BITRATE_STORAGE_KEY, String(Math.round(bps)));
+  } catch {
+    // As above: the preference just will not survive the reload.
+  }
+}
+
+// Munge the SDP for the screen share publisher audio to keep system audio clear
+// without consuming more congestion budget than needed.
+export function mungeScreenAudioSdp(
+  sdp: string,
+  tuning: ScreenShareAudioSdpTuning = { maxAverageBitrate: 48_000 },
+): string {
+  const opusMatch = sdp.match(/a=rtpmap:(\d+) opus\/48000/i);
+  if (!opusMatch) return sdp;
+  const pt = opusMatch[1];
+  const highQualityFmtp =
+    `a=fmtp:${pt} useinbandfec=1; stereo=1; sprop-stereo=1; usedtx=1; maxaveragebitrate=${tuning.maxAverageBitrate}`;
+  const existingFmtp = new RegExp(`a=fmtp:${pt} [^\r\n]+`);
+  if (existingFmtp.test(sdp)) {
+    return sdp.replace(existingFmtp, highQualityFmtp);
+  }
+  // No existing fmtp line — insert one after the rtpmap line
+  return sdp.replace(
+    new RegExp(`(a=rtpmap:${pt} opus\\/48000[^\r\n]*\r?\n)`),
+    `$1${highQualityFmtp}\r\n`,
+  );
+}
+
+// ─── Webcam publish profiles ────────────────────────────────────────────────
+// The camera equivalent of the screen share profiles above. Cameras run at a
+// lower resolution than a shared desktop, so they need far less bitrate to hold
+// the same quality — but 60fps still needs noticeably more than 30fps to avoid
+// the encoder trading detail away for the extra frames.
+export interface WebcamPublishProfile {
+  targetFps: 30 | 60;
+  contentHint: "motion";
+  maxBitrateBps: number;
+}
+
+const WEBCAM_PROFILE_30FPS: WebcamPublishProfile = {
+  targetFps: 30,
+  contentHint: "motion",
+  maxBitrateBps: 2_500_000,
+};
+
+const WEBCAM_PROFILE_60FPS: WebcamPublishProfile = {
+  targetFps: 60,
+  contentHint: "motion",
+  maxBitrateBps: 4_000_000,
+};
+
+export function getWebcamPublishProfile(fps: 30 | 60): WebcamPublishProfile {
+  return fps === 60 ? WEBCAM_PROFILE_60FPS : WEBCAM_PROFILE_30FPS;
+}
