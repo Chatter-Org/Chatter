@@ -14,6 +14,7 @@ class ChatterCallModule : Module() {
     get() = requireNotNull(appContext.reactContext) { "no React context" }
 
   private var router: AudioRouter? = null
+  private var proximity: ProximityLock? = null
 
   override fun definition() = ModuleDefinition {
     Name("ChatterCall")
@@ -28,6 +29,8 @@ class ChatterCallModule : Module() {
       CallService.onAction = null
       router?.stop()
       router = null
+      proximity?.release()
+      proximity = null
     }
 
     /** Begin a call: the notification, the locks, and the audio route. */
@@ -36,6 +39,9 @@ class ChatterCallModule : Module() {
       startService(title, text, muted)
       val r = router ?: AudioRouter(context) {
         sendEvent("onAudioRoutesChanged", mapOf("routes" to router?.routes()))
+        // The earpiece means the phone is at an ear: dark against it.
+        val ear = router?.onEarpiece() == true
+        (proximity ?: ProximityLock(context).also { proximity = it }).hold(ear)
       }.also { router = it }
       r.start()
     }
@@ -48,6 +54,7 @@ class ChatterCallModule : Module() {
     Function("stopCall") {
       context.stopService(Intent(context, CallService::class.java))
       router?.stop()
+      proximity?.release()
     }
 
     Function("getAudioRoutes") {

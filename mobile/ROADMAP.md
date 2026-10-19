@@ -68,7 +68,7 @@ FCM push notifications are deliberately **last**: everything else first.
 - [x] Calls keep running in the background: foreground service with Mute/Leave in its notification, wake and Wi-Fi locks (`modules/chatter-call`)
 - [ ] ConnectionService (self-managed Telecom): a phone call interrupting, car/watch controls
 - [x] Audio routing: speaker by default, headsets win when connected, tap to switch
-- [ ] Proximity screen-off while on the earpiece
+- [x] Proximity screen-off while on the earpiece (`ProximityLock` in `modules/chatter-call`, following the audio route; not yet tried on a phone with an earpiece — the emulators have none)
 - [ ] Spatial channels' floor (heard by distance today, no map yet)
 - [ ] Watch screen shares and webcams; picture-in-picture
 - [ ] Share screen (MediaProjection) and camera

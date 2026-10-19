@@ -42,6 +42,15 @@ class AudioRouter(context: Context, private val onChange: () -> Unit) {
     }
   }
 
+  // Android 12 and later settle a change of device on their own time; whoever
+  // listens hears about it when it has happened, not just when it was asked.
+  private val deviceChanged: Any? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      AudioManager.OnCommunicationDeviceChangedListener { if (active) onChange() }
+    } else {
+      null
+    }
+
   fun start() {
     if (active) return
     active = true
@@ -49,6 +58,12 @@ class AudioRouter(context: Context, private val onChange: () -> Unit) {
     audio.mode = AudioManager.MODE_IN_COMMUNICATION
     requestFocus()
     audio.registerAudioDeviceCallback(devices, main)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      audio.addOnCommunicationDeviceChangedListener(
+        { main.post(it) },
+        deviceChanged as AudioManager.OnCommunicationDeviceChangedListener,
+      )
+    }
     apply()
   }
 
@@ -58,6 +73,7 @@ class AudioRouter(context: Context, private val onChange: () -> Unit) {
     chosen = null
     audio.unregisterAudioDeviceCallback(devices)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      audio.removeOnCommunicationDeviceChangedListener(deviceChanged as AudioManager.OnCommunicationDeviceChangedListener)
       audio.clearCommunicationDevice()
     } else {
       @Suppress("DEPRECATION")
@@ -68,6 +84,9 @@ class AudioRouter(context: Context, private val onChange: () -> Unit) {
     abandonFocus()
     audio.mode = previousMode
   }
+
+  /** Whether the call is coming out of the earpiece: held to the ear. */
+  fun onEarpiece(): Boolean = active && current() == "earpiece"
 
   /** The routes this phone has right now, the one in use marked. */
   fun routes(): List<Map<String, Any>> {
