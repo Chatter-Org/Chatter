@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAppContext } from "@/lib/store";
 import { useChannelLinkText } from "@/hooks/useChannelLinkText";
 import {
   apiSync,
   apiGetAllRooms,
   apiGetVoiceMembers,
-  apiGetFriendsPresence,
   apiGetChannels,
   type RoomSummary,
 } from "@/lib/api";
@@ -37,8 +36,6 @@ interface RoomActivity {
   };
   memberCount: number;
 }
-
-type AppPresenceMap = ReturnType<typeof useAppContext>["state"]["userPresence"];
 
 interface LiveVoiceMember {
   userId: string;
@@ -95,7 +92,7 @@ function statusColor(status: string) {
 
 export function ActivityPage() {
   const channelLinkText = useChannelLinkText();
-  const { state, dispatch, selectRoom, openMessage, openDM, acceptFriendRequest, rejectFriendRequest, removeFriend, unblockUser, loadUnreads, sendFriendRequest } = useAppContext();
+  const { state, selectRoom, openMessage, openDM, loadFriendPresence, acceptFriendRequest, rejectFriendRequest, removeFriend, unblockUser, loadUnreads, sendFriendRequest } = useAppContext();
   const [activities, setActivities] = useState<RoomActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [blockedExpanded, setBlockedExpanded] = useState(false);
@@ -105,8 +102,6 @@ export function ActivityPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [friendToAdd, setFriendToAdd] = useState("");
   // Read at merge time so the effect does not re-run on every presence change.
-  const stateRef = useRef(state);
-  useEffect(() => { stateRef.current = state; }, [state]);
 
   useEffect(() => {
     let cancelled = false;
@@ -196,43 +191,8 @@ export function ActivityPage() {
   // per room, and this page has no current room, so without this every friend
   // renders as a fallback initial.
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadFriendPresence() {
-      try {
-        const { presence } = await apiGetFriendsPresence();
-        if (cancelled) return;
-        const mapped: AppPresenceMap = {};
-        for (const [userId, raw] of Object.entries(presence)) {
-          const p = raw as Record<string, unknown>;
-          mapped[userId] = {
-            status: String(p.status ?? "offline"),
-            customStatus: (p.custom_status as string) || undefined,
-            avatarUrl: (p.avatar_url as string) || undefined,
-            about: (p.about as string) || undefined,
-            bannerUrl: (p.banner_url as string) || undefined,
-            displayName: (p.display_name as string) || undefined,
-            nameFontUrl: (p.name_font_url as string) || undefined,
-            isMobile: Boolean(p.is_mobile),
-            steamGame: (p.steam_game as string) || undefined,
-            steamAppId: (p.steam_appid as string) || undefined,
-            gameSessionStart: (p.game_session_start as number) || undefined,
-          };
-        }
-        // SET_PRESENCE replaces the whole map, so merge rather than clobbering
-        // presence the socket has already delivered for other users.
-        dispatch({
-          type: "SET_PRESENCE",
-          payload: { ...stateRef.current.userPresence, ...mapped },
-        });
-      } catch {
-        // The list still renders, just with fallback initials.
-      }
-    }
-
-    loadFriendPresence();
-    return () => { cancelled = true; };
-  }, [refreshKey, state.friends, state.incomingFriendRequests, dispatch]);
+    void loadFriendPresence();
+  }, [refreshKey, state.friends, state.incomingFriendRequests, loadFriendPresence]);
 
   // Who is in voice, and who is streaming, across every room you have joined.
   useEffect(() => {

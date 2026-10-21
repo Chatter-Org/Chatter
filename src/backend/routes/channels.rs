@@ -55,21 +55,18 @@ pub(crate) async fn list_channels(
         .await
         .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "DB query failed"))?;
 
-    // A channel the caller cannot view is left out entirely, name included.
-    // This used to read the legacy `view_roles`, which the overwrites
-    // migration stopped maintaining, so a channel made private through its
-    // overwrites was listed to everyone. The client resolves `<#channel>`
-    // links against this list, which is what makes one it cannot see read
-    // as `#unknown`.
+    // The same view check every message route makes (overwrites, category
+    // inherited). This read the legacy view_roles, which the startup
+    // migration folds into overwrites, so a channel hidden by an overwrite
+    // still listed its name and topic to everyone.
     let allowed = get_allowed_channel_ids(&state, &room_id, &user_id).await;
 
     let mut channels: Vec<Value> = Vec::new();
     while let Ok(Some(ch)) = cursor.try_next().await {
-        if allowed
-            .as_ref()
-            .is_some_and(|ids| !ids.contains(&ch.channel_id))
-        {
-            continue;
+        if let Some(ref allowed) = allowed {
+            if !allowed.contains(&ch.channel_id) {
+                continue;
+            }
         }
         channels.push(json!({
             "channel_id": ch.channel_id,

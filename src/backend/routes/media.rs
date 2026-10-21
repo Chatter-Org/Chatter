@@ -259,7 +259,12 @@ async fn repair_unplayable_in_place(path: &str) {
 }
 
 fn new_filename_from_path(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or("").to_string()
+    // The platform's own separators: splitting on '/' left a whole Windows
+    // path as the "filename", which is why the media tests failed there.
+    std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Subtitle codecs that can be exposed as WebVTT (text-based subtitles).

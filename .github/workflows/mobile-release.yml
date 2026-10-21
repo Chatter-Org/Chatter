@@ -1,0 +1,124 @@
+name: Mobile release
+
+# Builds the Android app as a signed APK.
+#
+#   - Push a tag `mobile-vX.Y.Z` (git tag mobile-v0.2.0 && git push origin
+#     mobile-v0.2.0): a GitHub Release named for it, with the APK attached.
+#     This is the build to hand out.
+#   - Run it by hand (Actions → Mobile release → Run workflow): the APK as a
+#     downloadable artifact, for trying a build before tagging it.
+#
+# Signing needs four repository secrets (Settings → Secrets and variables →
+# Actions); see mobile/RELEASING.md for making the key:
+#   CHATTER_KEYSTORE_BASE64       the .jks file, base64-encoded
+#   CHATTER_KEYSTORE_PASSWORD     its password
+#   CHATTER_KEY_ALIAS             the key's alias
+#   CHATTER_KEY_PASSWORD          the key's password
+on:
+  push:
+    tags: ["mobile-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # to create the release
+
+concurrency:
+  group: mobile-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: Signed APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      # The JDK local builds use (Gradle 9.4 runs on it).
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - run: npm ci
+
+      # The same checks as every push: no point signing a build that fails them.
+      - name: Typecheck and lint
+        run: npm run typecheck && npm run lint
+
+      - name: Version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#mobile-v}"
+          else
+            VERSION="0.0.0-run.${GITHUB_RUN_NUMBER}"
+          fi
+          # The run number only grows, so every build installs over the last.
+          echo "CHATTER_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "CHATTER_VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "Building Chatter $VERSION ($GITHUB_RUN_NUMBER)"
+
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CHATTER_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "$KEYSTORE_BASE64" ]]; then
+            echo "::error::No signing key. Add the CHATTER_KEYSTORE_* secrets (see mobile/RELEASING.md)."
+            exit 1
+          fi
+          # A secret pasted from a clipboard can carry line breaks (CRLF from
+          # Windows), which GNU base64 rejects as invalid input.
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "$RUNNER_TEMP/chatter-upload.jks"
+          echo "CHATTER_UPLOAD_STORE_FILE=$RUNNER_TEMP/chatter-upload.jks" >> "$GITHUB_ENV"
+
+      # android/ is generated, never committed. No APP_VARIANT: the release
+      # variant (io.zgaf.chatter, https only).
+      - name: Generate the Android project
+        run: npx expo prebuild --platform android --no-install --clean
+
+      - name: Build the APK
+        working-directory: mobile/android
+        env:
+          CHATTER_UPLOAD_STORE_PASSWORD: ${{ secrets.CHATTER_KEYSTORE_PASSWORD }}
+          CHATTER_UPLOAD_KEY_ALIAS: ${{ secrets.CHATTER_KEY_ALIAS }}
+          CHATTER_UPLOAD_KEY_PASSWORD: ${{ secrets.CHATTER_KEY_PASSWORD }}
+        # 64-bit ARM only: every phone this is for. All four architectures
+        # quadruple the native build and outgrow the runner's memory.
+        run: ./gradlew app:assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+
+      # R8 cannot see which classes native code finds by name; one it strips
+      # builds fine and crashes the app at launch (see the script).
+      - name: Check classes native code needs survived R8
+        run: python3 scripts/check-native-names.py android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/mapping/release
+
+      - name: Name the APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/chatter-${CHATTER_VERSION}.apk"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: chatter-${{ env.CHATTER_VERSION }}
+          path: mobile/dist/*.apk
+          if-no-files-found: error
+
+      - name: GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.apk \
+            --title "Chatter for Android ${CHATTER_VERSION}" \
+            --generate-notes

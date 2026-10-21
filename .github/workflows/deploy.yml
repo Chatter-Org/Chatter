@@ -1,52 +1,27 @@
 name: Deploy Noodle Bot
 
+# Run by hand (Actions → Deploy Noodle Bot → Run workflow) when main is ready
+# to go live. It used to run on every push to main, but the gate it waits on
+# never passed, so it never deployed anything; with the gate fixed it would
+# have started deploying every push, ready or not.
 on:
-  push:
-    branches:
-      - main  # Change this to your default branch if different
-  workflow_dispatch:  # Allows manual triggering
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  # Gate deploys on the same checks scripts/rust-ci.sh runs locally. This job
-  # is duplicated from rust-quality.yml rather than reused: pulling in that
-  # whole workflow would also block deploys on the advisory scan, which can
-  # start failing because of a newly published RUSTSEC entry that has nothing
-  # to do with a given push. Advisories still run on every pull request.
+  # The same gate as every push and pull request (rust-quality.yml), without
+  # the advisory scan: a newly published advisory can fail that with nothing
+  # to do with what is being deployed.
   quality:
-    name: Quality
-    runs-on: ubuntu-latest
-    services:
-      mongo:
-        image: mongo:7
-        ports:
-          - 27017:27017
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.88.0
-          components: rustfmt, clippy
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run quality gate
-        run: ./scripts/rust-ci.sh
+    uses: ./.github/workflows/rust-quality.yml
+    with:
+      skip_security: true
 
   deploy:
     needs: quality
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Deploy to server via SSH
@@ -66,9 +41,6 @@ jobs:
             git clone https://github.com/Chatter-Org/Chatter
 
             cd Chatter
-
-            # Checkout rust branch
-            # git checkout refactor/rust-rewrite
 
             cp ../control.sh .
 

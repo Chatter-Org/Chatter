@@ -19,6 +19,9 @@ allow = [
   "BSD-3-Clause",
   "BSL-1.0",
   "CC0-1.0",
+  # webpki-roots: Mozilla's root-certificate list, a permissive data licence
+  # (pulled in by reqwest and mongodb's TLS).
+  "CDLA-Permissive-2.0",
   "GPL-3.0-or-later",
   "ISC",
   "MIT",

@@ -5,6 +5,7 @@ import {
   useRef,
   type FormEvent,
 } from "react";
+import { LOGIN_CONNECTION_STEPS } from "@chatter/core/loginScreen";
 import { useAppActions } from "@/lib/store";
 import { apiCheckUsername, apiVerifyTotp, apiRecoveryLogin, apiForceResetPassword, apiGetServerInfo, apiSteamExchangeCode, getAccessToken, setAccessToken, setRefreshToken, setIsAdmin, setTotpVerified } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -34,14 +35,7 @@ import {
 
 type Step = "login" | "register" | "totp-setup" | "recovery-codes" | "recovery-login" | "force-reset-password";
 
-const CONNECTION_STEPS = [
-  { ms: 0, text: "initializing handshake..." },
-  { ms: 500, text: "verifying credentials..." },
-  { ms: 1000, text: "establishing encrypted channel..." },
-  { ms: 1500, text: "routing to server endpoint..." },
-  { ms: 2000, text: "syncing session state..." },
-  { ms: 2500, text: "connection established." },
-];
+const CONNECTION_STEPS = LOGIN_CONNECTION_STEPS;
 const TOTAL_DELAY_MS = 3500;
 
 export function LoginScreen() {

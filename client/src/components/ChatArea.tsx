@@ -4,6 +4,7 @@ import { useAppContext } from "@/lib/store";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { apiSendMessage, apiCancelUpload, apiGetRoomThreads, apiUpdateChannel, type MatrixMessage } from "@/lib/api";
 import { STANDARD_SHORTCODES } from "@/lib/emojiShortcodes";
+import { resolveShortcodes as resolveShortcodesIn } from "@chatter/core/composerTokens";
 import {
   composerLength,
   deleteImageBeforeCaret,
@@ -736,12 +737,7 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
     // Auto-resolve :shortcode: patterns to emoji in body text, and "#name"
     // to the channel it names.
     const resolveShortcodes = (raw: string) =>
-      encodeChannelLinks(raw, linkChannels).replace(/:([a-zA-Z0-9_]+):/g, (match: string, name: string) => {
-        const value = mergedShortcodes[name];
-        if (!value) return match;
-        if (value.startsWith("/") || value.startsWith("http")) return `:emoji{${value}}:`;
-        return value;
-      });
+      resolveShortcodesIn(encodeChannelLinks(raw, linkChannels), mergedShortcodes);
 
     // The composer was cleared optimistically above, so a refused send has to
     // put the text back. Slow mode and rate limits make refusal an ordinary

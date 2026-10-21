@@ -4,6 +4,7 @@ import {
   VOICE_SESSION_TTL_MS,
   decideVoiceRejoin,
   VOICE_REJOIN_GRACE_MS,
+  voiceChannelNameToFill,
 } from "@/lib/voiceRejoin";
 
 const inCall = { inVoiceChannel: true, voiceRoomId: "!room:local" };
@@ -95,5 +96,35 @@ describe("parseStoredVoiceSession", () => {
 
   it("accepts a call that was in no particular channel", () => {
     expect(parseStoredVoiceSession(session({ channelId: null }), 1_000)?.channelId).toBeNull();
+  });
+});
+
+describe("voiceChannelNameToFill", () => {
+  const lounge = { channel_id: "ch-lounge", name: "Lounge" };
+  const rejoined = {
+    inVoiceChannel: true,
+    voiceChannelId: "ch-lounge",
+    voiceChannelName: null,
+    channels: [{ channel_id: "ch-general", name: "general" }, lounge],
+  };
+
+  it("names a rejoined call once its channel has loaded", () => {
+    expect(voiceChannelNameToFill(rejoined)).toBe("Lounge");
+  });
+
+  it("waits while the room's channels are still loading", () => {
+    expect(voiceChannelNameToFill({ ...rejoined, channels: [] })).toBeNull();
+  });
+
+  it("leaves a name that is already shown alone", () => {
+    expect(voiceChannelNameToFill({ ...rejoined, voiceChannelName: "Lounge" })).toBeNull();
+  });
+
+  it("has nothing to fill outside a call or for a room-scoped call", () => {
+    expect(voiceChannelNameToFill({ ...rejoined, inVoiceChannel: false })).toBeNull();
+    expect(voiceChannelNameToFill({ ...rejoined, voiceChannelId: null })).toBeNull();
+    expect(
+      voiceChannelNameToFill({ ...rejoined, voiceChannelId: "!dm:local" }),
+    ).toBeNull();
   });
 });
