@@ -16,6 +16,7 @@ import {
   textBeforeCaret,
 } from "@/lib/composer";
 import { findMentionMatches } from "@/lib/mentions";
+import { channelMentionMatches, encodeChannelLinks, plainChannelLinks, visibleChannels } from "@/lib/channelLinks";
 import { displayUserId } from "@/lib/utils";
 import { AuthAvatarImage } from "./AuthImage";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -44,6 +45,14 @@ export function ThreadPanel() {
   const [pinsOpen, setPinsOpen] = useState(false);
   /** The "@word" being typed at the caret, or null when there is none. */
   const [mentionSearch, setMentionSearch] = useState<string | null>(null);
+  // "@" offers people and roles, "#" offers channels; one menu serves both.
+  const [mentionTrigger, setMentionTrigger] = useState<"@" | "#">("@");
+  // The channels a "#name" can link to, which are the ones this user can see.
+  const linkChannels = useMemo(
+    () => visibleChannels(state),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.channels, state.userId, state.roomMembers, state.customRoles, state.memberCustomRoles],
+  );
   const [selectedMentionIdx, setSelectedMentionIdx] = useState(0);
   const {
     files: pendingFiles,
@@ -152,7 +161,7 @@ export function ThreadPanel() {
   }, [dispatch]);
 
   const handleSend = useCallback(async () => {
-    const trimmed = body.trim();
+    const trimmed = encodeChannelLinks(body.trim(), linkChannels);
     if (!trimmed && pendingFiles.length === 0) return;
     // Read now rather than when the send resolves: a thread can be closed, or
     // another one opened, long before a large attachment has finished going
@@ -186,20 +195,28 @@ export function ThreadPanel() {
       // Matching the previous behaviour: a refused reply is reported by the
       // request layer, and the thread stays open.
     }
-  }, [body, pendingFiles, clearPendingFiles, state.currentRoomId, state.activeThreadEventId, state.threadReplyingTo, threadLabel, cancelReply]);
+  }, [body, linkChannels, pendingFiles, clearPendingFiles, state.currentRoomId, state.activeThreadEventId, state.threadReplyingTo, threadLabel, cancelReply]);
 
   const mentionMatches = useMemo(
-    () => (mentionSearch === null ? [] : findMentionMatches(state, mentionSearch)),
+    () =>
+      mentionSearch === null
+        ? []
+        : mentionTrigger === "#"
+          ? channelMentionMatches(linkChannels, mentionSearch)
+          : findMentionMatches(state, mentionSearch),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mentionSearch, state.roomMembers, state.customRoles, state.currentRoomId, state.roomInfoMap],
+    [mentionSearch, mentionTrigger, linkChannels, state.roomMembers, state.customRoles, state.currentRoomId, state.roomInfoMap],
   );
 
-  /** Open the mention menu when the caret sits just after "@" or "@word". */
+  /** Open the mention menu when the caret sits just after "@" or "@word", or
+   *  the channel list after "#" or "#chan". */
   const detectMention = () => {
     const div = inputRef.current;
     const before = div ? textBeforeCaret(div) : null;
     const match = before === null ? null : /(?:^|\s)@(\w*)$/.exec(before);
-    setMentionSearch(match ? match[1] : null);
+    const channelMatch = before === null || match ? null : /(?:^|[\s(])#([^\s#@]*)$/.exec(before);
+    setMentionTrigger(channelMatch ? "#" : "@");
+    setMentionSearch(match ? match[1] : channelMatch ? channelMatch[1] : null);
     setSelectedMentionIdx(0);
   };
 
@@ -217,9 +234,9 @@ export function ThreadPanel() {
     const div = inputRef.current;
     if (!name || !div) return;
     const before = textBeforeCaret(div);
-    const at = before?.lastIndexOf("@") ?? -1;
+    const at = before?.lastIndexOf(mentionTrigger) ?? -1;
     if (at === -1) return;
-    replaceBeforeCaret(div, at, `@${name} `);
+    replaceBeforeCaret(div, at, `${mentionTrigger}${name} `);
     setMentionSearch(null);
     setBody(getComposerText(div));
     div.focus();
@@ -574,7 +591,7 @@ export function ThreadPanel() {
                       <p className="text-xs text-muted-foreground truncate">
                         {pin.content.spoiler
                           ? <span className="italic">Spoiler message</span>
-                          : renderInlineEmojis(pin.content.body)}
+                          : renderInlineEmojis(plainChannelLinks(pin.content.body, linkChannels))}
                       </p>
                     </button>
                     {mayUnpin && (
@@ -612,7 +629,7 @@ export function ThreadPanel() {
                 <span className="text-xs text-muted-foreground shrink-0">{rootTime}</span>
               </div>
               <p className="text-sm break-words [overflow-wrap:anywhere] whitespace-pre-wrap mt-0.5">
-                {threadRootMessage.content.body}
+                {plainChannelLinks(threadRootMessage.content.body, linkChannels)}
               </p>
             </div>
             {/* The root is part of the conversation, so it can be answered
@@ -679,7 +696,7 @@ export function ThreadPanel() {
               <p className="text-xs text-muted-foreground truncate inline-flex items-center gap-0.5">
                 {threadReplyingTo.content.spoiler
                   ? <span className="italic">Spoiler message</span>
-                  : renderInlineEmojis(threadReplyingTo.content.body)}
+                  : renderInlineEmojis(plainChannelLinks(threadReplyingTo.content.body, linkChannels))}
               </p>
             </div>
             <button

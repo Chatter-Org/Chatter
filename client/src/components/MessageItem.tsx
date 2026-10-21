@@ -56,6 +56,7 @@ import { ensureFontFace } from "@/lib/fontFace";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { scrollBehavior } from "@/lib/theme/display";
 import { mentionRoleColors, readableRoleColors } from "@/lib/mentions";
+import { CHANNEL_LINK, channelLinkOpens, decodeChannelLinks, encodeChannelLinks, visibleChannels, type LinkableChannel } from "@/lib/channelLinks";
 
 const urlRegex = /(https?:\/\/[^\s]+)/g;
 const imageExtensions = IMAGE_EXTENSIONS;
@@ -78,14 +79,35 @@ function escapeAttr(value: string) {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** One `<#channel>` link as this reader sees it: the name of a channel they can
+ *  see, clickable unless it is a voice channel, or `#unknown`. */
+function channelLinkHtml(id: string, channels: LinkableChannel[] | undefined) {
+  const channel = channels?.find((c) => c.channel_id === id);
+  if (!channel) {
+    return `<span class="rounded px-1 py-0.5 font-semibold text-xs bg-muted text-muted-foreground">#unknown</span>`;
+  }
+  const opens = channelLinkOpens(channel);
+  return `<span${opens ? ` data-channel-link="${escapeAttr(id)}" role="link" tabindex="0"` : ""} class="${cn(
+    "rounded px-1 py-0.5 font-semibold text-xs bg-primary/20 text-primary",
+    opens && "cursor-pointer hover:underline",
+  )}">#${escapeHtml(channel.name)}</span>`;
+}
+
 /** Returns HTML with URLs as links and @mentions styled, but NO embedded media tags */
-function processMessageBody(body: string, currentUserId: string | null, urlToAlias?: Record<string, string>, roleNames?: Map<string, string>) {
+function processMessageBody(body: string, currentUserId: string | null, urlToAlias?: Record<string, string>, roleNames?: Map<string, string>, channels?: LinkableChannel[]) {
   // Extract custom emoji markers before escaping HTML — replace with placeholders
   const emojiUrls: string[] = [];
   let processed = body.replace(/:emoji\{([^}]+)\}:/g, (_match, url) => {
     const idx = emojiUrls.length;
     emojiUrls.push(url);
     return `\x00EMOJI${idx}\x00`;
+  });
+  // Channel links likewise, and they go back in last: a channel's name is the
+  // reader's to see, and nothing after this should treat it as message text.
+  const channelIds: string[] = [];
+  processed = processed.replace(CHANNEL_LINK, (_match, id: string) => {
+    channelIds.push(id);
+    return `\x00CHANNEL${channelIds.length - 1}\x00`;
   });
 
   let escaped = escapeHtml(processed);
@@ -164,6 +186,9 @@ function processMessageBody(body: string, currentUserId: string | null, urlToAli
   escaped = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   // Italic (use word boundary-ish check to avoid matching underscores in URLs/names)
   escaped = escaped.replace(/(?<![a-zA-Z0-9])_(.+?)_(?![a-zA-Z0-9])/g, '<em>$1</em>');
+
+  // eslint-disable-next-line no-control-regex -- the placeholder is a NUL pair on purpose
+  escaped = escaped.replace(/\x00CHANNEL(\d+)\x00/g, (_match, idx) => channelLinkHtml(channelIds[parseInt(idx)], channels));
 
   return escaped;
 }
@@ -1011,7 +1036,13 @@ function ActionRow({
 
 function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone, disableReactions, hidePinControls }: MessageItemProps) {
   const confirm = useConfirm();
-  const { state, dispatch, deleteMessage, hardDeleteNotification, editMessage, addReaction, openThread, pinMessage, unpinMessage, revealThreadMessage } = useAppContext();
+  const { state, dispatch, deleteMessage, hardDeleteNotification, editMessage, addReaction, openThread, pinMessage, unpinMessage, revealThreadMessage, selectChannel } = useAppContext();
+  // What a `<#channel>` in this message resolves against for this reader.
+  const linkChannels = useMemo(
+    () => visibleChannels(state),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.channels, state.userId, state.roomMembers, state.customRoles, state.memberCustomRoles],
+  );
   const isMobile = useIsMobile();
   // Whether the message actions have to be *asked* for rather than hovered to.
   //
@@ -1141,7 +1172,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
   useEffect(() => {
     if (isEditing && editRef.current) {
       const div = editRef.current;
-      div.innerHTML = bodyToEditHtml(message.content.body);
+      div.innerHTML = bodyToEditHtml(decodeChannelLinks(message.content.body, linkChannels));
       div.focus();
       const range = document.createRange();
       range.selectNodeContents(div);
@@ -1543,7 +1574,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
                   }
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    const trimmed = getEditDivContent().trim();
+                    const trimmed = encodeChannelLinks(getEditDivContent().trim(), linkChannels);
                     if (trimmed && trimmed !== message.content.body) {
                       editMessage(message.event_id, trimmed);
                     }
@@ -1590,6 +1621,15 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
                 }
               }}
               onMouseLeave={() => setEmojiTip(null)}
+              onClick={(e) => {
+                const link = (e.target as HTMLElement).closest("[data-channel-link]");
+                if (link) void selectChannel(link.getAttribute("data-channel-link")!);
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                const link = (e.target as HTMLElement).closest("[data-channel-link]");
+                if (link) void selectChannel(link.getAttribute("data-channel-link")!);
+              }}
             >
               {segments.map((segment, i) =>
                 segment.type === "code" ? (
@@ -1598,7 +1638,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
                   <span
                     key={i}
                     dangerouslySetInnerHTML={{
-                      __html: processMessageBody(segment.content, state.userId, urlToAlias, roleNamesMap),
+                      __html: processMessageBody(segment.content, state.userId, urlToAlias, roleNamesMap, linkChannels),
                     }}
                   />
                 )

@@ -18,6 +18,7 @@ import { MessageItem } from "./MessageItem";
 import { MessagePanel } from "./MessagePanel";
 import { MentionMenu } from "./MentionMenu";
 import { findMentionMatches } from "@/lib/mentions";
+import { channelMentionMatches, encodeChannelLinks, plainChannelLinks, visibleChannels } from "@/lib/channelLinks";
 import type { AppState, MessageTarget } from "@/lib/store/types";
 
 /** Everything the companion slot can show. MessagePanel handles all but the
@@ -152,6 +153,14 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionSearch, setMentionSearch] = useState("");
   const [mentionStart, setMentionStart] = useState(-1);
+  // "@" offers people and roles, "#" offers channels; one menu serves both.
+  const [mentionTrigger, setMentionTrigger] = useState<"@" | "#">("@");
+  // The channels a "#name" can link to, which are the ones this user can see.
+  const linkChannels = useMemo(
+    () => visibleChannels(state),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.channels, state.userId, state.roomMembers, state.customRoles, state.memberCustomRoles],
+  );
   const [selectedMentionIdx, setSelectedMentionIdx] = useState(0);
   const [emojiAutocompleteOpen, setEmojiAutocompleteOpen] = useState(false);
   const [emojiSearch, setEmojiSearch] = useState("");
@@ -724,9 +733,10 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
     void saveDraft(roomId, channelId, "");
     dispatch({ type: "SET_REPLYING_TO", payload: null });
 
-    // Auto-resolve :shortcode: patterns to emoji in body text
+    // Auto-resolve :shortcode: patterns to emoji in body text, and "#name"
+    // to the channel it names.
     const resolveShortcodes = (raw: string) =>
-      raw.replace(/:([a-zA-Z0-9_]+):/g, (match: string, name: string) => {
+      encodeChannelLinks(raw, linkChannels).replace(/:([a-zA-Z0-9_]+):/g, (match: string, name: string) => {
         const value = mergedShortcodes[name];
         if (!value) return match;
         if (value.startsWith("/") || value.startsWith("http")) return `:emoji{${value}}:`;
@@ -883,13 +893,21 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
       preRange.setEnd(range.startContainer, range.startOffset);
       const before = preRange.toString();
       const lastAt = before.lastIndexOf("@");
+      const channelMatch = /(?:^|[\s(])#([^\s#@]*)$/.exec(before);
       if (
         lastAt !== -1 &&
         (lastAt === before.length - 1 || /^@\w*$/.test(before.substring(lastAt)))
       ) {
         const search = before.substring(lastAt + 1);
+        setMentionTrigger("@");
         setMentionSearch(search);
         setMentionStart(lastAt);
+        setMentionOpen(true);
+        setSelectedMentionIdx(0);
+      } else if (channelMatch) {
+        setMentionTrigger("#");
+        setMentionSearch(channelMatch[1]);
+        setMentionStart(before.length - channelMatch[1].length - 1);
         setMentionOpen(true);
         setSelectedMentionIdx(0);
       } else {
@@ -948,14 +966,14 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
       preRange.setStart(div, 0);
       preRange.setEnd(range.startContainer, range.startOffset);
       const before = preRange.toString();
-      const lastAt = before.lastIndexOf("@");
+      const lastAt = before.lastIndexOf(mentionTrigger);
       if (lastAt === -1) return;
-      // Build a range spanning from @ to current cursor
+      // Build a range spanning from the trigger to current cursor
       const atRange = rangeAtTextOffset(div, lastAt);
       if (!atRange) return;
       atRange.setEnd(range.startContainer, range.startOffset);
       atRange.deleteContents();
-      const textNode = document.createTextNode(`@${username} `);
+      const textNode = document.createTextNode(`${mentionTrigger}${username} `);
       atRange.insertNode(textNode);
       // Move cursor after the inserted text
       const newRange = document.createRange();
@@ -1459,9 +1477,14 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
   }, [scrollToEventId, state.messages]);
 
   const mentionMatches = useMemo(
-    () => (mentionOpen ? findMentionMatches(state, mentionSearch) : []),
+    () =>
+      !mentionOpen
+        ? []
+        : mentionTrigger === "#"
+          ? channelMentionMatches(linkChannels, mentionSearch)
+          : findMentionMatches(state, mentionSearch),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mentionOpen, mentionSearch, state.roomMembers, state.customRoles, state.currentRoomId, state.roomInfoMap],
+    [mentionOpen, mentionTrigger, mentionSearch, linkChannels, state.roomMembers, state.customRoles, state.currentRoomId, state.roomInfoMap],
   );
 
   const emojiMatches = emojiAutocompleteOpen
@@ -1854,7 +1877,7 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
             <p className="text-xs text-muted-foreground truncate inline-flex items-center gap-0.5">
               {state.replyingTo.content.spoiler
                 ? <span className="italic">Spoiler message</span>
-                : renderInlineEmojis(state.replyingTo.content.body)}
+                : renderInlineEmojis(plainChannelLinks(state.replyingTo.content.body, linkChannels))}
             </p>
           </div>
           <button

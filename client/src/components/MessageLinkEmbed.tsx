@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAppContext } from "@/lib/store";
+import { useChannelLinkText } from "@/hooks/useChannelLinkText";
 import { cn, displayUserId } from "@/lib/utils";
 import {
   messageLinkFor,
@@ -63,6 +64,7 @@ function UnavailableMessage() {
  */
 export function MessageLinkEmbed({ eventId }: { eventId: string }) {
   const { openMessage } = useAppContext();
+  const channelLinkText = useChannelLinkText();
 
   // Answered during render when this link has been resolved before, so a card
   // that scrolls out of the timeline and back does not flicker.
@@ -180,7 +182,7 @@ export function MessageLinkEmbed({ eventId }: { eventId: string }) {
                 <span className="italic">Spoiler message</span>
               ) : preview.body ? (
                 <span className="line-clamp-3">
-                  {renderInlineEmojis(preview.body)}
+                  {renderInlineEmojis(channelLinkText(preview.body))}
                   {preview.edited && <span className="ui-hint ml-1">(edited)</span>}
                 </span>
               ) : (

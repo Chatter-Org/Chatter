@@ -4,6 +4,7 @@ import { apiGetRoomMembers } from "../api";
 import { displayUserId } from "@/lib/utils";
 import { forgetMessagePreview } from "@/lib/messageLinks";
 import { forgetForumPreview } from "@/lib/forumLinks";
+import { plainChannelLinks, visibleChannels } from "@/lib/channelLinks";
 import { adoptGifFavorites } from "@/hooks/useFavoriteGifs";
 import { toast } from "sonner";
 import {
@@ -221,7 +222,7 @@ function notifyThreadReply(
   const threadLabel = msg.thread_name || "a thread";
   showDesktopNotification({
     title: `${senderName} · ${threadLabel}`,
-    body: notificationBody(body),
+    body: notificationBody(plainChannelLinks(body, visibleChannels(stateRef.current))),
     icon: roomInfo?.icon_url || undefined,
     tag: threadNotificationTag(msg.room_id, msg.thread_id),
     ts: msg.origin_server_ts,
@@ -444,7 +445,7 @@ export function createWsMessageHandler(
 
     showDesktopNotification({
       title,
-      body: notificationBody(bodyText),
+      body: notificationBody(plainChannelLinks(bodyText, visibleChannels(stateRef.current))),
       icon: roomInfo?.icon_url || undefined,
       // One notification per channel — a burst collapses instead of stacking.
       tag: channelNotificationTag(roomId, channelId),

@@ -1,7 +1,8 @@
 import type { AppState } from "@/lib/store/types";
 
 export interface MentionMatch {
-  kind: "user" | "role";
+  /** A channel is offered after "#" rather than "@"; see `lib/channelLinks.ts`. */
+  kind: "user" | "role" | "channel";
   id: string;
   name: string;
   color: string | undefined;

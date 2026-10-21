@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Search, X, Image, Film, Music, FileText, MessageSquare, AtSign, Pin, PinOff } from "lucide-react";
 import { useAppContext } from "@/lib/store";
+import { useChannelLinkText } from "@/hooks/useChannelLinkText";
 import { apiSearchMessages, type MatrixMessage } from "@/lib/api";
 import { Loader2 } from "lucide-react";
 import { MessageItem } from "./MessageItem";
@@ -89,6 +90,7 @@ export function MessagePanel({ mode, onClose, onJump }: MessagePanelProps) {
     unpinMessage,
     openThread,
   } = useAppContext();
+  const channelLinkText = useChannelLinkText();
   const isMobile = useIsMobile();
   const { search } = state;
 
@@ -307,10 +309,10 @@ export function MessagePanel({ mode, onClose, onJump }: MessagePanelProps) {
                       <MessageSquare className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">
-                          {thread.thread_name || thread.content.body}
+                          {thread.thread_name || channelLinkText(thread.content.body)}
                         </p>
                         {thread.thread_name && (
-                          <p className="text-xs text-muted-foreground truncate">{thread.content.body}</p>
+                          <p className="text-xs text-muted-foreground truncate">{channelLinkText(thread.content.body)}</p>
                         )}
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {replyCount} {replyCount === 1 ? "reply" : "replies"} · by {senderName} ·{" "}
