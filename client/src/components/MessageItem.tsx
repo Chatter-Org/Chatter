@@ -292,6 +292,7 @@ function LinkPreviewCard({ url }: { url: string }) {
         <img
           src={preview.image}
           alt=""
+          referrerPolicy="no-referrer"
           className="w-24 h-24 object-cover flex-shrink-0"
           onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
         />

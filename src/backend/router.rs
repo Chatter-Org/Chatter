@@ -33,9 +33,10 @@ use super::{
         },
         gif_favorites::{apply_gif_favorites_op, get_gif_favorites},
         invites::{accept_invite, create_invite, delete_invite, get_invite_info, list_invites},
+        link_preview::link_preview,
         media::{
-            delete_upload, gif_search, link_preview, list_uploads, upload_abort, upload_chunk,
-            upload_complete, upload_file, upload_guard, upload_init, upload_status,
+            delete_upload, gif_search, list_uploads, upload_abort, upload_chunk, upload_complete,
+            upload_file, upload_guard, upload_init, upload_status,
         },
         message_links::get_message_preview,
         messages::{

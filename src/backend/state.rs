@@ -93,7 +93,7 @@ pub struct AppState {
     pub(crate) voice_publishers: RwLock<HashMap<String, VoicePublisherState>>,
     // One entry per listener, keyed by their user id.
     pub(crate) voice_listeners: RwLock<HashMap<String, VoiceListenerState>>,
-    pub(crate) link_previews: RwLock<HashMap<String, CachedPreview>>,
+    pub(crate) link_previews: RwLock<HashMap<String, PreviewEntry>>,
     pub(crate) totp_attempts: RwLock<HashMap<String, TotpAttemptRecord>>,
     // Token buckets for rate limiting and slowmode, keyed by "<bucket>:<who>".
     // Ephemeral on purpose: a restart forgiving everyone's limit is a better
@@ -1279,12 +1279,19 @@ pub(crate) struct PresenceRecord {
     pub(crate) desktop_game: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Default, Serialize)]
 pub(crate) struct CachedPreview {
     pub(crate) title: Option<String>,
     pub(crate) description: Option<String>,
     pub(crate) image: Option<String>,
     pub(crate) site_name: Option<String>,
+}
+
+/// A link preview, fetched or being fetched. The cell is shared so everyone
+/// asking for the same URL while it is in flight waits on one fetch.
+pub(crate) struct PreviewEntry {
+    pub(crate) created: std::time::Instant,
+    pub(crate) cell: Arc<tokio::sync::OnceCell<CachedPreview>>,
 }
 
 #[derive(Clone)]

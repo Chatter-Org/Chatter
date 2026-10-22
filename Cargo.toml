@@ -19,6 +19,7 @@ reqwest = { version = "0.12", features = ["rustls-tls", "json", "multipart", "gz
 percent-encoding = "2"
 url = "2"
 urlencoding = "2"
+encoding_rs = "0.8"
 regex = "1"
 mime_guess = "2"
 webrtc = "0.11"

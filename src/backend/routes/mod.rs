@@ -12,6 +12,7 @@ pub(crate) mod forum_links;
 pub(crate) mod friends;
 pub(crate) mod gif_favorites;
 pub(crate) mod invites;
+pub(crate) mod link_preview;
 pub(crate) mod media;
 pub(crate) mod message_links;
 pub(crate) mod messages;
