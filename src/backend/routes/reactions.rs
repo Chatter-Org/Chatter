@@ -59,6 +59,11 @@ pub(crate) async fn add_reaction(
         }
     }
 
+    if let Some(refusal) =
+        super::super::moderation::participation_refusal(&state, &room_id, &user_id).await
+    {
+        return Err(refusal);
+    }
     if !effective_permissions(&state, &room_id, &user_id)
         .await
         .add_reactions

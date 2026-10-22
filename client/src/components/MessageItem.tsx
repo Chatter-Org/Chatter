@@ -1,7 +1,8 @@
 import { memo, useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { externalSender } from "@chatter/core/messageFormat";
 import { DEFAULT_EMBED_COLOR, embedActionRows, embedSelectRows } from "@chatter/core/embeds";
-import { EyeOff, Star, Play, Copy, Check, Cast, Subtitles, Link2, Pin, PinOff, Reply, MessagesSquare, SmilePlus, Pencil, Trash2, X, MoreHorizontal } from "lucide-react";
+import { EyeOff, Star, Play, Copy, Check, Cast, Subtitles, Link2, Pin, PinOff, Reply, MessagesSquare, SmilePlus, Pencil, Trash2, X, MoreHorizontal, Flag } from "lucide-react";
+import { showReportDialog } from "@/components/moderation/moderationUtils";
 import { useAppContext } from "@/lib/store";
 import { useVideoResume } from "@/hooks/useVideoResume";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -1255,6 +1256,16 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
   // system notice, which has no author or content to preview. Bot and webhook
   // messages are ordinary messages here and stay linkable.
   const canLink = !inThread && !isSystem;
+  // Reporting goes to the room's moderators, so a DM has nowhere to send it.
+  const canReport =
+    !isOwn &&
+    !isSystem &&
+    !isExternal &&
+    !!roomInfo &&
+    !roomInfo.is_direct &&
+    roomInfo.moderation?.reports_enabled !== false;
+  const report = () =>
+    showReportDialog({ roomId: state.currentRoomId!, eventId: message.event_id, senderName: sender });
 
   const togglePin = async () => {
     try {
@@ -1872,6 +1883,17 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
                 <Pencil className="h-4 w-4" />
               </Button>
             )}
+            {canReport && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                title="Report message"
+                onClick={report}
+              >
+                <Flag className="h-4 w-4" />
+              </Button>
+            )}
             {(isOwn || canDeleteOthers) && (
               <Button
                 variant="ghost"
@@ -1976,6 +1998,16 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
                     onSelect={() => {
                       setActionsOpen(false);
                       setIsEditing(true);
+                    }}
+                  />
+                )}
+                {canReport && (
+                  <ActionRow
+                    icon={Flag}
+                    label="Report message"
+                    onSelect={() => {
+                      setActionsOpen(false);
+                      report();
                     }}
                   />
                 )}

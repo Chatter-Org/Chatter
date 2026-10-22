@@ -51,7 +51,7 @@ docker build -t chatter . && docker run -p 8000:8000 chatter
 | Messages, paging, links, pins, threads, deletes, socket recovery, API patterns | `docs/design/messages.md` |
 | Notifications, push, unread counts, mentions, read markers | `docs/design/notifications-unreads.md` |
 | Forums, polls, GIF favourites | `docs/design/forum-polls-gifs.md` |
-| Roles, channel overwrites, permission checks, rate limits, audit log, blocking, admin | `docs/design/permissions-moderation.md` |
+| Roles, channel overwrites, permission checks, rate limits, audit log, blocking, timeouts, rules, reports, automod, admin | `docs/design/permissions-moderation.md` |
 | Uploads, video conversion, thumbnails, purging files | `docs/design/uploads-media.md` |
 | Voice, screen share, webcams, spatial channels, the SFU | `docs/design/voice.md` |
 | Themes, profile themes, presence/idle, sidebar and rail, sounds, drafts, the composer | `docs/design/client-ui.md` |

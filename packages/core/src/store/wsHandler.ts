@@ -1,5 +1,5 @@
 import type { Action, AppState, Dispatch, MutableRefObject, VoiceChannelMember } from "./types";
-import { apiGetRoomMembers } from "../api";
+import { apiGetMyPermissions, apiGetRoomMembers } from "../api";
 import { displayUserId } from "../utils";
 import { forgetMessagePreview } from "../messageLinks";
 import { forgetForumPreview } from "../forumLinks";
@@ -31,6 +31,29 @@ function scheduleRoomListRefresh(
     roomListRefreshTimer = undefined;
     void loadRoomsRef.current();
   }, 1000);
+}
+
+/**
+ * Refetch the caller's permissions and restriction in the room on screen —
+ * the same request the store's `loadMyPermissions` makes, kept here because
+ * the handler is built from refs, not from the actions.
+ */
+async function refreshMyPermissions(
+  roomId: string,
+  stateRef: MutableRefObject<AppState>,
+  dispatch: Dispatch<Action>,
+) {
+  const channelId = stateRef.current.currentChannelId;
+  try {
+    const data = await apiGetMyPermissions(roomId, channelId ?? undefined);
+    if (stateRef.current.currentRoomId !== roomId || stateRef.current.currentChannelId !== channelId) return;
+    dispatch({ type: "SET_MY_PERMISSIONS", payload: data.permissions });
+    const r = data.restriction;
+    dispatch({
+      type: "SET_MY_RESTRICTION",
+      payload: r ? { timeoutUntil: r.timeout_until, rulesPending: r.rules_pending } : null,
+    });
+  } catch {}
 }
 
 /** The member records the server sends with a voice event or snapshot. */
@@ -522,6 +545,7 @@ export function createWsMessageHandler(
                 displayName: m.display_name || displayUserId(m.user_id),
                 role: m.role || "member",
                 joinedAt: m.joined_at || undefined,
+                timeoutUntil: m.timeout_until || undefined,
               })),
             });
           } catch {}
@@ -1001,6 +1025,51 @@ export function createWsMessageHandler(
           dispatch({ type: "SELECT_ROOM", payload: null });
         }
         loadRoomsRef.current();
+      }
+    }
+    else if (msg.type === "m.room.moderation") {
+      if (msg.room_id && msg.content) {
+        dispatch({
+          type: "SET_ROOM_MODERATION",
+          payload: {
+            roomId: msg.room_id,
+            moderation: {
+              rules: msg.content.rules || "",
+              rules_required: !!msg.content.rules_required,
+              reports_enabled: msg.content.reports_enabled !== false,
+            },
+          },
+        });
+        // Turning the rules gate on or off changes what the user may do here.
+        if (msg.room_id === stateRef.current.currentRoomId) {
+          void refreshMyPermissions(msg.room_id, stateRef, dispatch);
+        }
+      }
+    }
+    else if (msg.type === "m.room.reports") {
+      // Only moderators are sent these.
+      if (msg.room_id && typeof msg.open_count === "number") {
+        dispatch({ type: "SET_REPORT_COUNT", payload: { roomId: msg.room_id, count: msg.open_count } });
+        if (msg.new_report_id) {
+          const roomName = stateRef.current.roomInfoMap[msg.room_id]?.name;
+          host.toast(roomName ? `New report in ${roomName}` : "New message report", {
+            action: { label: "Review", onClick: () => host.emit("chatter:open-reports", { roomId: msg.room_id }) },
+          });
+        }
+      }
+    }
+    else if (msg.type === "m.room.member.timeout") {
+      // A timeout started or was lifted. The member list badges it; for the
+      // person it names, permissions change too, so they are refetched rather
+      // than guessed at.
+      if (msg.room_id === stateRef.current.currentRoomId && msg.user_id) {
+        dispatch({
+          type: "SET_MEMBER_TIMEOUT",
+          payload: { userId: msg.user_id, timeoutUntil: msg.timeout_until || 0 },
+        });
+        if (msg.user_id === stateRef.current.userId) {
+          void refreshMyPermissions(msg.room_id, stateRef, dispatch);
+        }
       }
     }
     else if (msg.type === "m.room.created") {

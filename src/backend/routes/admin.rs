@@ -676,6 +676,15 @@ pub(crate) async fn admin_delete_room(
         .collection::<mongodb::bson::Document>("whiteboard_strokes")
         .delete_many(doc! { "room_id": &room_id })
         .await;
+    // Reports carry copies of messages, so they go with the messages.
+    let _ = db
+        .collection::<mongodb::bson::Document>("reports")
+        .delete_many(doc! { "room_id": &room_id })
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("member_timeouts")
+        .delete_many(doc! { "room_id": &room_id })
+        .await;
 
     // Clean up in-memory caches
     state.room_members.write().await.remove(&room_id);

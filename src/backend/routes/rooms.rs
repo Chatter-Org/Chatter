@@ -105,6 +105,7 @@ pub(crate) async fn create_room(
                     sounds: std::collections::HashMap::new(),
                     entrance_sounds_enabled: true,
                     suggested_theme: String::new(),
+                    moderation: Default::default(),
                 };
                 let rooms_coll = state.db.collection::<RoomRecord>("rooms");
                 let _ = rooms_coll.insert_one(room_record).await;
@@ -126,6 +127,7 @@ pub(crate) async fn create_room(
                             user_id: member.clone(),
                             role: role.to_string(),
                             joined_at: ts,
+                            rules_accepted_at: 0,
                         })
                         .await;
                 }
@@ -234,6 +236,7 @@ pub(crate) async fn create_room(
                     sounds: std::collections::HashMap::new(),
                     entrance_sounds_enabled: true,
                     suggested_theme: String::new(),
+                    moderation: Default::default(),
                 };
                 let rooms_coll = state.db.collection::<RoomRecord>("rooms");
                 let _ = rooms_coll.insert_one(room_record).await;
@@ -247,6 +250,7 @@ pub(crate) async fn create_room(
                         user_id: user_id.clone(),
                         role: "owner".to_string(),
                         joined_at: ts,
+                        rules_accepted_at: 0,
                     })
                     .await;
                 let _ = members_coll
@@ -255,6 +259,7 @@ pub(crate) async fn create_room(
                         user_id: other_user.clone(),
                         role: "member".to_string(),
                         joined_at: ts,
+                        rules_accepted_at: 0,
                     })
                     .await;
 
@@ -419,6 +424,7 @@ pub(crate) async fn create_room(
         sounds: std::collections::HashMap::new(),
         entrance_sounds_enabled: true,
         suggested_theme: String::new(),
+        moderation: Default::default(),
     };
     let rooms_coll = state.db.collection::<RoomRecord>("rooms");
     let _ = rooms_coll.insert_one(room_record).await;
@@ -451,6 +457,7 @@ pub(crate) async fn create_room(
                 user_id: member.clone(),
                 role,
                 joined_at: now_millis(),
+                rules_accepted_at: 0,
             })
             .await;
     }
@@ -783,6 +790,9 @@ pub(crate) async fn list_room_members(
             if let Some(ts) = e.joined_at {
                 out["joined_at"] = json!(ts);
             }
+            if let Some(ts) = e.timeout_until {
+                out["timeout_until"] = json!(ts);
+            }
             out
         })
         .collect();
@@ -940,6 +950,18 @@ pub(crate) async fn delete_room(
         .db
         .collection::<super::super::state::BannedUserRecord>("banned_users");
     let _ = banned_coll.delete_many(doc! { "room_id": &room_id }).await;
+
+    // Reports carry copies of messages, so they go with the messages.
+    let _ = state
+        .db
+        .collection::<mongodb::bson::Document>("reports")
+        .delete_many(doc! { "room_id": &room_id })
+        .await;
+    let _ = state
+        .db
+        .collection::<mongodb::bson::Document>("member_timeouts")
+        .delete_many(doc! { "room_id": &room_id })
+        .await;
 
     // Update caches
     state.room_members.write().await.remove(&room_id);

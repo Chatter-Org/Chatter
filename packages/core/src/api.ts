@@ -553,7 +553,7 @@ export async function apiGetRoomMembers(roomId: string) {
   if (!res.ok) throw new Error("Failed to load members");
   return res.json() as Promise<{
     room_id: string;
-    members: { user_id: string; display_name: string; role: string; joined_at?: number }[];
+    members: { user_id: string; display_name: string; role: string; joined_at?: number; timeout_until?: number }[];
   }>;
 }
 
@@ -1161,6 +1161,154 @@ export interface RoomInfo {
   entrance_sounds_enabled?: boolean;
   /** A `ct1_` theme share code this room offers its members, or "". */
   suggested_theme?: string;
+  /** What members are told about the room's moderation. Absent from servers
+   *  that predate it. */
+  moderation?: RoomModerationPublic;
+}
+
+/** The part of a room's moderation settings every member sees. */
+export interface RoomModerationPublic {
+  rules: string;
+  /** Whether the rules gate is in force: on, with rules to accept. */
+  rules_required: boolean;
+  reports_enabled: boolean;
+}
+
+/** Automod as the owner configures it. See `AutomodSettings` in state.rs. */
+export interface AutomodSettings {
+  enabled: boolean;
+  blocked_words: string[];
+  block_links: boolean;
+  block_invites: boolean;
+  /** 0 is no limit. */
+  max_mentions: number;
+  block_repeats: boolean;
+  /** Time out whoever trips a filter for this long; 0 only refuses. */
+  timeout_secs: number;
+}
+
+/** The full settings, as owners and moderators read them. `rules_required`
+ *  is the owner's switch; `rules_gate_active` is whether it is in force. */
+export interface RoomModerationSettings {
+  rules: string;
+  rules_required: boolean;
+  rules_gate_active?: boolean;
+  reports_enabled: boolean;
+  automod: AutomodSettings;
+}
+
+export async function apiGetModerationSettings(roomId: string) {
+  const res = await authenticatedFetch(`/api/rooms/${encodeURIComponent(roomId)}/moderation`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || "Failed to load moderation settings");
+  }
+  return res.json() as Promise<Partial<RoomModerationSettings>>;
+}
+
+export async function apiUpdateModerationSettings(
+  roomId: string,
+  change: Partial<Omit<RoomModerationSettings, "rules_gate_active">>,
+) {
+  const res = await authenticatedFetch(`/api/rooms/${encodeURIComponent(roomId)}/moderation`, {
+    method: "PUT",
+    body: JSON.stringify(change),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || "Failed to save moderation settings");
+  }
+  return res.json() as Promise<RoomModerationSettings>;
+}
+
+/** A report as the moderators' queue shows it. `body` is the message as it
+ *  read when reported; `message_exists` says whether it is still there. */
+export interface MessageReport {
+  report_id: string;
+  event_id: string;
+  channel_id: string;
+  thread_id: string;
+  reporter: string;
+  reported_user: string;
+  reason: string;
+  body: string;
+  /** When the reported message was sent. */
+  message_ts: number;
+  created_at: number;
+  status: "open" | "resolved" | "dismissed";
+  resolved_by: string;
+  resolved_at: number;
+  message_deleted: boolean;
+  message_exists: boolean;
+}
+
+export async function apiReportMessage(roomId: string, eventId: string, reason: string) {
+  const res = await authenticatedFetch(`/api/rooms/${encodeURIComponent(roomId)}/reports`, {
+    method: "POST",
+    body: JSON.stringify({ event_id: eventId, reason }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || "Failed to report the message");
+  }
+  return res.json() as Promise<{ report_id: string }>;
+}
+
+export async function apiListReports(
+  roomId: string,
+  opts: { status?: "open" | "closed" | "all"; offset?: number; limit?: number } = {},
+) {
+  const params = new URLSearchParams();
+  params.set("status", opts.status ?? "open");
+  if (opts.offset) params.set("offset", String(opts.offset));
+  if (opts.limit) params.set("limit", String(opts.limit));
+  const res = await authenticatedFetch(`/api/rooms/${encodeURIComponent(roomId)}/reports?${params}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || "Failed to load reports");
+  }
+  return res.json() as Promise<{ items: MessageReport[]; has_more: boolean; next_offset: number; open_count: number }>;
+}
+
+export async function apiResolveReport(
+  roomId: string,
+  reportId: string,
+  status: "resolved" | "dismissed",
+  deleteMessage = false,
+) {
+  const res = await authenticatedFetch(
+    `/api/rooms/${encodeURIComponent(roomId)}/reports/${encodeURIComponent(reportId)}/resolve`,
+    { method: "POST", body: JSON.stringify({ status, delete_message: deleteMessage }) },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || "Failed to close the report");
+  }
+  return res.json() as Promise<{ status: string; message_deleted: boolean }>;
+}
+
+/** Delete one person's messages from the last `sinceSecs` (at most a week),
+ *  in the whole room or one channel. Needs `manage_messages`. */
+export async function apiBulkDeleteMessages(roomId: string, userId: string, sinceSecs: number, channelId?: string) {
+  const res = await authenticatedFetch(`/api/rooms/${encodeURIComponent(roomId)}/messages/bulk-delete`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, since_secs: sinceSecs, ...(channelId ? { channel_id: channelId } : {}) }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || "Failed to delete messages");
+  }
+  return res.json() as Promise<{ deleted: number }>;
+}
+
+export async function apiAcceptRules(roomId: string) {
+  const res = await authenticatedFetch(`/api/rooms/${encodeURIComponent(roomId)}/rules/accept`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || "Failed to accept the rules");
+  }
 }
 
 // ─── Channels ───────────────────────────────────────────────────────────────
@@ -1254,7 +1402,40 @@ export async function apiGetMyPermissions(
     `/api/rooms/${encodeURIComponent(roomId)}/permissions?${params}`
   );
   if (!res.ok) throw new Error("Failed to load permissions");
-  return res.json() as Promise<{ permissions: RolePermissions }>;
+  return res.json() as Promise<{ permissions: RolePermissions; restriction?: ApiRestriction }>;
+}
+
+/** What is holding the caller back in a room, as the server reports it with
+ *  their permissions. Absent from servers older than moderation. */
+export interface ApiRestriction {
+  /** Epoch ms the timeout ends; 0 when there is none. */
+  timeout_until: number;
+  rules_pending: boolean;
+}
+
+/** Time a member out: they can read but not post, react or speak until it
+ *  ends. Needs `kick_members`. */
+export async function apiTimeoutMember(roomId: string, userId: string, durationSecs: number, reason = "") {
+  const res = await authenticatedFetch(
+    `/api/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(userId)}/timeout`,
+    { method: "PUT", body: JSON.stringify({ duration_secs: durationSecs, reason }) },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || "Failed to time out member");
+  }
+  return res.json() as Promise<{ timeout_until: number }>;
+}
+
+export async function apiRemoveTimeout(roomId: string, userId: string) {
+  const res = await authenticatedFetch(
+    `/api/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(userId)}/timeout`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || "Failed to remove timeout");
+  }
 }
 
 export interface CustomRole {
@@ -2073,16 +2254,33 @@ export async function apiAcceptInvite(code: string) {
   return res.json() as Promise<{ room_id: string }>;
 }
 
-export async function apiCreateInvite(roomId: string) {
+/** A room's invite link as its owner sees it. `max_uses` 0 is unlimited;
+ *  `uses` counts joins, `click_count` everyone who opened the link. */
+export interface RoomInvite {
+  code: string;
+  click_count: number;
+  created_at: number;
+  expires_at?: number | null;
+  max_uses?: number;
+  uses?: number;
+}
+
+export async function apiCreateInvite(
+  roomId: string,
+  opts: { expiresInDays?: number; maxUses?: number } = {},
+) {
   const res = await authenticatedFetch(`/api/rooms/${roomId}/invites`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({
+      ...(opts.expiresInDays ? { expires_in_days: opts.expiresInDays } : {}),
+      ...(opts.maxUses ? { max_uses: opts.maxUses } : {}),
+    }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new Error(body?.error || "Failed to create invite");
   }
-  return res.json() as Promise<{ code: string }>;
+  return res.json() as Promise<{ code: string; expires_at?: number | null; max_uses?: number }>;
 }
 
 export async function apiListInvites(roomId: string) {
@@ -2091,9 +2289,7 @@ export async function apiListInvites(roomId: string) {
     const body = await res.json().catch(() => null);
     throw new Error(body?.error || "Failed to list invites");
   }
-  return res.json() as Promise<{
-    invites: { code: string; click_count: number; created_at: number }[];
-  }>;
+  return res.json() as Promise<{ invites: RoomInvite[] }>;
 }
 
 export async function apiDeleteInvite(code: string) {

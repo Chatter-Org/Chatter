@@ -22,6 +22,7 @@ import {
   apiGetMessages,
   apiGetMessagesAfter,
   apiGetMyPermissions,
+  apiListReports,
   apiGetNotificationSettings,
   apiGetPins,
   apiGetPresence,
@@ -128,6 +129,7 @@ export function roomInfoFromSync(roomId: string, roomData: SyncRoom | undefined)
   const streakEvent = find("m.room.dm_streak");
   const soundsEvent = find("m.room.sounds");
   const themeEvent = find("m.room.theme");
+  const moderationEvent = find("m.room.moderation");
   return {
     room_id: roomId,
     name: nameEvent?.content?.name || "Unnamed Room",
@@ -161,6 +163,13 @@ export function roomInfoFromSync(roomId: string, roomData: SyncRoom | undefined)
     // missing, keep entrance sounds on — the field's default.
     entrance_sounds_enabled: soundsEvent?.content?.entrance_sounds_enabled !== false,
     suggested_theme: themeEvent?.content?.suggested_theme || "",
+    moderation: moderationEvent?.content
+      ? {
+          rules: moderationEvent.content.rules || "",
+          rules_required: !!moderationEvent.content.rules_required,
+          reports_enabled: moderationEvent.content.reports_enabled !== false,
+        }
+      : undefined,
   };
 }
 
@@ -513,6 +522,39 @@ export function createStoreActions(ctx: StoreContext) {
    *  channel to land on comes out of the channel list, and messages, pins and
    *  permissions are all scoped to it. Everything else now runs alongside.
    */
+  /** The caller's permissions in a room (or one of its channels), and what
+   *  is restricting them there. `stillCurrent` drops an answer for a room or
+   *  channel the user has since left. Also called when a timeout starts, ends
+   *  or the rules are accepted, which change both. */
+  const loadMyPermissions = async (
+    roomId: string,
+    channelId: string | null | undefined,
+    stillCurrent: () => boolean = () => getState().currentRoomId === roomId,
+  ) => {
+    try {
+      const permsData = await apiGetMyPermissions(roomId, channelId ?? undefined);
+      if (!stillCurrent()) return;
+      dispatch({ type: "SET_MY_PERMISSIONS", payload: permsData.permissions });
+      const r = permsData.restriction;
+      dispatch({
+        type: "SET_MY_RESTRICTION",
+        payload: r ? { timeoutUntil: r.timeout_until, rulesPending: r.rules_pending } : null,
+      });
+      // Moderators see how many reports are waiting. Asked for here because
+      // this is where the client learns it moderates the room; the socket
+      // keeps the number current from then on.
+      const p = permsData.permissions;
+      if ((p.manage_messages || p.kick_members || p.ban_members) && !getState().roomInfoMap[roomId]?.is_direct) {
+        void apiListReports(roomId, { status: "open", limit: 1 })
+          .then((data) => dispatch({ type: "SET_REPORT_COUNT", payload: { roomId, count: data.open_count } }))
+          .catch(() => {});
+      }
+    } catch {
+      if (!stillCurrent()) return;
+      dispatch({ type: "SET_MY_PERMISSIONS", payload: null });
+    }
+  };
+
   const selectRoom = async (roomId: string) => {
     dispatch({ type: "SELECT_ROOM", payload: roomId });
     void loadActiveThreads(roomId);
@@ -534,6 +576,7 @@ export function createStoreActions(ctx: StoreContext) {
             displayName: m.display_name || displayUserId(m.user_id),
             role: m.role || "member",
             joinedAt: m.joined_at || undefined,
+            timeoutUntil: m.timeout_until || undefined,
           })),
         });
       })
@@ -588,15 +631,7 @@ export function createStoreActions(ctx: StoreContext) {
     //
     // The server computes effective permissions; the client only mirrors them
     // to decide which controls to show.
-    void apiGetMyPermissions(roomId, selectedChannelId)
-      .then((permsData) => {
-        if (!stillCurrent()) return;
-        dispatch({ type: "SET_MY_PERMISSIONS", payload: permsData.permissions });
-      })
-      .catch(() => {
-        if (!stillCurrent()) return;
-        dispatch({ type: "SET_MY_PERMISSIONS", payload: null });
-      });
+    void loadMyPermissions(roomId, selectedChannelId, stillCurrent);
     void apiGetPins(roomId, selectedChannelId)
       .then((page) => {
         if (!stillCurrent()) return;
@@ -685,15 +720,7 @@ export function createStoreActions(ctx: StoreContext) {
     const stillCurrent = () => getState().currentRoomId === roomId && getState().currentChannelId === channelId;
 
     // Overwrites make permissions channel-scoped, so they follow the channel.
-    void apiGetMyPermissions(roomId, channelId)
-      .then((permsData) => {
-        if (!stillCurrent()) return;
-        dispatch({ type: "SET_MY_PERMISSIONS", payload: permsData.permissions });
-      })
-      .catch(() => {
-        if (!stillCurrent()) return;
-        dispatch({ type: "SET_MY_PERMISSIONS", payload: null });
-      });
+    void loadMyPermissions(roomId, channelId, stillCurrent);
     void apiGetPins(roomId, channelId)
       .then((page) => {
         if (!stillCurrent()) return;
@@ -1239,6 +1266,7 @@ export function createStoreActions(ctx: StoreContext) {
 
   return {
     loadRooms,
+    loadMyPermissions,
     loadUnreads,
     markChannelRead,
     clearUnread,

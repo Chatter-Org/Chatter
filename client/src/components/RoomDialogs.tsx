@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useAppActions, useAppContext } from "@/lib/store";
-import { apiUploadFile, apiCreateInvite, apiListInvites, apiDeleteInvite, apiDeleteRoom, apiGetBannedUsers, apiUnbanMember, apiCreateWebhook, apiListWebhooks, apiDeleteWebhook, apiCreateBot, apiListBots, apiDeleteBot, apiRegenerateBotToken, apiCreateChannel, type RoomSummary, type BannedUser, type Webhook, type Bot } from "@/lib/api";
+import { apiUploadFile, apiCreateInvite, apiListInvites, apiDeleteInvite, apiDeleteRoom, apiGetBannedUsers, apiUnbanMember, apiCreateWebhook, apiListWebhooks, apiDeleteWebhook, apiCreateBot, apiListBots, apiDeleteBot, apiRegenerateBotToken, apiCreateChannel, type RoomSummary, type RoomInvite, type BannedUser, type Webhook, type Bot } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,58 +16,16 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { X, ArrowUpDown, Search, ImagePlus, Settings, Copy, Trash2, Link, Lock, Eye, EyeOff, ShieldBan, Webhook as WebhookIcon, Bot as BotIcon, RefreshCw, Plus, ChevronLeft, ChevronRight, Volume2, Palette, Smile } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import { cn, displayUserId } from "@/lib/utils";
 import { AuthImage } from "@/components/AuthImage";
 import { toast } from "sonner";
 import { apiGetAuditLog, type AuditEntry } from "@/lib/api";
 import { MAX_SOUND_SECS, playSound, type SoundEvent, type SoundPack } from "@/lib/sounds";
 import { decodeThemeShare, extractShareCode, useThemeSettings } from "@/lib/theme";
-
-/** A shaded group of related settings. The room settings dialog had grown
- *  past the point where a flat column of controls could be read: tabs
- *  separated the broad areas, but within a tab a toggle for the public room
- *  list sat in the same undifferentiated stack as a password field. Each
- *  group gets a card with a heading, so the eye can find the boundary before
- *  it reads the labels. */
-function SettingsSection({
-  title,
-  description,
-  icon: Icon,
-  action,
-  className,
-  children,
-}: {
-  title: string;
-  description?: string;
-  icon?: LucideIcon;
-  /** Rendered at the far right of the heading row — a "Create" button that
-   *  belongs to the group as a whole rather than to any one control. */
-  action?: React.ReactNode;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      className={cn(
-        "space-y-3 rounded-lg border border-border/40 bg-muted/20 p-3",
-        className,
-      )}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 space-y-1">
-          <h3 className="ui-heading flex items-center gap-1.5">
-            {Icon && <Icon className="w-3.5 h-3.5 shrink-0" />}
-            {title}
-          </h3>
-          {description && <p className="ui-hint">{description}</p>}
-        </div>
-        {action && <div className="shrink-0">{action}</div>}
-      </div>
-      {children}
-    </section>
-  );
-}
+import { SettingsSection } from "@/components/SettingsSection";
+import { ModerationSettingsPanel } from "@/components/moderation/ModerationSettingsPanel";
+import { BulkDeleteControl } from "@/components/moderation/BulkDeleteControl";
+import { showReports } from "@/components/moderation/moderationUtils";
 
 /** Readable phrasing for each audit action. An unknown action falls back to
  *  its raw string, so a newly added server action still renders. */
@@ -87,6 +45,12 @@ const AUDIT_LABELS: Record<string, string> = {
   "room.settings_updated": "updated room settings",
   "invite.created": "created an invite",
   "invite.deleted": "deleted an invite",
+  "member.timed_out": "timed out",
+  "member.timeout_removed": "removed the timeout on",
+  "room.moderation_updated": "updated moderation settings",
+  "report.resolved": "closed a report on",
+  "message.bulk_deleted": "bulk-deleted messages from",
+  "automod.blocked": "automod blocked a message from",
 };
 
 /** The pack's events, in the order they are offered. Keep in sync with
@@ -526,7 +490,10 @@ export function RoomSettingsDialog({ open, onOpenChange, roomId }: RoomSettingsD
   const [emojiAliases, setEmojiAliases] = useState<Record<string, string>>({});
   const [aliasNameInput, setAliasNameInput] = useState("");
   const [aliasValueInput, setAliasValueInput] = useState("");
-  const [invites, setInvites] = useState<{ code: string; click_count: number; created_at: number }[]>([]);
+  const [invites, setInvites] = useState<RoomInvite[]>([]);
+  // Limits for the next invite created; 0 is "never" / "no limit".
+  const [inviteExpiryDays, setInviteExpiryDays] = useState(0);
+  const [inviteMaxUses, setInviteMaxUses] = useState(0);
   const [inviteLoading, setInviteLoading] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [iconFile, setIconFile] = useState<File | null>(null);
@@ -608,6 +575,8 @@ export function RoomSettingsDialog({ open, onOpenChange, roomId }: RoomSettingsD
       setIconFile(null);
       setIconPreview(info.icon_url || null);
       setInvites([]);
+      setInviteExpiryDays(0);
+      setInviteMaxUses(0);
       setCopiedCode(null);
       setDeleteConfirmName("");
       setSettingsUnlisted(info.unlisted || false);
@@ -1255,8 +1224,14 @@ export function RoomSettingsDialog({ open, onOpenChange, roomId }: RoomSettingsD
                     onClick={async () => {
                       setInviteLoading(true);
                       try {
-                        const { code } = await apiCreateInvite(roomId);
-                        setInvites((prev) => [...prev, { code, click_count: 0, created_at: Date.now() }]);
+                        const { code, expires_at, max_uses } = await apiCreateInvite(roomId, {
+                          expiresInDays: inviteExpiryDays,
+                          maxUses: inviteMaxUses,
+                        });
+                        setInvites((prev) => [
+                          ...prev,
+                          { code, click_count: 0, created_at: Date.now(), expires_at, max_uses, uses: 0 },
+                        ]);
                       } catch (e: any) {
                         toast.error(e.message || "Failed to create invite");
                       } finally {
@@ -1268,21 +1243,63 @@ export function RoomSettingsDialog({ open, onOpenChange, roomId }: RoomSettingsD
                   </Button>
                 }
               >
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Expire after</Label>
+                    <select
+                      className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                      value={inviteExpiryDays}
+                      onChange={(e) => setInviteExpiryDays(Number(e.target.value))}
+                    >
+                      <option value={0}>Never</option>
+                      <option value={1}>1 day</option>
+                      <option value={7}>7 days</option>
+                      <option value={30}>30 days</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Max uses</Label>
+                    <select
+                      className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                      value={inviteMaxUses}
+                      onChange={(e) => setInviteMaxUses(Number(e.target.value))}
+                    >
+                      <option value={0}>No limit</option>
+                      {[1, 5, 10, 25, 50, 100].map((n) => (
+                        <option key={n} value={n}>{n} {n === 1 ? "use" : "uses"}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
                 {invites.length > 0 ? (
                   <div className="space-y-2 max-h-[280px] overflow-y-auto">
                     {invites.map((inv) => {
                       const url = `${window.location.origin}/invite/${inv.code}`;
+                      const expired = !!inv.expires_at && inv.expires_at < Date.now();
+                      const usedUp = !!inv.max_uses && (inv.uses ?? 0) >= inv.max_uses;
                       return (
                         <div
                           key={inv.code}
                           className="flex items-center gap-2 p-2 rounded-md border border-border/60 bg-background/60 text-sm"
                         >
-                          <div className="flex-1 min-w-0 truncate font-mono text-xs text-muted-foreground">
-                            {url}
+                          <div className="flex-1 min-w-0">
+                            <div className={cn("truncate font-mono text-xs text-muted-foreground", (expired || usedUp) && "line-through")}>
+                              {url}
+                            </div>
+                            <div className="text-3xs text-muted-foreground">
+                              {inv.max_uses
+                                ? `${inv.uses ?? 0}/${inv.max_uses} uses`
+                                : `${inv.uses ?? 0} joined`}
+                              {" · "}
+                              {inv.click_count} click{inv.click_count !== 1 ? "s" : ""}
+                              {" · "}
+                              {expired
+                                ? "expired"
+                                : inv.expires_at
+                                  ? `expires ${new Date(inv.expires_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                                  : "never expires"}
+                            </div>
                           </div>
-                          <span className="text-3xs text-muted-foreground shrink-0">
-                            {inv.click_count} click{inv.click_count !== 1 ? "s" : ""}
-                          </span>
                           <Button
                             type="button"
                             variant="ghost"
@@ -1732,7 +1749,7 @@ export function RoomSettingsDialog({ open, onOpenChange, roomId }: RoomSettingsD
                         </span>{" "}
                         {entry.target_id && (
                           <span className="truncate">
-                            {entry.action.startsWith("member.")
+                            {entry.target_id.startsWith("@")
                               ? displayUserId(entry.target_id)
                               : entry.target_id}
                           </span>
@@ -1768,6 +1785,17 @@ export function RoomSettingsDialog({ open, onOpenChange, roomId }: RoomSettingsD
 
           {canManageBans && (
             <TabsContent value="moderation" className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onOpenChange(false);
+                  showReports(roomId);
+                }}
+              >
+                Open report queue
+              </Button>
+              {isOwner && <ModerationSettingsPanel roomId={roomId} />}
               <SettingsSection title="Banned Users" icon={ShieldBan}>
                 {loadingBans ? (
                   <p className="text-xs text-muted-foreground py-2">Loading...</p>
@@ -1794,6 +1822,7 @@ export function RoomSettingsDialog({ open, onOpenChange, roomId }: RoomSettingsD
                               banned by {bannedByName} on {bannedDate}
                             </div>
                           </div>
+                          <BulkDeleteControl roomId={roomId} userId={ban.user_id} displayName={username} compact />
                           <Button
                             type="button"
                             variant="outline"

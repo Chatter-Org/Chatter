@@ -1,4 +1,5 @@
 import type { ReadMarkerUpdate } from "../unreads";
+import type { RoomModerationPublic } from "../api";
 import type { MatrixMessage, PinnedMessage, RoomInfo, RoomGroup, Channel, ChannelCategory, CustomRole, RolePermissions, Embed, PollState, RoomEvent, RsvpStatus } from "../api";
 import type { NotificationLevel, NotificationSettings } from "../notifications";
 import type { ProfileTheme } from "../profileTheme";
@@ -53,6 +54,23 @@ export interface MessageTarget {
   ts: number;
 }
 
+/** A member of the current room, as the member list holds them. */
+export interface RoomMember {
+  userId: string;
+  displayName: string;
+  role: string;
+  joinedAt?: number;
+  /** Epoch ms a timeout in force ends; absent when there is none. */
+  timeoutUntil?: number;
+}
+
+/** See `AppState.myRestriction`. */
+export interface MyRestriction {
+  /** Epoch ms; 0 when not timed out. */
+  timeoutUntil: number;
+  rulesPending: boolean;
+}
+
 export interface AppState {
   // Auth
   accessToken: string | null;
@@ -67,7 +85,7 @@ export interface AppState {
   hasMoreMessages: boolean;
   loadingOlderMessages: boolean;
   // Members
-  roomMembers: { userId: string; displayName: string; role: string; joinedAt?: number }[];
+  roomMembers: RoomMember[];
   userPresence: Record<string, { status: string; customStatus?: string; avatarUrl?: string; about?: string; bannerUrl?: string; displayName?: string; nameFontUrl?: string; profileTheme?: unknown; isMobile?: boolean; steamGame?: string; steamAppId?: string; gameSessionStart?: number }>;
   // Channels
   channels: Channel[];
@@ -226,6 +244,13 @@ export interface AppState {
   /** The caller's own effective permissions in the current room, as computed by
    *  the server. Null until loaded. */
   myPermissions: RolePermissions | null;
+  /** Why the caller cannot take part in the current room, when they cannot:
+   *  a timeout, or rules not yet accepted. Null until loaded, and from
+   *  servers that predate moderation. */
+  myRestriction: MyRestriction | null;
+  /** Open reports per room, for rooms the user moderates. Kept current by the
+   *  server's `m.room.reports` events. */
+  reportCounts: Record<string, number>;
   // Friends
   friends: string[];
   incomingFriendRequests: { userId: string; requestId: string }[];
@@ -289,7 +314,11 @@ export type Action =
   | { type: "REDACT_MESSAGE"; payload: string }
   | { type: "EDIT_MESSAGE"; payload: { eventId: string; newBody: string; newEmbeds?: Embed[] } }
   | { type: "SET_REACTIONS"; payload: { eventId: string; reactions: Record<string, string[]> } }
-  | { type: "SET_ROOM_MEMBERS"; payload: { userId: string; displayName: string; role: string; joinedAt?: number }[] }
+  | { type: "SET_ROOM_MEMBERS"; payload: RoomMember[] }
+  | { type: "SET_MEMBER_TIMEOUT"; payload: { userId: string; timeoutUntil: number } }
+  | { type: "SET_MY_RESTRICTION"; payload: MyRestriction | null }
+  | { type: "SET_ROOM_MODERATION"; payload: { roomId: string; moderation: RoomModerationPublic } }
+  | { type: "SET_REPORT_COUNT"; payload: { roomId: string; count: number } }
   | { type: "SET_PRESENCE"; payload: Record<string, { status: string; customStatus?: string; avatarUrl?: string; about?: string; bannerUrl?: string; displayName?: string; nameFontUrl?: string; profileTheme?: unknown; isMobile?: boolean; steamGame?: string; steamAppId?: string; gameSessionStart?: number }> }
   | { type: "SET_VOICE_STATE"; payload: Partial<Pick<AppState, "inVoiceChannel" | "isMuted" | "isDeafened" | "voiceInputMode" | "voiceRoomId" | "isScreenSharing" | "isWebcamActive" | "voiceChannelId" | "voiceChannelName" | "voicePublisherState">> }
   | { type: "SET_VOICE_MEMBERS"; payload: { members: string[]; states: Record<string, { muted: boolean; deafened: boolean; screen_sharing: boolean }> } }
@@ -503,6 +532,8 @@ export const initialState: AppState = {
   customRoles: [],
   memberCustomRoles: {},
   myPermissions: null,
+  myRestriction: null,
+  reportCounts: {},
   friends: [],
   incomingFriendRequests: [],
   outgoingFriendRequests: [],
@@ -591,6 +622,8 @@ export interface AppContextValue {
   setManualStatus: (status: string) => void;
   updateProfile: (profile: { avatarUrl?: string; bannerUrl?: string; about?: string; customStatus?: string; displayName?: string; nameFontUrl?: string; profileTheme?: ProfileTheme; entranceSoundUrl?: string }) => void;
   kickMember: (roomId: string, userId: string) => Promise<void>;
+  /** Refetch the caller's permissions and restriction in a room. */
+  loadMyPermissions: (roomId: string, channelId?: string | null) => Promise<void>;
   banMember: (roomId: string, userId: string) => Promise<void>;
   unbanMember: (roomId: string, userId: string) => Promise<void>;
   setMemberRole: (roomId: string, userId: string, role: string) => Promise<void>;

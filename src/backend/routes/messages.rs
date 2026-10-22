@@ -12,6 +12,7 @@ use super::super::{
         is_moderator_or_owner, media_urls_in_body, now_millis, rate_limited, regex_escape,
         send_to_user, visible_message_arms, visible_thread_ids,
     },
+    moderation::{automod_refusal, participation_refusal},
     push::{spawn_message_push, MessageNotification},
     ratelimit,
     state::{
@@ -152,6 +153,11 @@ pub(crate) async fn send_message(
             }
         }
 
+        // A timeout or unaccepted rules would fail the check below anyway;
+        // asked first so the refusal can say which.
+        if let Some(refusal) = participation_refusal(&state, &room_id, &sender_id).await {
+            return Err(refusal);
+        }
         let perms = effective_permissions(&state, &room_id, &sender_id).await;
         if !perms.send_messages {
             return Err(error_response(
@@ -345,6 +351,15 @@ pub(crate) async fn send_message(
             {
                 return Err(rate_limited(retry_after, "This channel is in slow mode"));
             }
+        }
+    }
+
+    // Last, so a message refused for any plainer reason is not also logged
+    // as tripping a filter. Bots are the owner's own and are not checked.
+    if !is_bot {
+        if let Some(refusal) = automod_refusal(&state, &room_id, &sender_id, &req.body, true).await
+        {
+            return Err(refusal);
         }
     }
 
@@ -961,12 +976,49 @@ pub(crate) async fn redact_message(
         }
     }
 
+    // Whether its files go with it is the caller's to say. A client that does
+    // not ask gets the behaviour that predates the question.
+    let delete_files = query.delete_files.unwrap_or(true);
+    let redaction_event_id =
+        perform_redaction(&state, &room_id, &user_id, &event_id, &msg, delete_files).await;
+
+    // Only a moderator deleting someone else's message is a moderation
+    // action. Someone deleting their own is not, and logging it would turn the
+    // audit log into a record of ordinary use.
+    if !is_own {
+        audit::record(
+            &state,
+            &room_id,
+            &user_id,
+            audit::AuditAction::MessageDeleted,
+            &event_id,
+            &format!("message by {msg_sender}"),
+        )
+        .await;
+    }
+
+    Ok(Json(json!({"event_id": redaction_event_id})))
+}
+
+/// Delete a message: blank it, fix its thread's count, tell the room, and
+/// tidy up its pin, poll and (if `delete_files`) attachments. `msg` is the
+/// stored message, read by the caller, who has already decided `actor` may do
+/// this. Answers the redaction's event id.
+///
+/// Shared by deleting one message, bulk deletion and acting on a report, so a
+/// message deleted any of those ways is gone in exactly the same way.
+pub(crate) async fn perform_redaction(
+    state: &Arc<AppState>,
+    room_id: &str,
+    actor: &str,
+    event_id: &str,
+    msg: &mongodb::bson::Document,
+    delete_files: bool,
+) -> String {
+    let msg_coll = state.db.collection::<mongodb::bson::Document>("messages");
+    let msg_sender = msg.get_str("sender").ok().unwrap_or("");
     // Read before the update below replaces it with "[deleted]" — that is the
     // only record of which files this message referred to.
-    //
-    // Whether they go with it is the caller's to say. A client that does not
-    // ask gets the behaviour that predates the question.
-    let delete_files = query.delete_files.unwrap_or(true);
     let body_before_redaction = msg
         .get_document("content")
         .ok()
@@ -976,12 +1028,12 @@ pub(crate) async fn redact_message(
     // Update message in MongoDB
     let _ = msg_coll
         .update_one(
-            doc! { "event_id": &event_id, "room_id": &room_id },
+            doc! { "event_id": event_id, "room_id": room_id },
             doc! {
                 "$set": {
                     "content": { "msgtype": "m.text", "body": "[deleted]" },
                     "redacted": true,
-                    "redacted_by": &user_id,
+                    "redacted_by": actor,
                     "redacted_at": now_millis()
                 }
             },
@@ -1001,7 +1053,7 @@ pub(crate) async fn redact_message(
         Some(thread_id) => {
             let count = msg_coll
                 .count_documents(doc! {
-                    "room_id": &room_id,
+                    "room_id": room_id,
                     "thread_id": thread_id,
                     "redacted": { "$ne": true },
                 })
@@ -1030,7 +1082,7 @@ pub(crate) async fn redact_message(
     let mut redaction_event = json!({
         "type": "m.room.redaction",
         "room_id": room_id,
-        "sender": user_id,
+        "sender": actor,
         "redacts": event_id,
         "event_id": redaction_event_id,
         "origin_server_ts": now_millis()
@@ -1042,17 +1094,17 @@ pub(crate) async fn redact_message(
         redaction_event["thread_reply_count"] = json!(count);
     }
 
-    broadcast_to_room(&state, &room_id, &redaction_event).await;
+    broadcast_to_room(state, room_id, &redaction_event).await;
 
     // A deleted message must not linger in the pin list.
-    super::pins::remove_pin_for_event(&state, &room_id, &event_id).await;
+    super::pins::remove_pin_for_event(state, room_id, event_id).await;
 
     // Deleting a poll's message is deleting the poll — that is what it means
     // for a poll to *be* a message. The record and the votes go with it, or a
     // poll nothing can show keeps its answers forever and the scheduler keeps
     // finding it. The scheduler also reads the message back before it
     // announces anything, so a poll deleted mid-run posts no results.
-    super::polls::purge_poll(&state, &event_id).await;
+    super::polls::purge_poll(state, event_id).await;
 
     // Nor should its attachments stay on disk and served, when that is what
     // was asked for. Only files the sender uploaded, and only when nothing
@@ -1073,9 +1125,9 @@ pub(crate) async fn redact_message(
         .map(super::media::attachment_folders)
         .unwrap_or_default();
     if !attachments.is_empty() {
-        let state = Arc::clone(&state);
+        let state = Arc::clone(state);
         let owner = msg_sender.to_string();
-        let redacted_event = event_id.clone();
+        let redacted_event = event_id.to_string();
         tokio::spawn(async move {
             super::media::purge_attachments(
                 &state,
@@ -1087,22 +1139,7 @@ pub(crate) async fn redact_message(
         });
     }
 
-    // Only a moderator deleting someone else's message is a moderation
-    // action. Someone deleting their own is not, and logging it would turn the
-    // audit log into a record of ordinary use.
-    if !is_own {
-        audit::record(
-            &state,
-            &room_id,
-            &user_id,
-            audit::AuditAction::MessageDeleted,
-            &event_id,
-            &format!("message by {msg_sender}"),
-        )
-        .await;
-    }
-
-    Ok(Json(json!({"event_id": redaction_event_id})))
+    redaction_event_id
 }
 
 /// DELETE /api/rooms/{room_id}/messages/{event_id}
@@ -1241,6 +1278,18 @@ pub(crate) async fn edit_message(
             StatusCode::BAD_REQUEST,
             "Cannot edit a deleted message",
         ));
+    }
+
+    // An edit is a way to post: a timeout holds it too, and automod checks
+    // what the message is becoming — otherwise "hi" edited into spam walks
+    // straight past both.
+    if bot_record.is_none() {
+        if let Some(refusal) = participation_refusal(&state, &room_id, &user_id).await {
+            return Err(refusal);
+        }
+        if let Some(refusal) = automod_refusal(&state, &room_id, &user_id, &new_body, false).await {
+            return Err(refusal);
+        }
     }
 
     let original_body = msg
@@ -1479,6 +1528,9 @@ pub(crate) async fn send_thread_message(
         }
     }
 
+    if let Some(refusal) = participation_refusal(&state, &room_id, &user_id).await {
+        return Err(refusal);
+    }
     {
         let perms = effective_permissions(&state, &room_id, &user_id).await;
         if !perms.send_messages {
@@ -1553,6 +1605,10 @@ pub(crate) async fn send_thread_message(
             StatusCode::BAD_REQUEST,
             "Message exceeds maximum length of 4000 characters",
         ));
+    }
+
+    if let Some(refusal) = automod_refusal(&state, &room_id, &user_id, &req.body, true).await {
+        return Err(refusal);
     }
 
     let event_id = generate_id("$");

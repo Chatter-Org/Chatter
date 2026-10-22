@@ -15,6 +15,9 @@ import { ScreenShareViewer, ScreenShareHeader } from "./ScreenShareViewer";
 import { StreamOptInBar } from "./voice/StreamOptInBar";
 import { MobileCallBar } from "./voice/MobileCallBar";
 import { CreateRoomDialog, JoinRoomDialog } from "./RoomDialogs";
+import { RulesDialog } from "./moderation/RulesDialog";
+import { ReportDialog } from "./moderation/ReportDialog";
+import { ReportsPanel } from "./moderation/ReportsPanel";
 import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar";
 import {
   Sheet,
@@ -981,6 +984,9 @@ export function ChatLayout() {
 
       <CreateRoomDialog open={createOpen} onOpenChange={setCreateOpen} />
       <JoinRoomDialog open={joinOpen} onOpenChange={setJoinOpen} />
+      <RulesDialog />
+      <ReportDialog />
+      <ReportsPanel />
 
 
       <Toaster />

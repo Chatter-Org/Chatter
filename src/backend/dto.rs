@@ -299,6 +299,8 @@ pub(crate) struct FriendActionRequest {
 #[derive(Deserialize, Default)]
 pub(crate) struct CreateInviteRequest {
     pub(crate) expires_in_days: Option<u64>,
+    /// 0 or absent is unlimited.
+    pub(crate) max_uses: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -489,4 +491,53 @@ pub(crate) struct PollVoteRequest {
     /// withdraws their vote. Stated as the end state so a retry of a request
     /// whose answer was lost casts the same vote rather than a second one.
     pub(crate) options: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TimeoutMemberRequest {
+    pub(crate) duration_secs: i64,
+    #[serde(default)]
+    pub(crate) reason: String,
+}
+
+/// A change to a room's moderation settings. Absent fields are left alone.
+#[derive(Deserialize)]
+pub(crate) struct UpdateModerationRequest {
+    pub(crate) rules: Option<String>,
+    pub(crate) rules_required: Option<bool>,
+    pub(crate) reports_enabled: Option<bool>,
+    pub(crate) automod: Option<super::state::AutomodSettings>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CreateReportRequest {
+    pub(crate) event_id: String,
+    #[serde(default)]
+    pub(crate) reason: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ReportsQuery {
+    /// "open" (the default), "closed", or "all".
+    pub(crate) status: Option<String>,
+    pub(crate) limit: Option<i64>,
+    pub(crate) offset: Option<u64>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ResolveReportRequest {
+    /// "resolved" or "dismissed".
+    pub(crate) status: String,
+    /// Delete the reported message as well.
+    #[serde(default)]
+    pub(crate) delete_message: bool,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BulkDeleteRequest {
+    pub(crate) user_id: String,
+    /// How far back to delete, in seconds. At most a week.
+    pub(crate) since_secs: i64,
+    /// Limit to one channel; absent is the whole room.
+    pub(crate) channel_id: Option<String>,
 }

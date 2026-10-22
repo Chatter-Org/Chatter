@@ -14,6 +14,7 @@ import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { MessageRow } from "./MessageRow";
 import { MessageActions } from "./MessageActions";
 import { Composer } from "./Composer";
+import { RestrictionBar, isRestricted } from "./RestrictionBar";
 import { CallBar } from "./CallBar";
 import { NewDivider, UnreadBanner, useNewDivider } from "./UnreadMarks";
 import { useMessageRows } from "./useMessageRows";
@@ -261,13 +262,17 @@ export function ChatView() {
           its resting place: a floating keyboard reports almost no height. */}
       <Animated.View style={composerLift}>
         <TypingLine names={state.typingUsers.filter((u) => u !== state.userId).map(nameOf)} />
-        <Composer
-          key={`${roomId}|${channelId ?? ""}`}
-          replyTo={replyTo}
-          replyName={replyTo ? nameOf(replyTo.sender) : undefined}
-          onClearReply={() => setReplyTo(null)}
-          bottomInset={inCall ? 0 : insets.bottom}
-        />
+        {isRestricted(state.myRestriction) ? (
+          <RestrictionBar bottomInset={inCall ? 0 : insets.bottom} />
+        ) : (
+          <Composer
+            key={`${roomId}|${channelId ?? ""}`}
+            replyTo={replyTo}
+            replyName={replyTo ? nameOf(replyTo.sender) : undefined}
+            onClearReply={() => setReplyTo(null)}
+            bottomInset={inCall ? 0 : insets.bottom}
+          />
+        )}
       </Animated.View>
       <CallBar bottomInset={insets.bottom} onHeight={setCallBarHeight} />
       <MessageActions message={acting} onClose={() => setActing(null)} onReply={setReplyTo} onOpenThread={openThread} />

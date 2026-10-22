@@ -4,6 +4,7 @@ pub(crate) mod constants;
 pub(crate) mod dto;
 pub(crate) mod helpers;
 pub(crate) mod metrics;
+pub(crate) mod moderation;
 pub(crate) mod push;
 pub(crate) mod ratelimit;
 pub(crate) mod router;

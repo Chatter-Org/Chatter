@@ -69,6 +69,9 @@ pub(crate) const MESSAGE_PREVIEW: Quota = Quota::per(120.0, 60.0);
 /// next position supersedes the last, so a lost one heals itself, and an error
 /// per frame would be worse than the flood.
 pub(crate) const VOICE_MOVE: Quota = Quota::per(60.0, 2.0);
+/// Reporting messages. Generous for someone flagging a raid, and still a
+/// ceiling on flooding the moderators' queue.
+pub(crate) const REPORT: Quota = Quota::per(10.0, 600.0);
 /// Invite creation, which mints credentials to the room.
 pub(crate) const CREATE_INVITE: Quota = Quota::per(10.0, 600.0);
 /// Poll creation. A poll is a message that keeps a record and a timer behind

@@ -23,7 +23,8 @@ const NOTIFICATION_LEVELS: { value: NotificationLevel; label: string }[] = [
 import { UserProfileDialog } from "@/components/UserProfileDialog";
 import { RoomGroupDialog } from "@/components/RoomGroupDialog";
 import { GroupDMDialog } from "@/components/GroupDMDialog";
-import { LayoutDashboard, ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, MessageCircle, Palette, Pencil, Plus, Trash2, Settings2, Shield, UsersRound, MoreVertical, LogOut, Check, Video, Volume2 } from "lucide-react";
+import { LayoutDashboard, ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, MessageCircle, Palette, Pencil, Plus, Trash2, Settings2, Shield, UsersRound, MoreVertical, LogOut, Check, Flag, ScrollText, Video, Volume2 } from "lucide-react";
+import { showReports, showRoomRules } from "@/components/moderation/moderationUtils";
 import {
   Sidebar,
   SidebarContent,
@@ -526,6 +527,22 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
+              {/* The dialog reads the open room, so it is offered there only. */}
+              {!isDm && roomId === state.currentRoomId && !!info?.moderation?.rules && (
+                <DropdownMenuItem onClick={showRoomRules}>
+                  <ScrollText className="h-3.5 w-3.5 mr-2" /> Room rules
+                </DropdownMenuItem>
+              )}
+              {!isDm && roomId === state.currentRoomId && state.reportCounts[roomId] !== undefined && (
+                <DropdownMenuItem onClick={() => showReports(roomId)}>
+                  <Flag className="h-3.5 w-3.5 mr-2" /> Reports
+                  {state.reportCounts[roomId] > 0 && (
+                    <span className="ml-auto rounded-full bg-destructive px-1.5 text-3xs font-semibold text-destructive-foreground">
+                      {state.reportCounts[roomId]}
+                    </span>
+                  )}
+                </DropdownMenuItem>
+              )}
               {!isDm && info?.creator === state.userId && (
                 <DropdownMenuItem onClick={() => setSettingsRoomId(roomId)}>
                   <Settings2 className="h-3.5 w-3.5 mr-2" /> Room settings

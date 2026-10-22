@@ -73,6 +73,8 @@ import { readProfileAccent } from "@/lib/profileTheme";
 import { toast } from "sonner";
 import { scrollBehavior } from "@/lib/theme/display";
 import { oldestUnreadEventId } from "@/lib/unreads";
+import { RestrictionNotice } from "@/components/moderation/RestrictionNotice";
+import { showRoomRules } from "@/components/moderation/moderationUtils";
 
 // Opening a channel holds the newest message while the page settles: avatars,
 // images and embeds all resolve their heights after the first render, and each
@@ -1947,6 +1949,15 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
               {currentChannel?.read_only ? "This channel" : "This room"} is read-only. Only owners and moderators can send messages.
             </div>
           );
+        }
+        // A timeout or unaccepted rules switch posting off too; said first, so
+        // the user is told why instead of "no permission".
+        const restrictionNotice = <RestrictionNotice onShowRules={showRoomRules} />;
+        if (
+          state.myRestriction &&
+          (state.myRestriction.rulesPending || state.myRestriction.timeoutUntil > 0)
+        ) {
+          return restrictionNotice;
         }
         // A role can revoke posting outright; the server refuses either way, so
         // this only saves the user from typing into a dead composer.
