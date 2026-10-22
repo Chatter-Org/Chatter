@@ -693,7 +693,7 @@ export function ThreadPanel() {
               <p className="text-xs font-semibold text-primary">
                 Replying to {userPresence[threadReplyingTo.sender]?.displayName || displayUserId(threadReplyingTo.sender)}
               </p>
-              <p className="text-xs text-muted-foreground truncate inline-flex items-center gap-0.5">
+              <p className="text-xs text-muted-foreground truncate">
                 {threadReplyingTo.content.spoiler
                   ? <span className="italic">Spoiler message</span>
                   : renderInlineEmojis(plainChannelLinks(threadReplyingTo.content.body, linkChannels))}

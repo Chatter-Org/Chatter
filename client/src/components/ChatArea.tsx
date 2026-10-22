@@ -1872,7 +1872,7 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
             <p className="text-xs font-semibold text-primary">
               Replying to {state.userPresence[state.replyingTo.sender]?.displayName || displayUserId(state.replyingTo.sender)}
             </p>
-            <p className="text-xs text-muted-foreground truncate inline-flex items-center gap-0.5">
+            <p className="text-xs text-muted-foreground truncate">
               {state.replyingTo.content.spoiler
                 ? <span className="italic">Spoiler message</span>
                 : renderInlineEmojis(plainChannelLinks(state.replyingTo.content.body, linkChannels))}
