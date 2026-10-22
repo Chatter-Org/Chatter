@@ -76,6 +76,7 @@ FCM push notifications are **on hold until the project owner says otherwise**.
 - [x] Share screen (MediaProjection): Share screen in the call sheet, Android's own prompt (one app or the whole screen), a "You are sharing your screen · Stop" strip instead of a hall-of-mirrors preview; sent with the shared `StreamPublisher` at the web's detail profile
 - [x] A camera or screen share that connects but sends no pictures (a capture refused after the prompt) gives up and says so, rather than showing as live
 - [x] Picture-in-picture window shaped to the stream
+- [x] Voice moderation (owners and moderators): the shield beside a channel's occupant opens a sheet to server mute, move to another voice channel or disconnect, as the web's voice member menu does
 
 ### Design (match the web)
 - [x] Shared control recipes (`packages/core/src/ui/recipes.ts`) used by the web's shadcn files and `src/ui/controls.tsx`; the web's 17.6px rem

@@ -20,7 +20,10 @@ import {
   MicOff,
   Move3d,
   PenTool,
+  PhoneOff,
   Plus,
+  Shield,
+  ShieldOff,
   Sparkles,
   UserRound,
   Users,
@@ -28,12 +31,14 @@ import {
   type LucideProps,
 } from "lucide-react-native";
 import type { Channel, RoomInfo } from "@chatter/core/api";
+import type { VoiceChannelMember } from "@chatter/core/store/types";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { useTheme } from "@/theme/ThemeProvider";
 import { Avatar } from "./Avatar";
 import { usePanels } from "./PanelLayout";
 import { Icon, T } from "@/ui/primitives";
+import { Sheet, SheetRow } from "@/ui/Sheet";
 import { cn } from "@/ui/cn";
 import { serverImage } from "@/ui/media";
 import { UI_HEADING } from "@/ui/roles";
@@ -410,7 +415,7 @@ const ChannelRow = memo(function ChannelRow({
       {occupants.length > 0 ? (
         <View className="ml-7 gap-0.5 pb-1">
           {occupants.map((m) => (
-            <Occupant key={m.userId} userId={m.userId} />
+            <Occupant key={m.userId} member={m} channel={channel} />
           ))}
         </View>
       ) : null}
@@ -484,21 +489,64 @@ function VoiceTimer({ since }: { since: number }) {
 }
 
 /** Someone in a voice channel: their mic, face and name. */
-function Occupant({ userId }: { userId: string }) {
+function Occupant({ member, channel }: { member: VoiceChannelMember; channel: Channel }) {
   const state = useChatter();
+  const { moderateVoice } = useChatterActions();
+  const [moderating, setModerating] = useState(false);
+  const userId = member.userId;
   const flags = state.voiceMemberStates[userId];
   const isMe = userId === state.userId;
   const deafened = flags?.deafened || (isMe && state.isDeafened);
   const muted = deafened || flags?.muted || (isMe && state.isMuted);
   const presence = state.userPresence[userId];
+  const name = presence?.displayName || displayUserId(userId);
+  // The web's rule (ChannelList's canManage); the server checks it again.
+  const myRole = state.roomMembers.find((m) => m.userId === state.userId)?.role;
+  const canModerate = !isMe && (myRole === "owner" || myRole === "moderator");
+  const moveTargets = canModerate
+    ? state.channels.filter((c) => holdsCall(c) && c.channel_id !== channel.channel_id).sort((a, b) => a.position - b.position)
+    : [];
+  const act = (action: "mute" | "unmute" | "move" | "disconnect", targetChannelId?: string) => {
+    setModerating(false);
+    const roomId = channel.room_id || state.currentRoomId;
+    if (roomId) moderateVoice(roomId, userId, action, targetChannelId);
+  };
   return (
     <View className="flex-row items-center gap-1.5 rounded px-1 py-0.5">
       <Icon as={muted ? MicOff : Mic} size={13} tone={muted ? "destructive" : "success"} />
       {deafened ? <Icon as={HeadphoneOff} size={13} tone="destructive" /> : null}
+      {member.force_muted ? <Icon as={ShieldOff} size={13} tone="destructive" /> : null}
       <Avatar userId={userId} name={presence?.displayName} url={presence?.avatarUrl} size={22} textClassName="text-2xs" />
       <T className="flex-1 text-sm text-muted-foreground" numberOfLines={1}>
-        {presence?.displayName || displayUserId(userId)}
+        {name}
       </T>
+      {canModerate ? (
+        <>
+          <Pressable
+            onPress={() => {
+              tick();
+              setModerating(true);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Moderate ${name}`}
+            hitSlop={8}
+            className="size-7 items-center justify-center rounded active:bg-accent"
+          >
+            <Icon as={Shield} size={14} tone="muted-foreground" />
+          </Pressable>
+          <Sheet open={moderating} onClose={() => setModerating(false)} title={name}>
+            <SheetRow
+              icon={member.force_muted ? Shield : ShieldOff}
+              label={member.force_muted ? "Remove server mute" : "Server mute"}
+              onPress={() => act(member.force_muted ? "unmute" : "mute")}
+            />
+            {moveTargets.map((c) => (
+              <SheetRow key={c.channel_id} icon={Volume2} label={`Move to ${c.name}`} onPress={() => act("move", c.channel_id)} />
+            ))}
+            <SheetRow icon={PhoneOff} label="Disconnect" destructive onPress={() => act("disconnect")} />
+          </Sheet>
+        </>
+      ) : null}
     </View>
   );
 }

@@ -442,3 +442,88 @@ async fn voice_flags_reach_the_call_not_the_room_on_screen() {
     assert_eq!(deafened["deafened"], true);
     assert_eq!(deafened["room_id"], call_room);
 }
+
+#[tokio::test]
+async fn a_moderator_disconnects_only_from_their_own_rooms_voice() {
+    // The handler looked for the target in every voice channel on the server,
+    // so owning any room Bob belonged to was enough to cut his call in
+    // another one.
+    let server = spawn_server().await;
+    let client = Client::new();
+
+    let (_alice_user_id, alice_token) =
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
+    let (_carol_user_id, carol_token) =
+        register_user(&client, &server.base_url, "carol", PASSWORD).await;
+
+    let call_room = create_room(
+        &client,
+        &server.base_url,
+        &alice_token,
+        "General",
+        Some(vec![bob_user_id.clone()]),
+        false,
+    )
+    .await;
+    let carols_room = create_room(
+        &client,
+        &server.base_url,
+        &carol_token,
+        "Carol's",
+        Some(vec![bob_user_id]),
+        false,
+    )
+    .await;
+
+    let mut alice_ws = ws_connect_authenticated(&server.ws_url, &alice_token).await;
+    let _ = recv_event_type(&mut alice_ws, "connected").await;
+    let mut bob_ws = ws_connect_authenticated(&server.ws_url, &bob_token).await;
+    let _ = recv_event_type(&mut bob_ws, "connected").await;
+    let mut carol_ws = ws_connect_authenticated(&server.ws_url, &carol_token).await;
+    let _ = recv_event_type(&mut carol_ws, "connected").await;
+
+    bob_ws
+        .send(Message::Text(
+            json!({"type": "voice_join", "room_id": call_room}).to_string(),
+        ))
+        .await
+        .unwrap();
+    let _ = recv_event_type(&mut alice_ws, "voice_user_joined").await;
+
+    // Carol owns a room Bob is in, but not the one he is talking in.
+    carol_ws
+        .send(Message::Text(
+            json!({
+                "type": "voice_moderate",
+                "room_id": carols_room,
+                "target_user_id": "@bob:localhost",
+                "action": "disconnect",
+            })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+
+    alice_ws
+        .send(Message::Text(
+            json!({
+                "type": "voice_moderate",
+                "room_id": call_room,
+                "target_user_id": "@bob:localhost",
+                "action": "disconnect",
+            })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+
+    // The first disconnect Bob hears of is Alice's: Carol's did nothing.
+    let kicked = recv_event_type(&mut bob_ws, "voice_force_disconnected").await;
+    assert_eq!(kicked["by"], "@alice:localhost");
+    assert_eq!(kicked["room_id"], call_room);
+
+    let left = recv_event_type(&mut alice_ws, "voice_user_left").await;
+    assert_eq!(left["user_id"], "@bob:localhost");
+    assert_eq!(left["voice_members"].as_array().unwrap().len(), 0);
+}

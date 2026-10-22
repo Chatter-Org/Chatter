@@ -562,7 +562,10 @@ export class VoiceEngine {
         }
         return;
       case "voice_force_disconnected":
-        if (this.inVoice) await this.leave();
+        if (this.inVoice) {
+          await this.leave();
+          this.deps.notices.info("A moderator disconnected you from voice");
+        }
         return;
       case "voice_webrtc_error":
         console.warn("[voice] WebRTC error:", msg.detail || msg);

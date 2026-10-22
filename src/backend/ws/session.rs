@@ -23,8 +23,8 @@ use crate::backend::{
         is_mobile_only, now_millis, now_secs, presence_status, send_to_conn, send_to_user,
     },
     state::{
-        AppState, PresenceRecord, ProfileSurfaceTheme, ProfileThemeRecord, RoomRecord, UserRecord,
-        VoiceMemberState, WhiteboardStrokeRecord,
+        AppState, ChannelRecord, PresenceRecord, ProfileSurfaceTheme, ProfileThemeRecord,
+        RoomRecord, UserRecord, VoiceMemberState, WhiteboardStrokeRecord,
     },
 };
 use axum::{
@@ -246,6 +246,24 @@ fn needs_room_membership(msg_type: &str) -> bool {
 /// Whether the caller may act on this room at all: in it, and not banned from
 /// it. The same pair `voice_join` checks, kept in one place so the answer
 /// cannot differ between two handlers.
+/// Whether `channel_id` is one of `room_id`'s channels that holds a call. A
+/// moderator's move names the destination, so it is checked like any other id
+/// a client sends.
+async fn is_call_channel_of(state: &AppState, room_id: &str, channel_id: &str) -> bool {
+    state
+        .db
+        .collection::<ChannelRecord>("channels")
+        .find_one(doc! {
+            "_id": channel_id,
+            "room_id": room_id,
+            "channel_type": { "$in": ["voice", "spatial"] },
+        })
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+}
+
 async fn may_act_in_room(state: &AppState, room_id: &str, user_id: &str) -> bool {
     if room_id.is_empty() {
         return false;
@@ -1142,7 +1160,9 @@ pub(crate) async fn handle_ws_text(state: Arc<AppState>, user_id: &str, conn_id:
         }
         // ─── Voice moderation ────────────────────────────────────────────────
         // Owners and moderators acting on another member's voice session:
-        // server mute, move between channels, or disconnect outright.
+        // server mute, move between channels, or disconnect outright. Only a
+        // session in this room's channels: being a moderator somewhere is not
+        // a licence to cut someone's call in a room you do not moderate.
         "voice_moderate" => {
             let action = msg.get("action").and_then(|v| v.as_str()).unwrap_or("");
             let target = msg
@@ -1188,7 +1208,9 @@ pub(crate) async fn handle_ws_text(state: Arc<AppState>, user_id: &str, conn_id:
                     {
                         let mut vc = state.voice_channels.write().await;
                         for (cid, members) in vc.iter_mut() {
-                            if let Some(member) = members.get_mut(target) {
+                            if let Some(member) =
+                                members.get_mut(target).filter(|m| m.room_id == room_id)
+                            {
                                 member.force_muted = force_muted;
                                 // Lifting a server mute does not unmute them —
                                 // they choose when to speak again.
@@ -1236,7 +1258,9 @@ pub(crate) async fn handle_ws_text(state: Arc<AppState>, user_id: &str, conn_id:
                         .get("target_channel_id")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-                    if target_channel.is_empty() {
+                    if target_channel.is_empty()
+                        || !is_call_channel_of(&state, room_id, target_channel).await
+                    {
                         return;
                     }
 
@@ -1245,7 +1269,9 @@ pub(crate) async fn handle_ws_text(state: Arc<AppState>, user_id: &str, conn_id:
                         let mut old_channel = String::new();
                         let mut moved_state: Option<VoiceMemberState> = None;
                         for (cid, members) in vc.iter_mut() {
-                            if cid == target_channel {
+                            if cid == target_channel
+                                || members.get(target).is_none_or(|m| m.room_id != room_id)
+                            {
                                 continue;
                             }
                             if let Some(member) = members.remove(target) {
@@ -1340,7 +1366,8 @@ pub(crate) async fn handle_ws_text(state: Arc<AppState>, user_id: &str, conn_id:
                         let mut old_channel = String::new();
                         let mut found = false;
                         for (cid, members) in vc.iter_mut() {
-                            if members.remove(target).is_some() {
+                            if members.get(target).is_some_and(|m| m.room_id == room_id) {
+                                members.remove(target);
                                 old_channel = cid.clone();
                                 found = true;
                             }

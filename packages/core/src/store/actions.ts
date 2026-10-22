@@ -867,6 +867,23 @@ export function createStoreActions(ctx: StoreContext) {
     }
   };
 
+  /** Owner/moderator action on another member's voice session. The server
+   *  checks the role and that the session is in this room. */
+  const moderateVoice = (
+    roomId: string,
+    targetUserId: string,
+    action: "mute" | "unmute" | "move" | "disconnect",
+    targetChannelId?: string,
+  ) => {
+    send({
+      type: "voice_moderate",
+      room_id: roomId,
+      target_user_id: targetUserId,
+      action,
+      ...(targetChannelId ? { target_channel_id: targetChannelId } : {}),
+    });
+  };
+
   const sendTyping = () => {
     const cur = getState();
     if (!cur.currentRoomId) return;
@@ -1330,6 +1347,7 @@ export function createStoreActions(ctx: StoreContext) {
     addReaction,
     recoverMissedMessages,
     sendTyping,
+    moderateVoice,
   };
 }
 

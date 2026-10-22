@@ -577,27 +577,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const markChannelRead = shared.markChannelRead;
 
-  const moderateVoice = useCallback(
-    (
-      roomId: string,
-      targetUserId: string,
-      action: "mute" | "unmute" | "move" | "disconnect",
-      targetChannelId?: string,
-    ) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      ws.send(
-        JSON.stringify({
-          type: "voice_moderate",
-          room_id: roomId,
-          target_user_id: targetUserId,
-          action,
-          ...(targetChannelId ? { target_channel_id: targetChannelId } : {}),
-        }),
-      );
-    },
-    [],
-  );
+  const moderateVoice = shared.moderateVoice;
 
   const loadNotificationSettings = shared.loadNotificationSettings;
 
