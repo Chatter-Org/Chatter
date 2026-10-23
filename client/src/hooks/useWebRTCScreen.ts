@@ -100,6 +100,10 @@ export function useWebRTCScreen() {
   const screenViewerOpenRef = useRef(state.screenViewerOpen);
   useEffect(() => { currentRoomRef.current = state.currentRoomId; }, [state.currentRoomId]);
   useEffect(() => { voiceRoomIdRef.current = state.voiceRoomId; }, [state.voiceRoomId]);
+  // The share belongs to the call, so its frames name the call's room — not
+  // whichever room is on screen, which announced it to the wrong room when it
+  // was started from the voice bar while reading elsewhere.
+  const callRoomId = () => voiceRoomIdRef.current || currentRoomRef.current;
   useEffect(() => { inVoiceChannelRef.current = state.inVoiceChannel; }, [state.inVoiceChannel]);
   useEffect(() => { activeScreenSharersRef.current = state.activeScreenSharers; }, [state.activeScreenSharers]);
   useEffect(() => { screenViewerOpenRef.current = state.screenViewerOpen; }, [state.screenViewerOpen]);
@@ -236,7 +240,7 @@ export function useWebRTCScreen() {
       screenStreamRef.current = null;
     }
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      const screenStopMsg: any = { type: "screen_share_stop", room_id: state.currentRoomId };
+      const screenStopMsg: any = { type: "screen_share_stop", room_id: callRoomId() };
       if (state.voiceChannelId) screenStopMsg.channel_id = state.voiceChannelId;
       wsRef.current.send(JSON.stringify(screenStopMsg));
     }
@@ -599,7 +603,7 @@ export function useWebRTCScreen() {
       }
       dispatch({ type: "SET_SCREEN_VIEWER", payload: { open: true, sharer: state.userId! } });
       if (canSignal(wsRef)) {
-        const screenStartMsg: any = { type: "screen_share_start", room_id: state.currentRoomId };
+        const screenStartMsg: any = { type: "screen_share_start", room_id: callRoomId() };
         if (state.voiceChannelId) screenStartMsg.channel_id = state.voiceChannelId;
         wsRef.current!.send(JSON.stringify(screenStartMsg));
       }
@@ -632,7 +636,7 @@ export function useWebRTCScreen() {
       // None before the offer; see `candidatesAfterOffer`.
       const trickle = candidatesAfterOffer<RTCIceCandidate>((c) => {
         if (!canSignal(wsRef)) return;
-        wsRef.current!.send(JSON.stringify({ type: "screen_webrtc_publish_candidate", room_id: state.currentRoomId, channel_id: state.voiceChannelId || undefined, candidate: c.toJSON() }));
+        wsRef.current!.send(JSON.stringify({ type: "screen_webrtc_publish_candidate", room_id: callRoomId(), channel_id: state.voiceChannelId || undefined, candidate: c.toJSON() }));
       });
       pc.onicecandidate = (ev) => {
         if (ev.candidate) trickle.add(ev.candidate);
@@ -663,7 +667,7 @@ export function useWebRTCScreen() {
       await tuneScreenVideoSender(videoSender, profile);
 
       if (canSignal(wsRef)) {
-        wsRef.current!.send(JSON.stringify({ type: "screen_webrtc_publish_offer", room_id: state.currentRoomId, channel_id: state.voiceChannelId || undefined, sdp: mungedSdp }));
+        wsRef.current!.send(JSON.stringify({ type: "screen_webrtc_publish_offer", room_id: callRoomId(), channel_id: state.voiceChannelId || undefined, sdp: mungedSdp }));
         trickle.offerSent();
       }
     } catch (err: unknown) {
