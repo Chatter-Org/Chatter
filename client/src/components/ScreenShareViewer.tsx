@@ -10,7 +10,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { gridLayout, GRID_GAP } from "@chatter/core/voice/grid";
 import { WEBCAM_HIGH_QUALITY_MIN_WIDTH } from "@/lib/webrtc";
 import type { WebcamQuality } from "@/lib/webrtc";
-import { LayoutGrid, Monitor, Video } from "lucide-react";
+import { LayoutGrid, Maximize2, MessageSquare, Monitor, Video, X } from "lucide-react";
 
 /** How often the grid re-reads who is speaking, for the ring round a tile. */
 const GRID_SPEAKING_POLL_MS = 150;
@@ -122,12 +122,15 @@ export function ScreenShareHeader({
   hostRef,
   isPiP,
   onTogglePiP,
+  onShowChat,
 }: {
   containerRef: React.RefObject<HTMLDivElement | null>;
   /** The video area whose pointer activity keeps the bar awake. */
   hostRef: React.RefObject<HTMLDivElement | null>;
   isPiP?: boolean;
   onTogglePiP?: () => void;
+  /** Swap to the channel's chat, the stream shrinking to a thumbnail. */
+  onShowChat?: () => void;
 }) {
   const headerRef = useRef<HTMLDivElement | null>(null);
   const controlsVisible = useIdleFade(hostRef, headerRef);
@@ -240,6 +243,18 @@ export function ScreenShareHeader({
               </button>
             ))}
           </div>
+        )}
+        {onShowChat && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className={cn("gap-1.5 px-2 text-xs font-medium text-muted-foreground hover:text-foreground", isMobile ? "h-10" : "h-7")}
+            onClick={onShowChat}
+            title="Show the channel's chat"
+          >
+            <MessageSquare style={{ width: iconPx, height: iconPx }} />
+            {!isMobile && "Chat"}
+          </Button>
         )}
         <ClipControls />
         {state.isScreenSharing && (
@@ -366,11 +381,53 @@ export function ScreenShareHeader({
   );
 }
 
-/** Video content — goes inside the resizable panel */
+/**
+ * The thumbnail's buttons, over the stream while the chat has the area: back
+ * to the streams, or stop watching. A click anywhere else on the video is
+ * also the way back, since the thumbnail is too small to watch in for long.
+ */
+export function MiniViewerControls({
+  onExpand,
+  onClose,
+}: {
+  onExpand: () => void;
+  onClose: () => void;
+}) {
+  const isMobile = useIsMobile();
+  const btn = cn(
+    "flex items-center justify-center rounded bg-black/60 text-white/80 hover:bg-black/80 hover:text-white cursor-pointer",
+    isMobile ? "h-9 w-9" : "h-7 w-7",
+  );
+  return (
+    <>
+      <button
+        className="absolute inset-0 cursor-pointer"
+        onClick={onExpand}
+        aria-label="Back to the streams"
+      />
+      <div className="absolute right-1.5 top-1.5 flex gap-1 transition-opacity can-hover:opacity-0 can-hover:group-hover:opacity-100">
+        <button className={btn} onClick={onExpand} title="Back to the streams">
+          <Maximize2 className="h-3.5 w-3.5" />
+        </button>
+        <button className={btn} onClick={onClose} title="Stop watching">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Video content. `compact` is the thumbnail over the chat: one feed, no
+ * grid, strip, zoom or volume — the one being watched, or with nothing
+ * picked the first screen, else the first camera.
+ */
 export function ScreenShareViewer({
   speakingUsersRef,
+  compact = false,
 }: {
   speakingUsersRef?: React.MutableRefObject<Set<string>>;
+  compact?: boolean;
 } = {}) {
   const { state, dispatch } = useAppContext();
   const mainVideoRef = useRef<HTMLVideoElement>(null);
@@ -401,11 +458,11 @@ export function ScreenShareViewer({
   const pinch = useRef<{ dist: number; zoom: number } | null>(null);
   const lastTapAt = useRef(0);
 
-  // Reset zoom/pan when switching sharers
+  // Reset zoom/pan when switching sharers, or shrinking to the thumbnail
   useEffect(() => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
-  }, [state.selectedScreenSharer]);
+  }, [state.selectedScreenSharer, compact]);
 
   // Clamp pan so the video edge can reach the container edge but not beyond.
   // The CSS applies: scale(z) translate(px/z %, py/z %).
@@ -504,18 +561,22 @@ export function ScreenShareViewer({
   const sharers = state.activeScreenSharers;
   const webcamStreamers = state.activeWebcamStreamers;
 
-  const currentSharer = state.selectedScreenSharer;
   // A camera that has since gone off is no longer a choice, so it counts as
   // none — it used to leave the viewer on "Connecting" for a feed that was gone.
   const currentWebcamStreamer =
     state.selectedWebcamStreamer && webcamStreamers.includes(state.selectedWebcamStreamer)
       ? state.selectedWebcamStreamer
       : null;
+  // The thumbnail has no grid to fall back on, so with nothing picked it
+  // shows the first screen; with no screens, the first camera follows below.
+  const currentSharer =
+    state.selectedScreenSharer ??
+    (compact && !currentWebcamStreamer ? sharers[0] ?? null : null);
   const feedCount = sharers.length + webcamStreamers.length;
   // Everyone at once until someone is picked: a call with cameras on is about
   // the people, and one big face with the rest in a strip is a screen share's
   // layout. Picking a feed focuses it; the strip's Grid button comes back.
-  const gridMode = feedCount >= 2 && !currentSharer && !currentWebcamStreamer;
+  const gridMode = !compact && feedCount >= 2 && !currentSharer && !currentWebcamStreamer;
   const layout = gridLayout(feedCount, gridBox.width, gridBox.height);
   // A webcam is focused in the main view when explicitly selected, or when
   // there are no screen sharers at all.
@@ -601,7 +662,10 @@ export function ScreenShareViewer({
     if (gridMode && gridBox.width === 0) return;
     for (const userId of webcamStreamers) {
       if (userId === state.userId) continue;
-      const quality: WebcamQuality = gridMode
+      // The thumbnail is narrower than the small copy is wide.
+      const quality: WebcamQuality = compact
+        ? "low"
+        : gridMode
         ? layout.tileWidth >= WEBCAM_HIGH_QUALITY_MIN_WIDTH ? "high" : "low"
         : showingWebcam && userId === focusedWebcam ? "high" : "low";
       if (sentQualityRef.current.get(userId) === quality) continue;
@@ -610,7 +674,7 @@ export function ScreenShareViewer({
         new CustomEvent("webcam-quality", { detail: { sharerId: userId, quality } }),
       );
     }
-  }, [gridMode, gridBox.width, layout.tileWidth, webcamStreamers, showingWebcam, focusedWebcam, state.userId]);
+  }, [compact, gridMode, gridBox.width, layout.tileWidth, webcamStreamers, showingWebcam, focusedWebcam, state.userId]);
 
   // The grid is sized to the space it is given, which a resizable panel and a
   // phone's rotation both change under it.
@@ -661,7 +725,7 @@ export function ScreenShareViewer({
   const viewerVisible = state.screenViewerOpen && (sharers.length > 0 || webcamStreamers.length > 0) && state.inVoiceChannel;
   useEffect(() => {
     const container = videoContainerRef.current;
-    if (!viewerVisible || !container) return;
+    if (!viewerVisible || compact || !container) return;
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -680,7 +744,7 @@ export function ScreenShareViewer({
     container.addEventListener("wheel", onWheel, { passive: false });
     return () => container.removeEventListener("wheel", onWheel);
     // The grid has no zoom and unmounts the container; leaving it mounts a new one.
-  }, [viewerVisible, gridMode]);
+  }, [viewerVisible, gridMode, compact]);
 
   if (
     !state.screenViewerOpen ||
@@ -860,7 +924,7 @@ export function ScreenShareViewer({
       )}
 
       {/* Volume controls overlay */}
-      {state.selectedScreenSharer &&
+      {!compact && state.selectedScreenSharer &&
         screenStreamsMap.has(state.selectedScreenSharer) && (
         <div className="absolute right-3 bottom-3 flex flex-col items-center gap-2 px-2 py-2.5 bg-black/60 rounded-lg can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity">
           <span className="text-xs text-white/60 tabular-nums">
@@ -899,7 +963,7 @@ export function ScreenShareViewer({
       </div>
 
       {/* Unified thumbnail strip — shown whenever there are multiple feeds */}
-      {(sharers.length + webcamStreamers.length) > 1 && (
+      {!compact && (sharers.length + webcamStreamers.length) > 1 && (
         <div className="flex gap-2 p-2 bg-black/80 border-t border-white/10 overflow-x-auto shrink-0">
           <button
             className="flex shrink-0 w-16 flex-col items-center justify-center gap-1 rounded-md border-2 border-border/50 bg-black text-white/70 transition-all hover:border-white/40 hover:text-white cursor-pointer"

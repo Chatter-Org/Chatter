@@ -11,7 +11,7 @@ import { MembersPanel } from "./MembersPanel";
 import { ThreadPanel } from "./ThreadPanel";
 import { ChannelList } from "./ChannelList";
 import { VoiceControls, type ConnQualityData } from "./VoiceControls";
-import { ScreenShareViewer, ScreenShareHeader } from "./ScreenShareViewer";
+import { ScreenShareViewer, ScreenShareHeader, MiniViewerControls } from "./ScreenShareViewer";
 import { StreamOptInBar } from "./voice/StreamOptInBar";
 import { MobileCallBar } from "./voice/MobileCallBar";
 import { CreateRoomDialog, JoinRoomDialog } from "./RoomDialogs";
@@ -26,11 +26,6 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "@/components/ui/resizable";
 import { Toaster } from "@/components/ui/sonner";
 
 // Full-screen views the user reaches deliberately, and never more than one
@@ -55,7 +50,7 @@ const SpatialVoiceArea = lazyRetry(() =>
 const ActivityPage = lazyRetry(() =>
   import("./ActivityPage").then((m) => ({ default: m.ActivityPage })),
 );
-import { displayUserId } from "@/lib/utils";
+import { cn, displayUserId } from "@/lib/utils";
 import { lazyRetry } from "@/lib/lazyRetry";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { syncPushSubscription } from "@/lib/push";
@@ -429,6 +424,16 @@ export function ChatLayout() {
     state.inVoiceChannel &&
     (state.activeScreenSharers.length > 0 || state.activeWebcamStreamers.length > 0);
   const showViewer = hasActiveScreenShare && isOnVoiceRoom;
+  // While the viewer is open, the chat area shows either the streams or the
+  // channel's chat with the stream in a thumbnail over it. Opening the viewer
+  // always lands on the streams — that is what the user just asked to see.
+  const [callView, setCallView] = useState<"streams" | "chat">("streams");
+  const [viewerWasOpen, setViewerWasOpen] = useState(hasActiveScreenShare);
+  if (viewerWasOpen !== hasActiveScreenShare) {
+    setViewerWasOpen(hasActiveScreenShare);
+    if (hasActiveScreenShare) setCallView("streams");
+  }
+  const streamsInChat = callView === "chat";
 
   // Sync hidden video's srcObject with the selected screen sharer's stream
   useEffect(() => {
@@ -836,52 +841,52 @@ export function ChatLayout() {
                 ) : isForumRoom ? (
                   <ForumArea />
                 ) : showViewer ? (
-                  <div ref={viewerContainerRef} className="flex-1 flex flex-col min-h-0">
-                    <ResizablePanelGroup
-                      orientation="vertical"
-                      className="flex-1"
+                  <div ref={viewerContainerRef} className="relative flex-1 flex flex-col min-h-0 min-w-0">
+                    {/* The viewer is one element whichever view is up — filling
+                        the area, or a thumbnail over the chat — so switching
+                        keeps its feed, its volume and the share's sound
+                        playing instead of tearing the video down. The chat is
+                        unmounted behind the streams rather than hidden: a
+                        hidden timeline would still mark messages read. */}
+                    {streamsInChat && (
+                      state.activeThreadEventId ? (
+                        <ThreadPanel />
+                      ) : (
+                        <ChatArea onJoinVoice={() => joinVoiceRef.current?.()} dmCall={dmCall} />
+                      )
+                    )}
+                    {/* The header overlays the video rather than sitting
+                        above it: as a row of its own it took height from
+                        the video for a strip that is mostly letterboxing. */}
+                    <div
+                      ref={videoPanelRef}
+                      className={
+                        streamsInChat
+                          ? cn(
+                              "group absolute right-3 z-20 aspect-video overflow-hidden rounded-lg border border-border bg-black shadow-xl",
+                              // Below the chat's own header, so its buttons stay reachable.
+                              isMobile ? "top-12 w-40" : "top-16 w-72",
+                            )
+                          : "relative flex-1 flex flex-col min-h-0"
+                      }
                     >
-                      {/* A phone gives the video the smaller half: at 50/50
-                          the chat below it is about six messages tall, and the
-                          video is already past 16:9 at 40% of the column. */}
-                      <ResizablePanel defaultSize={isMobile ? 40 : 50} minSize={15}>
-                        {/* The header overlays the video rather than sitting
-                            above it: as a row of its own it took height from
-                            the video *and* the chat below, for a strip that is
-                            mostly letterboxing anyway. */}
-                        <div
-                          ref={videoPanelRef}
-                          className="relative h-full flex flex-col min-h-0"
-                        >
-                          <ScreenShareHeader
-                            containerRef={viewerContainerRef}
-                            hostRef={videoPanelRef}
-                            isPiP={isPiP}
-                            onTogglePiP={togglePiP}
-                          />
-                          <ScreenShareViewer speakingUsersRef={speakingUsersRef} />
-                        </div>
-                      </ResizablePanel>
-                      {/* The default separator is a 1px line with a 4px
-                          grab band — findable with a mouse, not with a thumb. */}
-                      <ResizableHandle
-                        withHandle
-                        className={
-                          isMobile
-                            ? "aria-[orientation=horizontal]:after:h-6 [&>div]:h-10 [&>div]:w-4"
-                            : undefined
-                        }
-                      />
-                      <ResizablePanel defaultSize={isMobile ? 60 : 50} minSize={15}>
-                        <div className="h-full flex flex-col min-h-0">
-                          {state.activeThreadEventId ? (
-                            <ThreadPanel />
-                          ) : (
-                            <ChatArea onJoinVoice={() => joinVoiceRef.current?.()} dmCall={dmCall} />
-                          )}
-                        </div>
-                      </ResizablePanel>
-                    </ResizablePanelGroup>
+                      {!streamsInChat && (
+                        <ScreenShareHeader
+                          containerRef={viewerContainerRef}
+                          hostRef={videoPanelRef}
+                          isPiP={isPiP}
+                          onTogglePiP={togglePiP}
+                          onShowChat={() => setCallView("chat")}
+                        />
+                      )}
+                      <ScreenShareViewer speakingUsersRef={speakingUsersRef} compact={streamsInChat} />
+                      {streamsInChat && (
+                        <MiniViewerControls
+                          onExpand={() => setCallView("streams")}
+                          onClose={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { open: false } })}
+                        />
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="flex-1 flex flex-col min-h-0 min-w-0">
