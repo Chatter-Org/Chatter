@@ -1,16 +1,18 @@
 /**
- * Background blur for the camera, done entirely in the sender's browser: the
- * SFU forwards the result like any other camera and never knows.
+ * Background blur for the camera, or an image in place of the background,
+ * done entirely in the sender's browser: the SFU forwards the result like any
+ * other camera and never knows.
  *
  * MediaPipe's selfie segmenter says, for each frame, how likely each pixel is
- * to be the person. The frame is drawn sharp through that mask and blurred
- * behind it on a canvas, and the canvas's own track is what gets published.
+ * to be the person. The frame is drawn sharp through that mask with either
+ * itself blurred or the image behind it on a canvas, and the canvas's own
+ * track is what gets published.
  *
  * The runtime (13 MB of WASM) and the model are served from this server's
  * hashed /assets rather than a CDN — a self-hosted server may have no route to
  * one, and a camera feature should not tell Google who is on a call. This file
  * is only ever loaded by dynamic import, so nobody downloads any of it until
- * they first turn blur on.
+ * they first turn an effect on.
  */
 import { ImageSegmenter, type ImageSegmenterResult } from "@mediapipe/tasks-vision";
 import wasmLoaderPath from "@mediapipe/tasks-vision/vision_wasm_internal.js?url";
@@ -81,12 +83,18 @@ interface BreakoutBox {
 }
 
 /**
- * Draws a frame with its background blurred onto `canvas`.
+ * Draws a frame with its background blurred, or replaced by `image`, onto
+ * `canvas`.
  *
  * The person is the frame kept only where the mask says they are; behind them
- * goes the frame blurred at a quarter size and stretched back up.
+ * goes the image, or the frame blurred at a quarter size and stretched back up.
  */
-function makeCompositor(segmenter: ImageSegmenter, width: number, height: number) {
+function makeCompositor(
+  segmenter: ImageSegmenter,
+  width: number,
+  height: number,
+  image?: ImageBitmap,
+) {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -111,6 +119,21 @@ function makeCompositor(segmenter: ImageSegmenter, width: number, height: number
     throw new Error("This browser cannot draw the blurred camera");
   }
   backgroundCtx.filter = `blur(${smallBlurPx}px)`;
+
+  // An image is drawn once, cropped to fill the frame the way a camera image
+  // would be, and reused for every frame.
+  let backdrop: HTMLCanvasElement | null = null;
+  if (image) {
+    backdrop = document.createElement("canvas");
+    backdrop.width = width;
+    backdrop.height = height;
+    const backdropCtx = backdrop.getContext("2d");
+    if (!backdropCtx) throw new Error("This browser cannot draw the camera's background");
+    const cover = Math.max(width / image.width, height / image.height);
+    const w = image.width * cover;
+    const h = image.height * cover;
+    backdropCtx.drawImage(image, (width - w) / 2, (height - h) / 2, w, h);
+  }
   let maskImage: ImageData | null = null;
   let lastTimestamp = 0;
 
@@ -135,15 +158,19 @@ function makeCompositor(segmenter: ImageSegmenter, width: number, height: number
     ctx.drawImage(frame, 0, 0, width, height);
     ctx.globalCompositeOperation = "destination-in";
     ctx.drawImage(maskCanvas, 0, 0, width, height);
-    backgroundCtx.drawImage(
-      frame,
-      -bleed,
-      -bleed,
-      background.width + bleed * 2,
-      background.height + bleed * 2,
-    );
     ctx.globalCompositeOperation = "destination-over";
-    ctx.drawImage(background, 0, 0, width, height);
+    if (backdrop) {
+      ctx.drawImage(backdrop, 0, 0);
+    } else {
+      backgroundCtx.drawImage(
+        frame,
+        -bleed,
+        -bleed,
+        background.width + bleed * 2,
+        background.height + bleed * 2,
+      );
+      ctx.drawImage(background, 0, 0, width, height);
+    }
     ctx.globalCompositeOperation = "source-over";
   };
 
@@ -182,9 +209,10 @@ function blurWithBreakoutBox(
   segmenter: ImageSegmenter,
   source: MediaStreamTrack,
   fps: number,
+  image?: ImageBitmap,
 ): BlurredCamera {
   const { width, height } = outputSize(source);
-  const { canvas, draw } = makeCompositor(segmenter, width, height);
+  const { canvas, draw } = makeCompositor(segmenter, width, height, image);
   // A buffer of one: when blurring falls behind, the oldest frame is dropped
   // rather than the call drifting further and further behind the camera.
   const reader = new box.MediaStreamTrackProcessor({ track: source, maxBufferSize: 1 }).readable.getReader();
@@ -238,6 +266,7 @@ async function blurWithCanvasStream(
   segmenter: ImageSegmenter,
   source: MediaStreamTrack,
   fps: number,
+  image?: ImageBitmap,
 ): Promise<BlurredCamera> {
   const video = document.createElement("video");
   video.muted = true;
@@ -246,7 +275,7 @@ async function blurWithCanvasStream(
   await video.play();
 
   const { width, height } = outputSize(source);
-  const { canvas, draw } = makeCompositor(segmenter, width, height);
+  const { canvas, draw } = makeCompositor(segmenter, width, height, image);
   const track = canvas.captureStream(fps).getVideoTracks()[0];
 
   const tickSource = `setInterval(() => postMessage(0), ${Math.max(1, Math.round(1000 / fps))});`;
@@ -272,15 +301,25 @@ async function blurWithCanvasStream(
 }
 
 /**
- * Blur `source`'s background, at up to `fps` frames a second. A camera
+ * Blur `source`'s background — or, given `image`, put that behind the person
+ * instead, closing it once drawn — at up to `fps` frames a second. A camera
  * unplugged or revoked ends `source`, not the returned track: whoever holds
  * the source watches it and calls `stop`.
  */
-export async function blurBackground(source: MediaStreamTrack, fps: number): Promise<BlurredCamera> {
-  const segmenter = await loadSegmenter();
-  const box = globalThis as unknown as BreakoutBox;
-  if (box.MediaStreamTrackProcessor && box.MediaStreamTrackGenerator && typeof VideoFrame !== "undefined") {
-    return blurWithBreakoutBox(box as Required<BreakoutBox>, segmenter, source, fps);
+export async function blurBackground(
+  source: MediaStreamTrack,
+  fps: number,
+  image?: ImageBitmap,
+): Promise<BlurredCamera> {
+  try {
+    const segmenter = await loadSegmenter();
+    const box = globalThis as unknown as BreakoutBox;
+    if (box.MediaStreamTrackProcessor && box.MediaStreamTrackGenerator && typeof VideoFrame !== "undefined") {
+      return blurWithBreakoutBox(box as Required<BreakoutBox>, segmenter, source, fps, image);
+    }
+    return await blurWithCanvasStream(segmenter, source, fps, image);
+  } finally {
+    // Copied onto the compositor's own canvas by now, so it is done with.
+    image?.close();
   }
-  return blurWithCanvasStream(segmenter, source, fps);
 }

@@ -14,6 +14,7 @@ import {
 import type { WebcamPublishProfile, WebcamQuality } from "@/lib/webrtc";
 import { toast } from "sonner";
 import type { BlurredCamera } from "@/lib/backgroundBlur";
+import { decodeCameraBackground, type CameraEffect } from "@/lib/cameraBackgrounds";
 
 function buildWebcamVideoConstraints(
   profile: WebcamPublishProfile,
@@ -98,7 +99,7 @@ export function useWebRTCWebcam() {
   const { state, dispatch, wsRef } = useAppContext();
 
   const webcamStreamRef = useRef<MediaStream | null>(null);
-  // The blur between the camera and the call, when it is on.
+  // The blur or background image between the camera and the call, when one is on.
   const blurRef = useRef<BlurredCamera | null>(null);
   const webcamPubPcRef = useRef<RTCPeerConnection | null>(null);
   const webcamSubPcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -400,7 +401,7 @@ export function useWebRTCWebcam() {
     }
   }, [state.activeWebcamStreamers]);
 
-  const startWebcam = useCallback(async (deviceId?: string, fps: 30 | 60 = 30, blur = false) => {
+  const startWebcam = useCallback(async (deviceId?: string, fps: 30 | 60 = 30, effect: CameraEffect = { kind: "none" }) => {
     if (!state.inVoiceChannel || !canSignal(wsRef)) return;
     if (webcamStartingRef.current) return;
     webcamStartingRef.current = true;
@@ -414,14 +415,17 @@ export function useWebRTCWebcam() {
       // `stream` stays the camera itself — it is what is stopped, and what
       // says when the camera is unplugged. `sent` is what the call sees.
       let sent = stream;
-      if (blur) {
+      if (effect.kind !== "none") {
         try {
-          const { blurBackground } = await import("@/lib/backgroundBlur");
-          blurRef.current = await blurBackground(stream.getVideoTracks()[0], profile.targetFps);
+          const [{ blurBackground }, image] = await Promise.all([
+            import("@/lib/backgroundBlur"),
+            effect.kind === "image" ? decodeCameraBackground(effect.src) : undefined,
+          ]);
+          blurRef.current = await blurBackground(stream.getVideoTracks()[0], profile.targetFps, image);
           sent = new MediaStream([blurRef.current.track]);
         } catch (err) {
-          console.warn("[webcam] background blur unavailable:", err);
-          toast.error("Background blur isn't available here, so your camera is on without it.");
+          console.warn("[webcam] background effect unavailable:", err);
+          toast.error("Background effects aren't available here, so your camera is on without one.");
         }
       }
       webcamStreamsMap.set(state.userId!, sent);
