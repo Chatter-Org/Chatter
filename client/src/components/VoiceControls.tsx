@@ -144,7 +144,7 @@ export function VoiceControls({ joinVoiceRef, leaveVoiceRef, releaseVoiceRef, to
     <CameraSelectModal
       open={cameraModalOpen}
       onClose={() => setCameraModalOpen(false)}
-      onStart={(deviceId, fps) => webcam.startWebcam(deviceId, fps)}
+      onStart={(deviceId, fps, blur) => webcam.startWebcam(deviceId, fps, blur)}
     />
   );
 }

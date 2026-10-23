@@ -12,6 +12,7 @@ import {
 } from "@/lib/webrtc";
 import type { WebcamPublishProfile } from "@/lib/webrtc";
 import { toast } from "sonner";
+import type { BlurredCamera } from "@/lib/backgroundBlur";
 
 function buildWebcamVideoConstraints(
   profile: WebcamPublishProfile,
@@ -51,6 +52,8 @@ export function useWebRTCWebcam() {
   const { state, dispatch, wsRef } = useAppContext();
 
   const webcamStreamRef = useRef<MediaStream | null>(null);
+  // The blur between the camera and the call, when it is on.
+  const blurRef = useRef<BlurredCamera | null>(null);
   const webcamPubPcRef = useRef<RTCPeerConnection | null>(null);
   const webcamSubPcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const webcamRetryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -193,6 +196,8 @@ export function useWebRTCWebcam() {
       webcamStreamRef.current.getTracks().forEach((t) => { t.onended = null; t.stop(); });
       webcamStreamRef.current = null;
     }
+    blurRef.current?.stop();
+    blurRef.current = null;
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       const msg: any = { type: "webcam_share_stop", room_id: callRoomId() };
       if (state.voiceChannelId) msg.channel_id = state.voiceChannelId;
@@ -325,7 +330,7 @@ export function useWebRTCWebcam() {
     }
   }, [state.activeWebcamStreamers]);
 
-  const startWebcam = useCallback(async (deviceId?: string, fps: 30 | 60 = 30) => {
+  const startWebcam = useCallback(async (deviceId?: string, fps: 30 | 60 = 30, blur = false) => {
     if (!state.inVoiceChannel || !canSignal(wsRef)) return;
     if (webcamStartingRef.current) return;
     webcamStartingRef.current = true;
@@ -336,7 +341,20 @@ export function useWebRTCWebcam() {
 
       const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
       webcamStreamRef.current = stream;
-      webcamStreamsMap.set(state.userId!, stream);
+      // `stream` stays the camera itself — it is what is stopped, and what
+      // says when the camera is unplugged. `sent` is what the call sees.
+      let sent = stream;
+      if (blur) {
+        try {
+          const { blurBackground } = await import("@/lib/backgroundBlur");
+          blurRef.current = await blurBackground(stream.getVideoTracks()[0], profile.targetFps);
+          sent = new MediaStream([blurRef.current.track]);
+        } catch (err) {
+          console.warn("[webcam] background blur unavailable:", err);
+          toast.error("Background blur isn't available here, so your camera is on without it.");
+        }
+      }
+      webcamStreamsMap.set(state.userId!, sent);
       window.dispatchEvent(new CustomEvent("webcam-stream-update"));
       dispatch({ type: "SET_VOICE_STATE", payload: { isWebcamActive: true } });
       dispatch({ type: "WEBCAM_SHARE_STARTED", payload: state.userId! });
@@ -349,17 +367,18 @@ export function useWebRTCWebcam() {
         wsRef.current!.send(JSON.stringify(startMsg));
       }
 
-      const videoTrack = stream.getVideoTracks()[0];
+      const cameraTrack = stream.getVideoTracks()[0];
+      cameraTrack.onended = () => {
+        if (webcamStreamRef.current === stream) stopWebcam();
+      };
+      const videoTrack = sent.getVideoTracks()[0];
       if ("contentHint" in videoTrack) {
         videoTrack.contentHint = profile.contentHint;
       }
-      videoTrack.onended = () => {
-        if (webcamStreamRef.current === stream) stopWebcam();
-      };
 
       const pc = new RTCPeerConnection(getWebRTCConfig());
       webcamPubPcRef.current = pc;
-      const videoSender = pc.addTrack(videoTrack, stream);
+      const videoSender = pc.addTrack(videoTrack, sent);
       await tuneWebcamVideoSender(videoSender, profile);
 
       // None before the offer; see `candidatesAfterOffer`.
@@ -412,6 +431,8 @@ export function useWebRTCWebcam() {
         webcamStreamRef.current.getTracks().forEach((t) => { t.onended = null; t.stop(); });
         webcamStreamRef.current = null;
       }
+      blurRef.current?.stop();
+      blurRef.current = null;
       if (webcamPubPcRef.current) { webcamPubPcRef.current.close(); webcamPubPcRef.current = null; }
       if (!(err instanceof DOMException && err.name === "NotAllowedError")) {
         const message = err instanceof Error ? err.message : "Unknown error";
