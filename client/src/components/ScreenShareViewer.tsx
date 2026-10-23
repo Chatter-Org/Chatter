@@ -10,7 +10,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { gridLayout, GRID_GAP } from "@chatter/core/voice/grid";
 import { WEBCAM_HIGH_QUALITY_MIN_WIDTH } from "@/lib/webrtc";
 import type { WebcamQuality } from "@/lib/webrtc";
-import { Eye, LayoutGrid, Maximize2, MessageSquare, Monitor, Video, X } from "lucide-react";
+import { Eye, LayoutGrid, Maximize2, Monitor, Video, X } from "lucide-react";
 
 /** How often the grid re-reads who is speaking, for the ring round a tile. */
 const GRID_SPEAKING_POLL_MS = 150;
@@ -122,15 +122,12 @@ export function ScreenShareHeader({
   hostRef,
   isPiP,
   onTogglePiP,
-  onShowChat,
 }: {
   containerRef: React.RefObject<HTMLDivElement | null>;
   /** The video area whose pointer activity keeps the bar awake. */
   hostRef: React.RefObject<HTMLDivElement | null>;
   isPiP?: boolean;
   onTogglePiP?: () => void;
-  /** Swap to the channel's chat, the stream shrinking to a thumbnail. */
-  onShowChat?: () => void;
 }) {
   const headerRef = useRef<HTMLDivElement | null>(null);
   const controlsVisible = useIdleFade(hostRef, headerRef);
@@ -243,18 +240,6 @@ export function ScreenShareHeader({
               </button>
             ))}
           </div>
-        )}
-        {onShowChat && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className={cn("gap-1.5 px-2 text-xs font-medium text-muted-foreground hover:text-foreground", isMobile ? "h-10" : "h-7")}
-            onClick={onShowChat}
-            title="Show the channel's chat"
-          >
-            <MessageSquare style={{ width: iconPx, height: iconPx }} />
-            {!isMobile && "Chat"}
-          </Button>
         )}
         <ClipControls />
         {state.isScreenSharing && (

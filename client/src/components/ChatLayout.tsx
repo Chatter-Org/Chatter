@@ -601,7 +601,12 @@ export function ChatLayout() {
     <ChannelList
       asDrawer={asDrawer}
       onCollapsedChange={asDrawer ? undefined : setChannelPanelCollapsed}
-      onChannelSelected={asDrawer ? () => setMobileDrawer(null) : undefined}
+      onChannelSelected={() => {
+        // Picking a channel is asking for its chat, so the streams shrink to
+        // the thumbnail over it.
+        setCallView("chat");
+        if (asDrawer) setMobileDrawer(null);
+      }}
       onJoinVoiceChannel={(channelId) => {
         const ch = state.channels.find((c) => c.channel_id === channelId);
         if (ch) dispatch({ type: "SET_VOICE_STATE", payload: { voiceChannelName: ch.name } });
@@ -829,7 +834,6 @@ export function ChatLayout() {
                         hostRef={videoPanelRef}
                         isPiP={isPiP}
                         onTogglePiP={togglePiP}
-                        onShowChat={() => setCallView("chat")}
                       />
                     )}
                     <ScreenShareViewer speakingUsersRef={speakingUsersRef} compact={viewerMode === "thumb"} />

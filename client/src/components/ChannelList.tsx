@@ -121,7 +121,8 @@ import { useConfirm } from "@/components/ConfirmDialog";
 interface ChannelListProps {
   /** Renders full-bleed inside the mobile drawer instead of as a resizable column. */
   asDrawer?: boolean;
-  /** Called after the user picks a channel, so the mobile drawer can close. */
+  /** Called after the user picks a channel, so the mobile drawer can close
+   *  and an open stream viewer can make way for the chat. */
   onChannelSelected?: () => void;
   onJoinVoiceChannel: (channelId: string) => void;
   onLeaveVoice?: () => void;
