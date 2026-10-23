@@ -14,6 +14,7 @@ use webrtc::{
         setting_engine::SettingEngine, APIBuilder, API,
     },
     ice::{
+        network_type::NetworkType,
         udp_mux::{UDPMuxDefault, UDPMuxParams},
         udp_network::UDPNetwork,
     },
@@ -157,6 +158,17 @@ pub(crate) async fn build_webrtc_api() -> Arc<API> {
             setting_engine.set_udp_network(UDPNetwork::Muxed(UDPMuxDefault::new(
                 UDPMuxParams::new(socket),
             )));
+            // The socket is IPv4, so only IPv4 candidates can be reached on
+            // it. Worse than useless, an IPv6 one cost packets: every local
+            // candidate on the mux reads from the same shared connection, and
+            // whichever reads a packet decides whether its sender is known —
+            // looking it up among the remote candidates of *its own* network
+            // type. An IPv6 candidate reading a browser's IPv4 packet finds
+            // nothing and discards it. On a host with IPv6 (a link-local fe80
+            // address is enough) that lost a large share of every inbound
+            // stream, and the browsers sending them took the loss for
+            // congestion and cut their bitrate to the floor.
+            setting_engine.set_network_types(vec![NetworkType::Udp4]);
         }
         Err(e) => {
             eprintln!(
