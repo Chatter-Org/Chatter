@@ -10,7 +10,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { gridLayout, GRID_GAP } from "@chatter/core/voice/grid";
 import { WEBCAM_HIGH_QUALITY_MIN_WIDTH } from "@/lib/webrtc";
 import type { WebcamQuality } from "@/lib/webrtc";
-import { LayoutGrid, Maximize2, MessageSquare, Monitor, Video, X } from "lucide-react";
+import { Eye, LayoutGrid, Maximize2, MessageSquare, Monitor, Video, X } from "lucide-react";
 
 /** How often the grid re-reads who is speaking, for the ring round a tile. */
 const GRID_SPEAKING_POLL_MS = 150;
@@ -906,6 +906,18 @@ export function ScreenShareViewer({
             <p className="text-sm">Connecting to stream…</p>
           </div>
         )}
+
+      {/* The thumbnail's viewer count — a screen's only: a camera is someone
+          in the call, not a broadcast with an audience. */}
+      {compact && !showingWebcam && currentSharer && screenStreamsMap.has(currentSharer) && (
+        <div
+          className="pointer-events-none absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded bg-black/50 px-1.5 py-0.5 text-xs tabular-nums text-white/80"
+          title="Watching"
+        >
+          <Eye className="h-3 w-3" />
+          {(state.screenViewers[currentSharer] ?? []).filter((v) => v !== currentSharer).length}
+        </div>
+      )}
 
       {/* Zoom indicator */}
       {zoom > 1 && (

@@ -31,7 +31,9 @@ pub(crate) fn subscriber_key(viewer_user_id: &str, sharer_user_id: &str) -> Stri
     format!("{}|{}", viewer_user_id, sharer_user_id)
 }
 
-/// Send the current viewer list to the sharer so they can display viewer count.
+/// Send the current viewer list to the sharer and to everyone watching, so
+/// each of them can show the viewer count. Someone who has just stopped
+/// watching is not sent it; their client shows no count once it stops either.
 pub(crate) async fn send_screen_viewers_update(state: &AppState, sharer_user_id: &str) {
     let viewers: Vec<String> = {
         let subs = state.screen_subscribers.read().await;
@@ -46,6 +48,9 @@ pub(crate) async fn send_screen_viewers_update(state: &AppState, sharer_user_id:
         "viewers": viewers,
     });
     send_to_user(state, sharer_user_id, &msg).await;
+    for viewer in viewers.iter().filter(|v| v.as_str() != sharer_user_id) {
+        send_to_user(state, viewer, &msg).await;
+    }
 }
 
 /// Check if user is in any voice channel (channel_id-keyed map).
