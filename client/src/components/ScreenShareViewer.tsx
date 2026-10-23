@@ -7,6 +7,11 @@ import { ScreenFpsMenu } from "./voice/ScreenFpsMenu";
 import { useScreenShareFps } from "@/hooks/useScreenShareFps";
 import { ClipControls } from "./voice/ClipControls";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { gridLayout, GRID_GAP } from "@chatter/core/voice/grid";
+import { LayoutGrid, Monitor, Video } from "lucide-react";
+
+/** How often the grid re-reads who is speaking, for the ring round a tile. */
+const GRID_SPEAKING_POLL_MS = 150;
 
 
 /** Header bar shown above the resizable panel group — always visible */
@@ -360,13 +365,22 @@ export function ScreenShareHeader({
 }
 
 /** Video content — goes inside the resizable panel */
-export function ScreenShareViewer() {
+export function ScreenShareViewer({
+  speakingUsersRef,
+}: {
+  speakingUsersRef?: React.MutableRefObject<Set<string>>;
+} = {}) {
   const { state, dispatch } = useAppContext();
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const mainWebcamVideoRef = useRef<HTMLVideoElement>(null);
   const videoContainerRef = useRef<HTMLDivElement | null>(null);
   const thumbVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
   const webcamVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
+  // Grid tiles, keyed `screen:<user>` or `cam:<user>` — one person can be both.
+  const gridVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const gridContainerRef = useRef<HTMLDivElement | null>(null);
+  const [gridBox, setGridBox] = useState({ width: 0, height: 0 });
+  const [speaking, setSpeaking] = useState<Set<string>>(() => new Set());
   const [, setStreamVersion] = useState(0);
 
   // Per-sharer volume state (persists when switching between sharers)
@@ -489,7 +503,17 @@ export function ScreenShareViewer() {
   const webcamStreamers = state.activeWebcamStreamers;
 
   const currentSharer = state.selectedScreenSharer;
-  const currentWebcamStreamer = state.selectedWebcamStreamer;
+  // A camera that has since gone off is no longer a choice, so it counts as
+  // none — it used to leave the viewer on "Connecting" for a feed that was gone.
+  const currentWebcamStreamer =
+    state.selectedWebcamStreamer && webcamStreamers.includes(state.selectedWebcamStreamer)
+      ? state.selectedWebcamStreamer
+      : null;
+  const feedCount = sharers.length + webcamStreamers.length;
+  // Everyone at once until someone is picked: a call with cameras on is about
+  // the people, and one big face with the rest in a strip is a screen share's
+  // layout. Picking a feed focuses it; the strip's Grid button comes back.
+  const gridMode = feedCount >= 2 && !currentSharer && !currentWebcamStreamer;
   // A webcam is focused in the main view when explicitly selected, or when
   // there are no screen sharers at all.
   const focusedWebcam = currentWebcamStreamer
@@ -546,7 +570,51 @@ export function ScreenShareViewer() {
         el.play().catch(() => {});
       }
     });
+    // Grid tiles. A screen tile carries the share's sound — in the grid it is
+    // the only element playing it — at the volume set for that sharer.
+    gridVideoRefs.current.forEach((el, key) => {
+      const sep = key.indexOf(":");
+      const kind = key.slice(0, sep);
+      const userId = key.slice(sep + 1);
+      const stream = (kind === "screen" ? screenStreamsMap : webcamStreamsMap).get(userId);
+      if (stream && el.srcObject !== stream) {
+        el.srcObject = stream;
+        el.play().catch(() => {});
+      }
+      if (kind === "screen") {
+        el.muted = userId === state.userId;
+        el.volume = screenMuted[userId] ? 0 : (screenVolumes[userId] ?? 50) / 100;
+      }
+    });
   });
+
+  // The grid is sized to the space it is given, which a resizable panel and a
+  // phone's rotation both change under it.
+  useEffect(() => {
+    const el = gridContainerRef.current;
+    if (!gridMode || !el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setGridBox((prev) =>
+        prev.width === width && prev.height === height ? prev : { width, height },
+      );
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [gridMode]);
+
+  // Who is speaking lives in a ref the call updates many times a second; the
+  // grid samples it rather than re-rendering on every level change.
+  useEffect(() => {
+    if (!gridMode || !speakingUsersRef) return;
+    const id = setInterval(() => {
+      const next = speakingUsersRef.current;
+      setSpeaking((prev) =>
+        prev.size === next.size && [...next].every((u) => prev.has(u)) ? prev : new Set(next),
+      );
+    }, GRID_SPEAKING_POLL_MS);
+    return () => clearInterval(id);
+  }, [gridMode, speakingUsersRef]);
 
   const setVolume = useCallback((vol: number) => {
     if (!currentSharer) return;
@@ -587,7 +655,8 @@ export function ScreenShareViewer() {
     };
     container.addEventListener("wheel", onWheel, { passive: false });
     return () => container.removeEventListener("wheel", onWheel);
-  }, [viewerVisible]);
+    // The grid has no zoom and unmounts the container; leaving it mounts a new one.
+  }, [viewerVisible, gridMode]);
 
   if (
     !state.screenViewerOpen ||
@@ -595,6 +664,89 @@ export function ScreenShareViewer() {
     !state.inVoiceChannel
   ) {
     return null;
+  }
+
+  const nameOf = (userId: string) =>
+    userId === state.userId
+      ? "You"
+      : state.userPresence[userId]?.displayName || displayUserId(userId);
+
+  if (gridMode) {
+    const tiles = [
+      ...sharers.map((userId) => ({ kind: "screen" as const, userId })),
+      ...webcamStreamers.map((userId) => ({ kind: "cam" as const, userId })),
+    ];
+    const layout = gridLayout(tiles.length, gridBox.width, gridBox.height);
+    return (
+      <div className="flex flex-col min-h-0 h-full bg-black/95">
+        <div
+          ref={gridContainerRef}
+          className="flex-1 min-h-0 flex items-center justify-center p-2 overflow-hidden"
+        >
+          <div
+            className="flex flex-wrap justify-center"
+            style={{
+              gap: GRID_GAP,
+              // Exactly `cols` tiles fit on a line, so the wrap makes the rows
+              // and a short last row sits centred under the others.
+              width: layout.cols * layout.tileWidth + (layout.cols - 1) * GRID_GAP,
+            }}
+          >
+            {tiles.map(({ kind, userId }) => {
+              const key = `${kind}:${userId}`;
+              const stream = (kind === "screen" ? screenStreamsMap : webcamStreamsMap).get(userId);
+              const isSpeaking = kind === "cam" && speaking.has(userId);
+              return (
+                <button
+                  key={key}
+                  className={cn(
+                    "relative overflow-hidden rounded-lg border-2 bg-neutral-900 cursor-pointer transition-colors",
+                    isSpeaking ? "border-success" : "border-transparent hover:border-white/30",
+                  )}
+                  style={{ width: layout.tileWidth, height: layout.tileHeight }}
+                  onClick={() =>
+                    dispatch({
+                      type: "SET_SCREEN_VIEWER",
+                      payload: kind === "screen" ? { sharer: userId } : { webcamStreamer: userId },
+                    })
+                  }
+                  title={`Focus ${nameOf(userId) === "You" ? "your" : `${nameOf(userId)}'s`} ${kind === "screen" ? "screen" : "camera"}`}
+                >
+                  {stream ? (
+                    <video
+                      ref={(el) => {
+                        if (el) gridVideoRefs.current.set(key, el);
+                        else gridVideoRefs.current.delete(key);
+                      }}
+                      autoPlay
+                      playsInline
+                      muted={kind === "cam" || userId === state.userId}
+                      className={cn(
+                        "w-full h-full select-none",
+                        kind === "cam" ? "object-cover" : "object-contain",
+                      )}
+                      draggable={false}
+                    />
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center text-xs text-white/50">
+                      Connecting…
+                    </div>
+                  )}
+                  <div className="absolute bottom-1.5 left-1.5 flex max-w-[85%] items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-xs text-white">
+                    {kind === "screen" ? (
+                      <Monitor className="h-3 w-3 shrink-0 text-info" />
+                    ) : (
+                      <Video className="h-3 w-3 shrink-0 text-blue-300" />
+                    )}
+                    <span className="truncate">{nameOf(userId)}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -726,6 +878,14 @@ export function ScreenShareViewer() {
       {/* Unified thumbnail strip — shown whenever there are multiple feeds */}
       {(sharers.length + webcamStreamers.length) > 1 && (
         <div className="flex gap-2 p-2 bg-black/80 border-t border-white/10 overflow-x-auto shrink-0">
+          <button
+            className="flex shrink-0 w-16 flex-col items-center justify-center gap-1 rounded-md border-2 border-border/50 bg-black text-white/70 transition-all hover:border-white/40 hover:text-white cursor-pointer"
+            onClick={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { sharer: null } })}
+            title="Show everyone"
+          >
+            <LayoutGrid className="h-4 w-4" />
+            <span className="text-3xs font-semibold">Grid</span>
+          </button>
           {sharers.map((sharerId) => {
             const isSelected = !showingWebcam && sharerId === state.selectedScreenSharer;
             return (

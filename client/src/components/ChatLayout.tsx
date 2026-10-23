@@ -859,7 +859,7 @@ export function ChatLayout() {
                             isPiP={isPiP}
                             onTogglePiP={togglePiP}
                           />
-                          <ScreenShareViewer />
+                          <ScreenShareViewer speakingUsersRef={speakingUsersRef} />
                         </div>
                       </ResizablePanel>
                       {/* The default separator is a 1px line with a 4px
