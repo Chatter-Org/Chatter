@@ -9,8 +9,9 @@ import {
   canSignal,
   candidatesAfterOffer,
   getWebcamPublishProfile,
+  webcamEncodings,
 } from "@/lib/webrtc";
-import type { WebcamPublishProfile } from "@/lib/webrtc";
+import type { WebcamPublishProfile, WebcamQuality } from "@/lib/webrtc";
 import { toast } from "sonner";
 import type { BlurredCamera } from "@/lib/backgroundBlur";
 
@@ -33,12 +34,19 @@ async function tuneWebcamVideoSender(
 ) {
   try {
     const params = sender.getParameters();
-    const baseEncoding = params.encodings?.[0] ?? {};
-    params.encodings = [{
-      ...baseEncoding,
-      maxBitrate: profile.maxBitrateBps,
-      maxFramerate: profile.targetFps,
-    }];
+    // Simulcast has an encoding per rid, each with its own ceiling; a camera
+    // sent as one has a single encoding with none. The count cannot change
+    // here, only what each one carries.
+    const byRid = new Map(webcamEncodings(profile).map((e) => [e.rid as string, e]));
+    const current = params.encodings?.length ? params.encodings : [{}];
+    params.encodings = current.map((encoding) => {
+      const wanted = encoding.rid ? byRid.get(encoding.rid) : undefined;
+      return {
+        ...encoding,
+        maxBitrate: wanted?.maxBitrate ?? profile.maxBitrateBps,
+        maxFramerate: wanted?.maxFramerate ?? profile.targetFps,
+      };
+    });
     // A camera picked for 60fps is being picked for smooth motion, so shed
     // resolution before frames when the network tightens.
     params.degradationPreference = "maintain-framerate";
@@ -46,6 +54,44 @@ async function tuneWebcamVideoSender(
   } catch {
     // Browsers differ in which sender parameters are writable.
   }
+}
+
+/**
+ * Adds the camera to `pc` as a simulcast pair — full size and a quarter — so
+ * the server can give each viewer the one their tile needs. VP8 is preferred:
+ * it is the codec whose own frame numbering the server keeps continuous when
+ * it moves a viewer between the two. A browser that refuses simulcast gets
+ * the camera as one encoding, which every viewer is then given.
+ */
+function addCameraSender(
+  pc: RTCPeerConnection,
+  track: MediaStreamTrack,
+  stream: MediaStream,
+  profile: WebcamPublishProfile,
+): RTCRtpSender {
+  let transceiver: RTCRtpTransceiver;
+  try {
+    transceiver = pc.addTransceiver(track, {
+      direction: "sendonly",
+      streams: [stream],
+      sendEncodings: webcamEncodings(profile),
+    });
+  } catch {
+    return pc.addTrack(track, stream);
+  }
+  try {
+    const codecs = RTCRtpSender.getCapabilities?.("video")?.codecs ?? [];
+    const isVp8 = (c: { mimeType: string }) => c.mimeType.toLowerCase() === "video/vp8";
+    if (codecs.some(isVp8)) {
+      transceiver.setCodecPreferences([
+        ...codecs.filter(isVp8),
+        ...codecs.filter((c) => !isVp8(c)),
+      ]);
+    }
+  } catch {
+    // Codec preferences are a preference; the browser's own order still works.
+  }
+  return transceiver.sender;
 }
 
 export function useWebRTCWebcam() {
@@ -59,6 +105,10 @@ export function useWebRTCWebcam() {
   const webcamRetryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const pendingWebcamSubsRef = useRef<Set<string>>(new Set());
   const webcamStartingRef = useRef(false);
+  // What the viewer wants of each camera, from the size it is drawn at (the
+  // viewer says, with a "webcam-quality" event). Sent with the subscription
+  // and whenever it changes.
+  const qualityWishRef = useRef<Map<string, WebcamQuality>>(new Map());
   // Profile of the stream currently being published, so the publish answer
   // handler can re-apply sender parameters browsers reset on renegotiation.
   const webcamProfileRef = useRef<WebcamPublishProfile>(getWebcamPublishProfile(30));
@@ -154,6 +204,7 @@ export function useWebRTCWebcam() {
         room_id: voiceRoomIdRef.current || currentRoomRef.current,
         sharer_user_id: sharerId,
         sdp: offer.sdp,
+        quality: qualityWishRef.current.get(sharerId) ?? "high",
       }));
     }).catch(() => {
       try { pc.close(); } catch {}
@@ -277,6 +328,25 @@ export function useWebRTCWebcam() {
     return () => window.removeEventListener("ws-message", handler);
   }, [state.inVoiceChannel, state.userId, state.currentRoomId, stopWebcam]);
 
+  // The viewer asking for a camera at the size it now draws it. A camera not
+  // yet subscribed picks it up from the wish when it is.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { sharerId, quality } = (e as CustomEvent<{ sharerId: string; quality: WebcamQuality }>).detail;
+      if (qualityWishRef.current.get(sharerId) === quality) return;
+      qualityWishRef.current.set(sharerId, quality);
+      if (!webcamSubPcsRef.current.has(sharerId) || !canSignal(wsRef)) return;
+      wsRef.current!.send(JSON.stringify({
+        type: "webcam_webrtc_set_quality",
+        room_id: voiceRoomIdRef.current || currentRoomRef.current,
+        sharer_user_id: sharerId,
+        quality,
+      }));
+    };
+    window.addEventListener("webcam-quality", handler);
+    return () => window.removeEventListener("webcam-quality", handler);
+  }, [wsRef]);
+
   // Subscribe to webcam streams from other users — only once the viewer is
   // open, so a camera nobody asked to watch is never pulled down.
   useEffect(() => {
@@ -378,7 +448,7 @@ export function useWebRTCWebcam() {
 
       const pc = new RTCPeerConnection(getWebRTCConfig());
       webcamPubPcRef.current = pc;
-      const videoSender = pc.addTrack(videoTrack, sent);
+      const videoSender = addCameraSender(pc, videoTrack, sent, profile);
       await tuneWebcamVideoSender(videoSender, profile);
 
       // None before the offer; see `candidatesAfterOffer`.

@@ -9,7 +9,7 @@ use std::{
     },
 };
 use tokio::{
-    sync::{broadcast, mpsc, RwLock},
+    sync::{broadcast, mpsc, watch, RwLock},
     task::JoinHandle,
 };
 use webrtc::{
@@ -1324,15 +1324,26 @@ pub(crate) struct ScreenSubscriberState {
     pub(crate) audio_forward_task: Option<JoinHandle<()>>,
 }
 
+/// One encoding of a camera: its `rid` ("h", "l"; empty for a camera sent
+/// without simulcast), its SSRC, and the channel its packets fan out on.
+#[derive(Clone)]
+pub(crate) struct WebcamLayer {
+    pub(crate) rid: String,
+    pub(crate) ssrc: u32,
+    pub(crate) rtp_sender: broadcast::Sender<rtp::packet::Packet>,
+}
+
 #[derive(Clone)]
 #[allow(dead_code)]
 pub(crate) struct WebcamPublisherState {
     pub(crate) room_id: String,
     pub(crate) channel_id: String,
     pub(crate) peer_connection: Arc<RTCPeerConnection>,
-    pub(crate) media_ssrc: Option<u32>,
     pub(crate) video_codec: Option<RTCRtpCodecCapability>,
-    pub(crate) rtp_sender: Option<broadcast::Sender<rtp::packet::Packet>>,
+    /// The encodings that have arrived. A simulcast camera's arrive one at a
+    /// time, so each viewer's forwarder watches this rather than reading it
+    /// once.
+    pub(crate) layers: Arc<watch::Sender<Vec<WebcamLayer>>>,
 }
 
 pub(crate) struct WebcamSubscriberState {
@@ -1340,6 +1351,8 @@ pub(crate) struct WebcamSubscriberState {
     pub(crate) sharer_user_id: String,
     pub(crate) peer_connection: Arc<RTCPeerConnection>,
     pub(crate) forward_task: JoinHandle<()>,
+    /// What the viewer has asked for; the forwarder moves them when it changes.
+    pub(crate) quality: watch::Sender<crate::backend::ws::webcam_simulcast::WebcamQuality>,
 }
 
 #[derive(Clone)]

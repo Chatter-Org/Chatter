@@ -8,6 +8,8 @@ import { useScreenShareFps } from "@/hooks/useScreenShareFps";
 import { ClipControls } from "./voice/ClipControls";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { gridLayout, GRID_GAP } from "@chatter/core/voice/grid";
+import { WEBCAM_HIGH_QUALITY_MIN_WIDTH } from "@/lib/webrtc";
+import type { WebcamQuality } from "@/lib/webrtc";
 import { LayoutGrid, Monitor, Video } from "lucide-react";
 
 /** How often the grid re-reads who is speaking, for the ring round a tile. */
@@ -514,6 +516,7 @@ export function ScreenShareViewer({
   // the people, and one big face with the rest in a strip is a screen share's
   // layout. Picking a feed focuses it; the strip's Grid button comes back.
   const gridMode = feedCount >= 2 && !currentSharer && !currentWebcamStreamer;
+  const layout = gridLayout(feedCount, gridBox.width, gridBox.height);
   // A webcam is focused in the main view when explicitly selected, or when
   // there are no screen sharers at all.
   const focusedWebcam = currentWebcamStreamer
@@ -587,6 +590,27 @@ export function ScreenShareViewer({
       }
     });
   });
+
+  // Each camera is asked for at the size it is drawn: the full picture for
+  // the one in focus or a big grid tile, the small copy for a thumbnail or a
+  // small tile. Only changes are sent.
+  const sentQualityRef = useRef<Map<string, WebcamQuality>>(new Map());
+  useEffect(() => {
+    // An unmeasured grid has no tile size yet; asking now would only be
+    // taken back a frame later.
+    if (gridMode && gridBox.width === 0) return;
+    for (const userId of webcamStreamers) {
+      if (userId === state.userId) continue;
+      const quality: WebcamQuality = gridMode
+        ? layout.tileWidth >= WEBCAM_HIGH_QUALITY_MIN_WIDTH ? "high" : "low"
+        : showingWebcam && userId === focusedWebcam ? "high" : "low";
+      if (sentQualityRef.current.get(userId) === quality) continue;
+      sentQualityRef.current.set(userId, quality);
+      window.dispatchEvent(
+        new CustomEvent("webcam-quality", { detail: { sharerId: userId, quality } }),
+      );
+    }
+  }, [gridMode, gridBox.width, layout.tileWidth, webcamStreamers, showingWebcam, focusedWebcam, state.userId]);
 
   // The grid is sized to the space it is given, which a resizable panel and a
   // phone's rotation both change under it.
@@ -676,7 +700,6 @@ export function ScreenShareViewer({
       ...sharers.map((userId) => ({ kind: "screen" as const, userId })),
       ...webcamStreamers.map((userId) => ({ kind: "cam" as const, userId })),
     ];
-    const layout = gridLayout(tiles.length, gridBox.width, gridBox.height);
     return (
       <div className="flex flex-col min-h-0 h-full bg-black/95">
         <div

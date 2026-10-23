@@ -135,6 +135,26 @@ pub(crate) async fn build_webrtc_api() -> Arc<API> {
         )
         .expect("register audio level header extension failed");
 
+    // A simulcast camera sends each of its encodings as its own stream, told
+    // apart only by these: which m-line (`mid`) and which encoding (`rid`).
+    // Without them negotiated, webrtc-rs cannot tell the layers apart and
+    // refuses every stream after the first.
+    for uri in [
+        webrtc::sdp::extmap::SDES_MID_URI,
+        webrtc::sdp::extmap::SDES_RTP_STREAM_ID_URI,
+        webrtc::sdp::extmap::SDES_REPAIR_RTP_STREAM_ID_URI,
+    ] {
+        media_engine
+            .register_header_extension(
+                RTCRtpHeaderExtensionCapability {
+                    uri: uri.to_string(),
+                },
+                RTPCodecType::Video,
+                None,
+            )
+            .expect("register simulcast header extension failed");
+    }
+
     let mut registry = Registry::new();
     registry = register_default_interceptors(registry, &mut media_engine)
         .expect("register_default_interceptors failed");
@@ -394,6 +414,41 @@ pub(crate) async fn create_peer_connection(
         .new_peer_connection(default_webrtc_config())
         .await
         .map(Arc::new)
+}
+
+/// A publisher's packet, rebuilt to be sent on to a subscriber.
+///
+/// Header extension ids are negotiated per connection, so the publisher's
+/// numbering means nothing on the subscriber's leg — and since a video
+/// publisher's packets carry its `mid` (and, simulcast, its `rid`), passing
+/// them through would tell the viewer's browser to route the packet to a
+/// section or an encoding of the *publisher's* connection. Without them the
+/// viewer routes by SSRC, which the server's SDP always declares. `payload` is
+/// `Bytes`, so carrying it over is a refcount bump, not a copy.
+pub(crate) fn relay_packet(
+    packet: &rtp::packet::Packet,
+    sequence_number: u16,
+    timestamp: u32,
+) -> rtp::packet::Packet {
+    rtp::packet::Packet {
+        header: rtp::header::Header {
+            version: packet.header.version,
+            padding: packet.header.padding,
+            extension: false,
+            marker: packet.header.marker,
+            // Both overwritten per binding inside `write_rtp`; carried anyway
+            // so the packet is coherent on its own.
+            payload_type: packet.header.payload_type,
+            ssrc: packet.header.ssrc,
+            sequence_number,
+            timestamp,
+            csrc: packet.header.csrc.clone(),
+            extension_profile: 0,
+            extensions: Vec::new(),
+            extensions_padding: 0,
+        },
+        payload: packet.payload.clone(),
+    }
 }
 
 /// Forward only keyframe requests (PLI/FIR) from subscribers to the publisher.

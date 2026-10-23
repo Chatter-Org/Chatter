@@ -10,11 +10,12 @@ use super::{
         handle_voice_webrtc_subscribe_candidate, handle_voice_webrtc_subscribe_offer,
         teardown_voice_listener, teardown_voice_publisher,
     },
+    webcam_simulcast::WebcamQuality,
     webcam_webrtc::{
         handle_webcam_webrtc_publish_candidate, handle_webcam_webrtc_publish_offer,
-        handle_webcam_webrtc_subscribe_candidate, handle_webcam_webrtc_subscribe_offer,
-        set_user_webcam_sharing, teardown_webcam_publisher, teardown_webcam_subscriber_pair,
-        teardown_webcam_subscriptions_for_viewer,
+        handle_webcam_webrtc_set_quality, handle_webcam_webrtc_subscribe_candidate,
+        handle_webcam_webrtc_subscribe_offer, set_user_webcam_sharing, teardown_webcam_publisher,
+        teardown_webcam_subscriber_pair, teardown_webcam_subscriptions_for_viewer,
     },
 };
 use crate::backend::{
@@ -1608,6 +1609,7 @@ pub(crate) async fn handle_ws_text(state: Arc<AppState>, user_id: &str, conn_id:
                 room_id,
                 sharer_user_id,
                 sdp,
+                WebcamQuality::parse(msg.get("quality").and_then(|v| v.as_str())),
             )
             .await;
         }
@@ -1624,6 +1626,16 @@ pub(crate) async fn handle_ws_text(state: Arc<AppState>, user_id: &str, conn_id:
                     candidate_value,
                 )
                 .await;
+            }
+        }
+        "webcam_webrtc_set_quality" => {
+            let sharer_user_id = msg
+                .get("sharer_user_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !sharer_user_id.is_empty() {
+                let quality = WebcamQuality::parse(msg.get("quality").and_then(|v| v.as_str()));
+                handle_webcam_webrtc_set_quality(&state, user_id, sharer_user_id, quality).await;
             }
         }
         "webcam_webrtc_unsubscribe" => {
