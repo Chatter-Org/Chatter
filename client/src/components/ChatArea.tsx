@@ -41,7 +41,7 @@ import { isSameFile } from "@/lib/uploadResume";
 import { DMCallBar } from "./DMCallBar";
 import { usePendingFiles, MAX_ATTACHMENTS } from "@/hooks/usePendingFiles";
 import { useInterruptedUploads } from "@/hooks/useInterruptedUploads";
-import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, UserPlus, Pencil, Pin, Smile, Phone, PhoneOff, Paperclip, Plus, SendHorizontal } from "lucide-react";
+import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, UserPlus, Pencil, Pin, Smile, Phone, PhoneOff, Video, Paperclip, Plus, SendHorizontal } from "lucide-react";
 import { CommandBar } from "./CommandBar";
 import { AddToDMDialog } from "./AddToDMDialog";
 import { PollDialog } from "./PollDialog";
@@ -136,6 +136,10 @@ export interface DMCallHandlers {
   toggleDeafen: () => void;
   startScreenShare: () => void;
   stopScreenShare: () => void;
+  startWebcam: () => void;
+  stopWebcam: () => void;
+  /** Join, and offer the camera as soon as the call is up. */
+  joinWithVideo: () => void;
 }
 
 interface ChatAreaProps {
@@ -1609,6 +1613,17 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
           })()}
         </div>
         <div className="flex items-center gap-1">
+          {roomInfo?.is_direct && state.currentRoomId && dmCall && !inThisDmCall && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              onClick={dmCall.joinWithVideo}
+              title="Start a video call"
+            >
+              <Video className="h-4 w-4" />
+            </Button>
+          )}
           {roomInfo?.is_direct && state.currentRoomId && dmCall && (
             <Button
               variant="ghost"
@@ -1735,6 +1750,8 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
           onToggleDeafen={dmCall.toggleDeafen}
           onStartScreenShare={dmCall.startScreenShare}
           onStopScreenShare={dmCall.stopScreenShare}
+          onStartWebcam={dmCall.startWebcam}
+          onStopWebcam={dmCall.stopWebcam}
         />
       )}
 

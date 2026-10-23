@@ -143,6 +143,10 @@ function MobileHeader({
  *  takes it to have none and puts the call controls in the bottom bar. */
 const CHANNELS_SETTLE_MS = 1500;
 
+/** How long "Start a video call" waits for the call to connect before it
+ *  forgets about the camera. */
+const VIDEO_CALL_JOIN_WAIT_MS = 15_000;
+
 export function ChatLayout() {
   const { state, dispatch, loadRooms, loadFriends, loadRoomGroups, loadUnreads, loadNotificationSettings, loadContinuity, selectRoom, selectChannel, openThread, closeThread } = useAppContext();
   const isMobile = useIsMobile();
@@ -562,10 +566,32 @@ export function ChatLayout() {
   // A DM's call is room-scoped: passing the room id as the channel id is the
   // path the server keeps for rooms without channels, and it stops a call in
   // some other room's channel from being resolved as the DM's own.
+  // "Start a video call" is a join followed by the camera, and the camera can
+  // only start once the call is up — so the wish is held until it is, and
+  // dropped if the call never arrives.
+  const videoCallPendingRef = useRef<{ roomId: string; at: number } | null>(null);
+  useEffect(() => {
+    const pending = videoCallPendingRef.current;
+    if (!pending) return;
+    if (Date.now() - pending.at > VIDEO_CALL_JOIN_WAIT_MS) {
+      videoCallPendingRef.current = null;
+    } else if (state.inVoiceChannel && state.voiceRoomId === pending.roomId) {
+      videoCallPendingRef.current = null;
+      startWebcamRef.current?.();
+    }
+  }, [state.inVoiceChannel, state.voiceRoomId]);
+
   const dmCall = {
     join: () => {
       if (state.currentRoomId) joinVoiceRef.current?.(state.currentRoomId);
     },
+    joinWithVideo: () => {
+      if (!state.currentRoomId) return;
+      videoCallPendingRef.current = { roomId: state.currentRoomId, at: Date.now() };
+      joinVoiceRef.current?.(state.currentRoomId);
+    },
+    startWebcam: () => startWebcamRef.current?.(),
+    stopWebcam: () => stopWebcamRef.current?.(),
     leave: () => leaveVoiceRef.current?.(),
     toggleMute: () => toggleMuteRef.current?.(),
     toggleDeafen: () => toggleDeafenRef.current?.(),

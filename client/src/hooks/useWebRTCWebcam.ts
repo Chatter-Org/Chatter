@@ -72,6 +72,10 @@ export function useWebRTCWebcam() {
   useEffect(() => { inVoiceChannelRef.current = state.inVoiceChannel; }, [state.inVoiceChannel]);
   useEffect(() => { activeWebcamStreamersRef.current = state.activeWebcamStreamers; }, [state.activeWebcamStreamers]);
   useEffect(() => { screenViewerOpenRef.current = state.screenViewerOpen; }, [state.screenViewerOpen]);
+  // The camera belongs to the call, so its frames name the call's room — not
+  // whichever room is on screen, which announced it to the wrong room when it
+  // was turned on from the voice bar while reading elsewhere.
+  const callRoomId = () => voiceRoomIdRef.current || currentRoomRef.current;
 
   const ensureWebcamSub = (sharerId: string) => {
     if (!canSignal(wsRef) || sharerId === state.userId) return;
@@ -190,7 +194,7 @@ export function useWebRTCWebcam() {
       webcamStreamRef.current = null;
     }
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      const msg: any = { type: "webcam_share_stop", room_id: state.currentRoomId };
+      const msg: any = { type: "webcam_share_stop", room_id: callRoomId() };
       if (state.voiceChannelId) msg.channel_id = state.voiceChannelId;
       wsRef.current.send(JSON.stringify(msg));
     }
@@ -340,7 +344,7 @@ export function useWebRTCWebcam() {
       dispatch({ type: "SET_SCREEN_VIEWER", payload: { open: true } });
 
       if (canSignal(wsRef)) {
-        const startMsg: any = { type: "webcam_share_start", room_id: state.currentRoomId };
+        const startMsg: any = { type: "webcam_share_start", room_id: callRoomId() };
         if (state.voiceChannelId) startMsg.channel_id = state.voiceChannelId;
         wsRef.current!.send(JSON.stringify(startMsg));
       }
@@ -363,7 +367,7 @@ export function useWebRTCWebcam() {
         if (!canSignal(wsRef)) return;
         wsRef.current!.send(JSON.stringify({
           type: "webcam_webrtc_publish_candidate",
-          room_id: state.currentRoomId,
+          room_id: callRoomId(),
           channel_id: state.voiceChannelId || undefined,
           candidate: c.toJSON(),
         }));
@@ -396,7 +400,7 @@ export function useWebRTCWebcam() {
       if (canSignal(wsRef)) {
         wsRef.current!.send(JSON.stringify({
           type: "webcam_webrtc_publish_offer",
-          room_id: state.currentRoomId,
+          room_id: callRoomId(),
           channel_id: state.voiceChannelId || undefined,
           sdp: offer.sdp,
         }));
