@@ -677,9 +677,10 @@ export function ScreenShareViewer({
   }, [gridMode]);
 
   // Who is speaking lives in a ref the call updates many times a second; the
-  // grid samples it rather than re-rendering on every level change.
+  // grid and the strip's people sample it rather than re-rendering on every
+  // level change.
   useEffect(() => {
-    if (!gridMode || !speakingUsersRef) return;
+    if (compact || !speakingUsersRef) return;
     const id = setInterval(() => {
       const next = speakingUsersRef.current;
       setSpeaking((prev) =>
@@ -687,7 +688,7 @@ export function ScreenShareViewer({
       );
     }, GRID_SPEAKING_POLL_MS);
     return () => clearInterval(id);
-  }, [gridMode, speakingUsersRef]);
+  }, [compact, speakingUsersRef]);
 
   const setVolume = useCallback((vol: number) => {
     if (!currentSharer) return;
@@ -738,6 +739,10 @@ export function ScreenShareViewer({
   ) {
     return null;
   }
+
+  const voiceMembers = state.voiceChannelId
+    ? state.voiceChannelMembers[state.voiceChannelId] ?? []
+    : [];
 
   const nameOf = (userId: string) =>
     userId === state.userId
@@ -822,12 +827,15 @@ export function ScreenShareViewer({
   }
 
   return (
-    <div className="flex flex-col min-h-0 h-full bg-black/95">
-      {/* Main video */}
+    <div className={cn("flex flex-col min-h-0 h-full bg-black/95", !compact && "gap-3")}>
+      {/* Main video. Full size it sits at the top at its own height, shrinking
+          to fit, so the strip follows straight under it rather than at the
+          bottom of the panel. */}
       <div
         ref={videoContainerRef}
         className={cn(
-          "flex-1 flex items-center justify-center bg-black min-h-0 relative group overflow-hidden",
+          "bg-black min-h-0 relative group overflow-hidden",
+          compact ? "flex-1 flex items-center justify-center" : "flex flex-col",
           // `active:` rather than the drag flag: that lives in a ref, which
           // never re-renders, so the grabbing cursor never actually appeared.
           zoom > 1 && "cursor-grab active:cursor-grabbing",
@@ -842,18 +850,18 @@ export function ScreenShareViewer({
         style={{ touchAction: "none" }}
       >
         {showingWebcam && focusedWebcam && webcamStreamsMap.has(focusedWebcam) ? (
-          <div className="w-full h-full flex items-center justify-center">
+          <div className={cn("w-full", compact ? "h-full flex items-center justify-center" : "flex flex-col min-h-0")}>
             <video
               ref={mainWebcamVideoRef}
               autoPlay
               playsInline
-              className="object-contain w-full h-full bg-black select-none"
+              className={cn("object-contain w-full bg-black select-none", compact ? "h-full" : "min-h-0")}
               draggable={false}
             />
           </div>
         ) : currentSharer && screenStreamsMap.has(currentSharer) ? (
           <div
-            className="w-full h-full"
+            className={cn("w-full", compact ? "h-full" : "flex flex-col min-h-0")}
             style={{
               transform: zoom > 1
                 ? `scale(${zoom}) translate(${pan.x / zoom}%, ${pan.y / zoom}%)`
@@ -866,7 +874,7 @@ export function ScreenShareViewer({
               ref={mainVideoRef}
               autoPlay
               playsInline
-              className="object-contain w-full h-full bg-black select-none"
+              className={cn("object-contain w-full bg-black select-none", compact ? "h-full" : "min-h-0")}
               draggable={false}
             />
           </div>
@@ -959,82 +967,89 @@ export function ScreenShareViewer({
       )}
       </div>
 
-      {/* Unified thumbnail strip — shown whenever there are multiple feeds */}
-      {!compact && (sharers.length + webcamStreamers.length) > 1 && (
-        <div className="flex gap-2 p-2 bg-black/80 border-t border-white/10 overflow-x-auto shrink-0">
-          <button
-            className="flex shrink-0 w-16 flex-col items-center justify-center gap-1 rounded-md border-2 border-border/50 bg-black text-white/70 transition-all hover:border-white/40 hover:text-white cursor-pointer"
-            onClick={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { sharer: null } })}
-            title="Show everyone"
-          >
-            <LayoutGrid className="h-4 w-4" />
-            <span className="text-3xs font-semibold">Grid</span>
-          </button>
-          {sharers.map((sharerId) => {
-            const isSelected = !showingWebcam && sharerId === state.selectedScreenSharer;
-            return (
+      {/* The strip under the stream: the Grid button, every other feed, and
+          everyone in the call by initial, ringed while they speak. Corners are
+          `rounded-lg`, which is the user's corner radius setting. */}
+      {!compact && (
+        <div className="flex gap-3 px-2 pb-2 overflow-x-auto shrink-0">
+          {feedCount > 1 && (
+            <button
+              className="flex shrink-0 h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border-2 border-border/50 bg-black text-white/70 transition-all hover:border-white/40 hover:text-white cursor-pointer"
+              onClick={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { sharer: null } })}
+              title="Show everyone"
+            >
+              <LayoutGrid className="h-4 w-4" />
+              <span className="text-3xs font-semibold">Grid</span>
+            </button>
+          )}
+          {sharers
+            .filter((sharerId) => showingWebcam || sharerId !== currentSharer)
+            .map((sharerId) => (
               <button
                 key={`screen-${sharerId}`}
-                className={cn(
-                  "relative shrink-0 w-28 rounded-md border-2 overflow-hidden bg-black aspect-video cursor-pointer transition-all",
-                  isSelected
-                    ? "border-info ring-1 ring-info/50"
-                    : "border-border/50 hover:border-info/50 opacity-70 hover:opacity-100"
-                )}
+                className="relative shrink-0 h-16 aspect-video rounded-lg border-2 border-border/50 overflow-hidden bg-black cursor-pointer transition-all hover:border-info/50 opacity-70 hover:opacity-100"
                 onClick={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { sharer: sharerId } })}
+                title={`Watch ${nameOf(sharerId) === "You" ? "your" : `${nameOf(sharerId)}'s`} screen`}
               >
                 <video
-                  ref={(el) => { if (el) thumbVideoRefs.current.set(sharerId, el); }}
+                  ref={(el) => {
+                    if (el) thumbVideoRefs.current.set(sharerId, el);
+                    else thumbVideoRefs.current.delete(sharerId);
+                  }}
                   autoPlay playsInline muted
                   className="w-full h-full object-contain"
                 />
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-0.5 flex items-center gap-1">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-info shrink-0">
-                    <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
-                  </svg>
-                  <p className="text-3xs text-info font-semibold truncate">
-                    {sharerId === state.userId ? "You" : displayUserId(sharerId)}
-                  </p>
+                  <Monitor className="h-2 w-2 shrink-0 text-info" />
+                  <p className="text-3xs text-info font-semibold truncate">{nameOf(sharerId)}</p>
                 </div>
               </button>
-            );
-          })}
-          {webcamStreamers.map((userId) => {
-            const isSelected = showingWebcam && userId === focusedWebcam;
-            return (
+            ))}
+          {webcamStreamers
+            .filter((userId) => !showingWebcam || userId !== focusedWebcam)
+            .map((userId) => (
               <button
                 key={`webcam-${userId}`}
-                className={cn(
-                  "relative shrink-0 rounded-md border-2 overflow-hidden bg-black cursor-pointer transition-all",
-                  isSelected
-                    ? "border-blue-500 ring-1 ring-blue-500/50"
-                    : "border-border/50 hover:border-blue-500/50 opacity-70 hover:opacity-100"
-                )}
-                style={{ width: "7rem", aspectRatio: "4/3" }}
+                className="relative shrink-0 h-16 aspect-[4/3] rounded-lg border-2 border-border/50 overflow-hidden bg-black cursor-pointer transition-all hover:border-blue-500/50 opacity-70 hover:opacity-100"
                 onClick={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { webcamStreamer: userId } })}
+                title={`Watch ${nameOf(userId) === "You" ? "your" : `${nameOf(userId)}'s`} camera`}
               >
                 {webcamStreamsMap.has(userId) ? (
                   <video
-                    ref={(el) => { if (el) webcamVideoRefs.current.set(userId, el); }}
+                    ref={(el) => {
+                      if (el) webcamVideoRefs.current.set(userId, el);
+                      else webcamVideoRefs.current.delete(userId);
+                    }}
                     autoPlay playsInline muted={userId === state.userId}
                     className="w-full h-full object-cover"
                   />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-blue-400/50">
-                      <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-                    </svg>
+                    <Video className="h-5 w-5 text-blue-400/50" />
                   </div>
                 )}
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-0.5 flex items-center gap-1">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-300 shrink-0">
-                    <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-                  </svg>
-                  <p className="text-3xs text-blue-300 font-semibold truncate">
-                    {userId === state.userId ? "You" : displayUserId(userId)}
-                  </p>
+                  <Video className="h-2 w-2 shrink-0 text-blue-300" />
+                  <p className="text-3xs text-blue-300 font-semibold truncate">{nameOf(userId)}</p>
                 </div>
               </button>
+            ))}
+          {voiceMembers.map((m) => {
+            const name = nameOf(m.userId);
+            const initial =
+              (state.userPresence[m.userId]?.displayName || displayUserId(m.userId))[0]?.toUpperCase() || "?";
+            const isSpeaking = speaking.has(m.userId) && !m.muted;
+            return (
+              <div
+                key={`member-${m.userId}`}
+                className={cn(
+                  "relative flex shrink-0 h-16 w-16 items-center justify-center rounded-lg border-2 bg-neutral-800 transition-colors",
+                  isSpeaking ? "border-success" : "border-transparent",
+                )}
+                title={name}
+              >
+                <span className="text-2xl font-semibold text-white/90 select-none">{initial}</span>
+              </div>
             );
           })}
         </div>
