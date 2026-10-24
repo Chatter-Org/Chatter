@@ -19,6 +19,7 @@ import { useScreenShareBitrate } from "./useScreenShareBitrate";
 import { useScreenContentMode } from "./useScreenContentMode";
 import { toast } from "sonner";
 import { selectDisplayCapture } from "@/lib/media";
+import { playSound, type SoundPack } from "@/lib/sounds";
 import { apiPutScreenThumbnail } from "@/lib/api";
 import { captureScreenThumbnail, releaseScreenThumbnailCapture } from "@/lib/screenThumbnail";
 
@@ -651,8 +652,18 @@ export function useWebRTCScreen() {
         toast.error(message);
         void stopScreenShareRef.current();
       };
+      // The sharer's own stream-start sound, which everyone else plays off the
+      // server's echo. Played from here instead: the desktop app's native
+      // capture is still starting when the echo lands, and a sound played into
+      // that was lost. Connected is also when the share actually reaches anyone.
+      let announced = false;
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === "failed") giveUp("Your screen share lost its connection. Try sharing again.");
+        if (pc.connectionState === "connected" && !announced && screenPubPcRef.current === pc) {
+          announced = true;
+          const roomId = callRoomId();
+          playSound("stream-start", (roomId ? state.roomInfoMap[roomId]?.sounds : undefined) as SoundPack | undefined);
+        }
       };
       setTimeout(() => {
         if (pc.connectionState === "new" || pc.connectionState === "connecting") {

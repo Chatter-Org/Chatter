@@ -337,9 +337,10 @@ function packFor(stateRef: MutableRefObject<AppState>, roomId: string): SoundPac
   return stateRef.current.roomInfoMap[roomId]?.sounds as SoundPack | undefined;
 }
 
-/** A new screen share or webcam is announced to the call it is in — the
- *  sharer included, whose own client hears the server's echo — and to nobody
- *  else in the room. */
+/** A new screen share or webcam is announced to the call it is in, and to
+ *  nobody else in the room. A webcam's owner hears it off the server's echo
+ *  like everyone else; a screen sharer's client plays its own once the share
+ *  connects (useWebRTCScreen), so the echo is skipped for them. */
 function playStreamStartIfInCall(
   msg: { room_id: string; channel_id?: string },
   stateRef: MutableRefObject<AppState>,
@@ -878,7 +879,7 @@ export function createWsMessageHandler(
       patchVoiceMember(msg, stateRef, dispatch, () => ({ deafened: msg.deafened as boolean }));
     } else if (msg.type === "screen_share_started") {
       patchVoiceMember(msg, stateRef, dispatch, () => ({ screen_sharing: true }));
-      playStreamStartIfInCall(msg, stateRef);
+      if (msg.user_id !== stateRef.current.userId) playStreamStartIfInCall(msg, stateRef);
       const isVoiceRoom = msg.room_id === stateRef.current.currentRoomId || msg.room_id === stateRef.current.voiceRoomId;
       if (isVoiceRoom) {
         // Only the badge, never the viewer: watching is opt-in, so someone
