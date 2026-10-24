@@ -21,119 +21,233 @@ import {
   type SoundEvent,
   type SoundPack,
 } from "@chatter/core/soundRules";
+import { getVoiceSettings, subscribeVoiceSettings } from "@chatter/core/voice/settings";
 
 export * from "@chatter/core/soundRules";
 
-// ─── The reversed leave sound ────────────────────────────────────────────────
+// ─── The effects context ─────────────────────────────────────────────────────
+// Effects used to be a fresh `new Audio(url)` per play, and the leave sound a
+// fresh AudioContext per play. Both were late — a fetch and decode, or a
+// context spinning up, between the event and the noise — and both were quietly
+// dropped whenever the browser had not been clicked recently enough for its
+// liking. So: one context for every effect, made on the first click and kept
+// running, playing buffers that were decoded before they were needed.
 
-/** Decoded once and reused: reversing a buffer per leave would be audible. */
-let reversedJoinBuffer: AudioBuffer | null = null;
-let reversingInFlight = false;
+type SinkCapable = { setSinkId?: (id: string) => Promise<void> };
 
-async function getReversedJoinBuffer(): Promise<AudioBuffer | null> {
-  if (reversedJoinBuffer) return reversedJoinBuffer;
-  if (reversingInFlight) return null;
-  reversingInFlight = true;
+let effectsCtx: (AudioContext & SinkCapable) | null = null;
+
+function outputSinkId(): string {
+  const id = getVoiceSettings().outputDeviceId;
+  // "" is the system default for AudioContext.setSinkId.
+  return id === "default" ? "" : id;
+}
+
+/** Effects go where the call goes. On the system default while the call was
+ *  on a headset, every effect "never played" for the person wearing it. */
+function applySink() {
+  if (!effectsCtx?.setSinkId) return;
+  effectsCtx.setSinkId(outputSinkId()).catch(() => {});
+}
+
+function getEffectsCtx(): (AudioContext & SinkCapable) | null {
+  if (effectsCtx && effectsCtx.state !== "closed") return effectsCtx;
   try {
-    const ctx = new AudioContext();
-    const response = await fetch(BUILT_IN["voice-join"]!);
-    const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
-    for (let c = 0; c < buffer.numberOfChannels; c++) {
-      buffer.getChannelData(c).reverse();
-    }
-    reversedJoinBuffer = buffer;
-    await ctx.close();
-    return reversedJoinBuffer;
+    effectsCtx = new AudioContext({ latencyHint: "interactive" });
   } catch {
-    // Let a later leave try again.
-    reversingInFlight = false;
+    return null;
+  }
+  applySink();
+  return effectsCtx;
+}
+
+/**
+ * Bring the context back if it has stopped, the same as the voice engine does
+ * for its own: it starts suspended without a gesture, and a browser suspends
+ * it again (iOS on a call or the lock screen, some others on a device change).
+ */
+function resumeEffects() {
+  const ctx = effectsCtx;
+  if (!ctx || ctx.state === "running" || ctx.state === "closed") return;
+  void ctx.resume().catch(() => {});
+}
+
+if (typeof window !== "undefined") {
+  // A context made inside a click is allowed to run; one made later by a
+  // socket message only is if the page was clicked first. Making it here
+  // means the first effect never has to start it.
+  const onGesture = () => {
+    getEffectsCtx();
+    resumeEffects();
+  };
+  window.addEventListener("pointerdown", onGesture, { capture: true, passive: true });
+  window.addEventListener("keydown", onGesture, { capture: true, passive: true });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") resumeEffects();
+  });
+  subscribeVoiceSettings(applySink);
+}
+
+/** Wait briefly for the context to run. A source started on a suspended
+ *  context does not fail — it waits, and goes off whenever the context next
+ *  resumes, a stale noise at a random moment. Better none at all. */
+async function runningCtx(): Promise<AudioContext | null> {
+  const ctx = getEffectsCtx();
+  if (!ctx) return null;
+  if (ctx.state === "running") return ctx;
+  try {
+    await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 250))]);
+  } catch {
+    // Refused: no gesture yet.
+  }
+  return (ctx.state as AudioContextState) === "running" ? ctx : null;
+}
+
+function startBuffer(ctx: AudioContext, buffer: AudioBuffer, volume: number) {
+  const source = ctx.createBufferSource();
+  const gain = ctx.createGain();
+  gain.gain.value = volume;
+  source.buffer = buffer;
+  source.connect(gain);
+  gain.connect(ctx.destination);
+  source.onended = () => {
+    source.disconnect();
+    gain.disconnect();
+  };
+  source.start();
+}
+
+// ─── Decoded buffers ─────────────────────────────────────────────────────────
+
+/** Enough for the built-ins, a few rooms' packs and the stings of the people
+ *  you share calls with. Least recently played goes first. */
+const MAX_DECODED = 64;
+const decoded = new Map<string, AudioBuffer>();
+const decoding = new Map<string, Promise<AudioBuffer | null>>();
+
+function cachedBuffer(key: string): AudioBuffer | undefined {
+  const buffer = decoded.get(key);
+  if (buffer) {
+    decoded.delete(key);
+    decoded.set(key, buffer);
+  }
+  return buffer;
+}
+
+function remember(key: string, buffer: AudioBuffer) {
+  decoded.set(key, buffer);
+  while (decoded.size > MAX_DECODED) {
+    decoded.delete(decoded.keys().next().value!);
+  }
+}
+
+function decodeSound(url: string): Promise<AudioBuffer | null> {
+  const ready = cachedBuffer(url);
+  if (ready) return Promise.resolve(ready);
+  let pending = decoding.get(url);
+  if (pending) return pending;
+  pending = (async () => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      const data = await response.arrayBuffer();
+      // Decoded offline: a live context made at page load, before any click,
+      // only starts suspended and warns. The buffer plays on any context.
+      const buffer = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(data);
+      remember(url, buffer);
+      return buffer;
+    } catch {
+      // Not there, not audio, or no Web Audio at all. A later play tries again.
+      return null;
+    } finally {
+      decoding.delete(url);
+    }
+  })();
+  decoding.set(url, pending);
+  return pending;
+}
+
+/** The built-in leave sound: the join sound backwards, derived once. */
+async function reversedJoinBuffer(): Promise<AudioBuffer | null> {
+  const url = BUILT_IN["voice-join"]!;
+  const key = `${url}#reversed`;
+  const ready = cachedBuffer(key);
+  if (ready) return ready;
+  const join = await decodeSound(url);
+  if (!join) return null;
+  try {
+    // A copy: the forward buffer is the join sound, still in use.
+    const reversed = new AudioBuffer({
+      numberOfChannels: join.numberOfChannels,
+      length: join.length,
+      sampleRate: join.sampleRate,
+    });
+    for (let c = 0; c < join.numberOfChannels; c++) {
+      reversed.copyToChannel(join.getChannelData(c).slice().reverse(), c);
+    }
+    remember(key, reversed);
+    return reversed;
+  } catch {
     return null;
   }
 }
 
-// ─── Pre-decoded effects ─────────────────────────────────────────────────────
-// A stream start has to land with the stream, and `new Audio(url)` fetches and
-// decodes on every play — a noticeable beat late on a cold cache. So the file
-// is decoded once, up front, and played from memory on one long-lived context.
-
-let sharedCtx: AudioContext | null = null;
-const decoded = new Map<string, AudioBuffer>();
-const decoding = new Map<string, Promise<AudioBuffer | null>>();
-
-function audioContext(): AudioContext {
-  if (!sharedCtx) sharedCtx = new AudioContext();
-  return sharedCtx;
-}
-
-function decodeSound(url: string): Promise<AudioBuffer | null> {
-  const ready = decoded.get(url);
-  if (ready) return Promise.resolve(ready);
-  let pending = decoding.get(url);
-  if (!pending) {
-    pending = fetch(url)
-      .then((response) => response.arrayBuffer())
-      // Decoded offline: a live context made at page load, before any click,
-      // only starts suspended and warns. The buffer plays on any context.
-      .then((data) => new OfflineAudioContext(2, 1, 48000).decodeAudioData(data))
-      .then((buffer) => {
-        decoded.set(url, buffer);
-        return buffer;
-      })
-      .catch(() => null)
-      .finally(() => decoding.delete(url));
-    decoding.set(url, pending);
+/**
+ * Decode these now, so their first play is as quick as any other. With no
+ * list, the built-in effects; core passes the rooms' packs as they load.
+ */
+export function prewarmSounds(urls?: string[]) {
+  if (!urls) {
+    void reversedJoinBuffer();
+    urls = Object.values(BUILT_IN).filter((u): u is string => !!u);
   }
-  return pending;
+  for (const url of new Set(urls.map((u) => u.trim()).filter(Boolean))) {
+    void decodeSound(url);
+  }
 }
 
-async function playDecoded(url: string, volume: number) {
-  const buffer = await decodeSound(url);
-  if (!buffer) return;
+// ─── Playback ────────────────────────────────────────────────────────────────
+
+/** The fallback for a sound not decoded yet: an element streams it rather
+ *  than waiting for the whole file, so it is no later than it ever was. */
+function playElement(url: string, volume: number) {
   try {
-    const ctx = audioContext();
-    // Suspended until the page has been interacted with; anyone in a call has.
-    if (ctx.state === "suspended") void ctx.resume();
-    const source = ctx.createBufferSource();
-    const gain = ctx.createGain();
-    gain.gain.value = volume;
-    source.buffer = buffer;
-    source.connect(gain);
-    gain.connect(ctx.destination);
-    source.start();
+    const audio = new Audio(url) as HTMLAudioElement & SinkCapable;
+    audio.volume = volume;
+    const sink = outputSinkId();
+    const routed = sink && audio.setSinkId ? audio.setSinkId(sink).catch(() => {}) : Promise.resolve();
+    void routed.then(() => audio.play()).catch(() => {});
   } catch {
-    // Autoplay policy, or no audio device.
+    // Nothing to recover: a sound that will not play is not an error.
   }
 }
 
-/** Events played from a decoded buffer rather than an `<audio>` element. */
-const PRE_DECODED: ReadonlySet<SoundEvent> = new Set(["stream-start"]);
-
-/** Warm what a first sound would otherwise wait on: the reversed join, and
- *  the built-in files of the pre-decoded events. */
-export function prewarmSounds() {
-  void getReversedJoinBuffer();
-  for (const event of PRE_DECODED) {
-    const url = BUILT_IN[event];
-    if (url) void decodeSound(url);
+async function playBuffer(buffer: AudioBuffer, volume: number): Promise<boolean> {
+  const ctx = await runningCtx();
+  if (!ctx) return false;
+  try {
+    startBuffer(ctx, buffer, volume);
+    return true;
+  } catch {
+    return false;
   }
+}
+
+async function playDecodedOrElement(url: string, volume: number) {
+  const buffer = cachedBuffer(url);
+  if (buffer && (await playBuffer(buffer, volume))) return;
+  // Not decoded yet, or Web Audio would not run: play it the old way now, and
+  // have the buffer ready for next time.
+  playElement(url, volume);
+  if (!buffer) void decodeSound(url);
 }
 
 async function playReversedJoin(volume: number) {
-  const buffer = await getReversedJoinBuffer();
-  if (!buffer) return;
-  try {
-    const ctx = new AudioContext();
-    const source = ctx.createBufferSource();
-    const gain = ctx.createGain();
-    gain.gain.value = volume;
-    source.buffer = buffer;
-    source.connect(gain);
-    gain.connect(ctx.destination);
-    source.start();
-    source.onended = () => void ctx.close();
-  } catch {
-    // Autoplay policy, or no audio device.
-  }
+  const asked = performance.now();
+  const buffer = await reversedJoinBuffer();
+  // A leave heard a second after the person left is not about them any more.
+  if (!buffer || performance.now() - asked > 1000) return;
+  await playBuffer(buffer, volume);
 }
 
 /** Play whatever was held, once. A second call after it is nothing. */
@@ -142,20 +256,12 @@ export function playDeferredArrivalSound() {
   if (sound) playSoundUrl(sound.url, sound.gain);
 }
 
-// ─── Playback ────────────────────────────────────────────────────────────────
-
 /** Play an arbitrary sound file, honouring the listener's settings. */
 export function playSoundUrl(url: string, gain = 1) {
   if (!url) return;
   const settings = loadSoundSettings();
   if (!settings.enabled || settings.volume === 0) return;
-  try {
-    const audio = new Audio(url);
-    audio.volume = clampVolume(settings.volume * gain);
-    void audio.play().catch(() => {});
-  } catch {
-    // Nothing to recover: a sound that will not play is not an error.
-  }
+  void playDecodedOrElement(url, clampVolume(settings.volume * gain));
 }
 
 /**
@@ -172,11 +278,6 @@ export function playSound(event: SoundEvent, pack?: SoundPack) {
   const url = resolveSound(event, pack);
   if (url === null) {
     void playReversedJoin(clampVolume(settings.volume * gain));
-    return;
-  }
-  if (PRE_DECODED.has(event)) {
-    // A room's replacement is decoded on its first play and instant after.
-    void playDecoded(url, clampVolume(settings.volume * gain));
     return;
   }
   playSoundUrl(url, gain);

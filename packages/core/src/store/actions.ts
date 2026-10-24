@@ -196,6 +196,10 @@ export function createStoreActions(ctx: StoreContext) {
       roomInfoMap[roomId] = roomInfoFromSync(roomId, syncData.rooms?.join?.[roomId]);
     }
     dispatch({ type: "SET_ROOMS", payload: { roomIds: data.joined_rooms, roomInfoMap } });
+    // A pack's first mention or join should be as quick as a built-in one.
+    host.prewarmSounds(
+      Object.values(roomInfoMap).flatMap((info) => Object.values(info.sounds || {}) as string[]),
+    );
   };
 
   // Unread counts are derived server-side from stored read markers, so they
