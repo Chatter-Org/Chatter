@@ -337,6 +337,19 @@ function packFor(stateRef: MutableRefObject<AppState>, roomId: string): SoundPac
   return stateRef.current.roomInfoMap[roomId]?.sounds as SoundPack | undefined;
 }
 
+/** A new screen share or webcam is announced to the call it is in — the
+ *  sharer included, whose own client hears the server's echo — and to nobody
+ *  else in the room. */
+function playStreamStartIfInCall(
+  msg: { room_id: string; channel_id?: string },
+  stateRef: MutableRefObject<AppState>,
+) {
+  const s = stateRef.current;
+  if (!s.inVoiceChannel) return;
+  const inCall = msg.channel_id ? msg.channel_id === s.voiceChannelId : msg.room_id === s.voiceRoomId;
+  if (inCall) host.playSound("stream-start", packFor(stateRef, msg.room_id));
+}
+
 /** The server sets this when the sender lacks the mention_everyone permission:
  *  the @role still renders, it just must not ping anyone. */
 function roleMentionsSuppressed(msg: { content?: { suppress_role_mentions?: boolean } }): boolean {
@@ -865,6 +878,7 @@ export function createWsMessageHandler(
       patchVoiceMember(msg, stateRef, dispatch, () => ({ deafened: msg.deafened as boolean }));
     } else if (msg.type === "screen_share_started") {
       patchVoiceMember(msg, stateRef, dispatch, () => ({ screen_sharing: true }));
+      playStreamStartIfInCall(msg, stateRef);
       const isVoiceRoom = msg.room_id === stateRef.current.currentRoomId || msg.room_id === stateRef.current.voiceRoomId;
       if (isVoiceRoom) {
         // Only the badge, never the viewer: watching is opt-in, so someone
@@ -889,6 +903,7 @@ export function createWsMessageHandler(
       // the sidebar draws a camera on rooms you are not looking at, and it
       // cannot do that from state kept only for the room you are in.
       patchVoiceMember(msg, stateRef, dispatch, () => ({ webcam_sharing: true }));
+      playStreamStartIfInCall(msg, stateRef);
       const isVoiceRoom = msg.room_id === stateRef.current.currentRoomId || msg.room_id === stateRef.current.voiceRoomId;
       if (isVoiceRoom) {
         // Opt-in, the same as a screen share above.

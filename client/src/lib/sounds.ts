@@ -51,9 +51,71 @@ async function getReversedJoinBuffer(): Promise<AudioBuffer | null> {
   }
 }
 
-/** Warm the reversed buffer so the first leave is not silent while it decodes. */
+// ─── Pre-decoded effects ─────────────────────────────────────────────────────
+// A stream start has to land with the stream, and `new Audio(url)` fetches and
+// decodes on every play — a noticeable beat late on a cold cache. So the file
+// is decoded once, up front, and played from memory on one long-lived context.
+
+let sharedCtx: AudioContext | null = null;
+const decoded = new Map<string, AudioBuffer>();
+const decoding = new Map<string, Promise<AudioBuffer | null>>();
+
+function audioContext(): AudioContext {
+  if (!sharedCtx) sharedCtx = new AudioContext();
+  return sharedCtx;
+}
+
+function decodeSound(url: string): Promise<AudioBuffer | null> {
+  const ready = decoded.get(url);
+  if (ready) return Promise.resolve(ready);
+  let pending = decoding.get(url);
+  if (!pending) {
+    pending = fetch(url)
+      .then((response) => response.arrayBuffer())
+      // Decoded offline: a live context made at page load, before any click,
+      // only starts suspended and warns. The buffer plays on any context.
+      .then((data) => new OfflineAudioContext(2, 1, 48000).decodeAudioData(data))
+      .then((buffer) => {
+        decoded.set(url, buffer);
+        return buffer;
+      })
+      .catch(() => null)
+      .finally(() => decoding.delete(url));
+    decoding.set(url, pending);
+  }
+  return pending;
+}
+
+async function playDecoded(url: string, volume: number) {
+  const buffer = await decodeSound(url);
+  if (!buffer) return;
+  try {
+    const ctx = audioContext();
+    // Suspended until the page has been interacted with; anyone in a call has.
+    if (ctx.state === "suspended") void ctx.resume();
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    gain.gain.value = volume;
+    source.buffer = buffer;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start();
+  } catch {
+    // Autoplay policy, or no audio device.
+  }
+}
+
+/** Events played from a decoded buffer rather than an `<audio>` element. */
+const PRE_DECODED: ReadonlySet<SoundEvent> = new Set(["stream-start"]);
+
+/** Warm what a first sound would otherwise wait on: the reversed join, and
+ *  the built-in files of the pre-decoded events. */
 export function prewarmSounds() {
   void getReversedJoinBuffer();
+  for (const event of PRE_DECODED) {
+    const url = BUILT_IN[event];
+    if (url) void decodeSound(url);
+  }
 }
 
 async function playReversedJoin(volume: number) {
@@ -110,6 +172,11 @@ export function playSound(event: SoundEvent, pack?: SoundPack) {
   const url = resolveSound(event, pack);
   if (url === null) {
     void playReversedJoin(clampVolume(settings.volume * gain));
+    return;
+  }
+  if (PRE_DECODED.has(event)) {
+    // A room's replacement is decoded on its first play and instant after.
+    void playDecoded(url, clampVolume(settings.volume * gain));
     return;
   }
   playSoundUrl(url, gain);

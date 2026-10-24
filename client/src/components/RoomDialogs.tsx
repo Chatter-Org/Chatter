@@ -61,6 +61,7 @@ const SOUND_EVENT_LABELS: { event: SoundEvent; label: string }[] = [
   { event: "voice-leave", label: "Voice leave" },
   { event: "mute", label: "Mute" },
   { event: "unmute", label: "Unmute" },
+  { event: "stream-start", label: "Stream start" },
 ];
 import { useConfirm } from "@/components/ConfirmDialog";
 

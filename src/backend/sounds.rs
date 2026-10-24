@@ -16,8 +16,14 @@ use std::sync::Arc;
 
 /// The events a room's pack can replace. Anything not listed is not settable,
 /// so a pack cannot invent an event the client will never play.
-pub(crate) const PACK_EVENTS: [&str; 5] =
-    ["mention", "voice-join", "voice-leave", "mute", "unmute"];
+pub(crate) const PACK_EVENTS: [&str; 6] = [
+    "mention",
+    "voice-join",
+    "voice-leave",
+    "mute",
+    "unmute",
+    "stream-start",
+];
 
 /// The longest a chosen sound may run.
 ///

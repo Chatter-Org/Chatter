@@ -217,6 +217,12 @@ The first registered user is automatically promoted to server admin. Admins have
 - Screenshare audio is currently not supported (this is a browser limitation). To be fixed with native clients in the future. 
 ---
 
+## Credits
+
+- Stream start sound (`external/stream-start.wav`): ["ui sound 9.wav"](https://freesound.org/people/nezuai/sounds/582608/) by [nezuai](https://freesound.org/people/nezuai/), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Converted to 16-bit PCM.
+
+---
+
 ## License
 
 See [LICENSE](LICENSE) for details.
