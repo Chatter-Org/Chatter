@@ -56,6 +56,7 @@ docker build -t chatter . && docker run -p 8000:8000 chatter
 | Voice, screen share, webcams, spatial channels, the SFU | `docs/design/voice.md` |
 | Themes, profile themes, presence/idle, sidebar and rail, sounds, drafts, the composer | `docs/design/client-ui.md` |
 | The desktop app's bridge and voice media backends | `docs/design/desktop.md` |
+| Signing in to several servers at once (proposal) | `docs/design/multi-server.md` |
 | WebRTC architecture overview | `docs/webrtc-architecture.md` |
 
 When you change behaviour a note describes, update the note in the same commit.
