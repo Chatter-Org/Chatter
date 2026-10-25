@@ -179,6 +179,22 @@ function RowContent({
     );
   }
 
+  if (message.content.msgtype === "m.watchparty") {
+    // The theater's notices ("X paused the video at 1:23"): the web's blue pill.
+    return (
+      <View className="flex-row items-center gap-2 px-2 py-1">
+        <View className="h-px flex-1 bg-border" />
+        <View className="rounded-full bg-blue-500/10 px-2 py-0.5">
+          <T className="text-xs font-medium text-blue-400/80" numberOfLines={1}>
+            {body}
+          </T>
+        </View>
+        <T className="text-2xs text-muted-foreground/80">{time}</T>
+        <View className="h-px flex-1 bg-border" />
+      </View>
+    );
+  }
+
   return (
     <View className="flex-row items-start gap-1.5">
       {/* h-7: the web's avatar below 768px; grouped rows keep its width. */}

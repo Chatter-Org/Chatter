@@ -1,5 +1,5 @@
 import Constants from "expo-constants";
-import { configureApi } from "@chatter/core/api";
+import { configureApi, getAccessToken } from "@chatter/core/api";
 
 /**
  * Which Chatter server this app talks to.
@@ -92,4 +92,21 @@ export function serverAsset(path: string | null | undefined): string | undefined
   if (!path) return undefined;
   if (/^[a-z]+:/i.test(path)) return path;
   return currentServer() + (path.startsWith("/") ? path : `/${path}`);
+}
+
+/**
+ * The session header for a request to `url` — only when it goes to this
+ * server. A message, a theater or a profile can point at any site, and the
+ * session must not go along to it (a picture from a GIF site was sent it).
+ */
+export function sessionHeaders(url: string | null | undefined): Record<string, string> | undefined {
+  const token = getAccessToken();
+  if (!token || !url) return undefined;
+  let mine: boolean;
+  try {
+    mine = new URL(url, currentServer()).origin === new URL(currentServer()).origin;
+  } catch {
+    mine = false;
+  }
+  return mine ? { Authorization: `Bearer ${token}` } : undefined;
 }

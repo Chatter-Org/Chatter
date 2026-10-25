@@ -99,6 +99,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
             "-keepclasseswithmembers class * { @org.jni_zero.CalledByNativeUnchecked <methods>; }",
             "-keepclasseswithmembers class * { @org.jni_zero.AccessedByNative <fields>; }",
             "-keep class com.facebook.react.runtime.cxxreactpackage.** { *; }",
+            // Cast finds its options provider by the name in the manifest.
+            "-keep class com.reactnative.googlecast.** { *; }",
             "-dontwarn org.webrtc.Dav1dDecoder$Natives",
             "-dontwarn org.jni_zero.CommonApisJni",
             "-dontwarn org.jni_zero.JniZeroJni",
@@ -130,6 +132,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         cameraPermission: "Chatter uses the camera for video in calls.",
         microphonePermission: "Chatter uses the microphone for voice chat.",
       },
+    ],
+    [
+      // Casting a message's video, as the web does: Google's Default Media
+      // Receiver (the web's receiver id), with the phone's own player screen
+      // for a cast in progress.
+      "react-native-google-cast",
+      { receiverAppId: "CC1AD845", expandedController: true, androidPlayServicesCastFrameworkVersion: "22.3.1" },
     ],
     "./plugins/withLongPathCmake",
     "./plugins/withReleaseSigning",

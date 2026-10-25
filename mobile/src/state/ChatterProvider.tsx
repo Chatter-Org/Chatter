@@ -28,6 +28,7 @@ import type { VoicePeer } from "@chatter/core/voice/media";
 import { decideVoiceRejoin } from "@chatter/core/voice/rejoin";
 import { subscribeVoiceSettings } from "@chatter/core/voice/settings";
 import { showToast } from "@/platform/toast";
+import { emit } from "@/platform/events";
 import { createNativeVoiceBackend } from "@/voice/nativeBackend";
 import { clearSpeaking, noteSpeakingFrame } from "@/voice/speaking";
 import { useCallService } from "@/voice/useCallService";
@@ -69,6 +70,11 @@ export interface ChatterActions extends StoreActions {
   enrollTotp(code: string): Promise<{ recoveryCodes: string[] }>;
   /** Delete the account, then end the session here as signing out does. */
   deleteAccount(totpCode: string): Promise<void>;
+  /** Send a frame on the socket as it is (the web's wsRef.current.send), for
+   *  the screens that speak their own part of the protocol: the theater, the
+   *  whiteboard. False, and nothing sent, while the socket is down; the
+   *  "socket_reopened" event says when to catch up. */
+  send(frame: Record<string, unknown>): boolean;
   /** Voice, through the shared engine (@chatter/core/voice/engine). */
   voice: {
     join(channelId: string): Promise<void>;
@@ -337,6 +343,7 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         void shared.recoverMissedMessages();
         dispatch({ type: "CLEAR_SCREEN_VIEWERS" });
         rejoinVoice();
+        emit("socket_reopened");
       }
       droppedAt.current = null;
       hasConnectedRef.current = true;
@@ -534,6 +541,12 @@ export function ChatterProvider({ children }: { children: ReactNode }) {
         if (data.is_admin !== undefined) dispatch({ type: "SET_IS_ADMIN", payload: !!data.is_admin });
         dispatch({ type: "SET_TOTP_VERIFIED", payload: true });
         return { recoveryCodes: data.recovery_codes ?? [] };
+      },
+      send(frame) {
+        const ws = socketRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        ws.send(JSON.stringify(frame));
+        return true;
       },
       async deleteAccount(totpCode) {
         await apiDeleteAccount(totpCode);

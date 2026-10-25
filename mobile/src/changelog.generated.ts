@@ -18,7 +18,11 @@ export const CHANGELOG: ChangelogRelease[] = [
       {
         "title": "New",
         "items": [
-          "You can turn vibration off. Settings → Appearance → Haptic feedback."
+          "Theater channels work on your phone. Watch together in sync: YouTube links, uploaded videos or any video link. Play, pause and skip for everyone, react with emoji at a moment in the video, and see who's watching. Turn your phone on its side for a bigger picture.",
+          "Whiteboard channels work on your phone. Draw together live with the pen, eraser, lines, rectangles, ellipses and fill, in any colour and size. Pinch to zoom, undo your last stroke, and send the board into the chat as a picture.",
+          "Cast videos to your TV. Tap the cast button on a video in a message to play it on a Chromecast.",
+          "You can turn vibration off. Settings → Appearance → Haptic feedback.",
+          "Settings → What's new shows these notes in the app."
         ]
       },
       {
@@ -33,7 +37,8 @@ export const CHANGELOG: ChangelogRelease[] = [
         "items": [
           "Channels remember your place. A channel opens at the \"New\" line if messages came in while you were away, where you left off if you had scrolled up, and otherwise at the newest message.",
           "Opening a channel no longer loads a page of older messages it didn't need, so channels open faster.",
-          "Typing @ in a forum post or reply now suggests people and roles, as it does in chat."
+          "Typing @ in a forum post or reply now suggests people and roles, as it does in chat.",
+          "Pictures, videos and files from other websites (a GIF, for example) no longer receive your sign-in. It only goes to your own Chatter server."
         ]
       }
     ]
