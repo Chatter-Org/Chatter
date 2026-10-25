@@ -18,8 +18,11 @@ const GRID_SPEAKING_POLL_MS = 150;
 /** The strip under a focused feed shows this many tiles; past it, the last
  *  one becomes a count of the rest. */
 const STRIP_MAX_TILES = 10;
-/** Strip tile height bounds, px. Below the minimum the strip scrolls instead. */
+/** Strip tile height bounds, px. Below the minimum the strip scrolls instead;
+ *  the maximum, and the share of the panel, keep the stream the main thing. */
 const STRIP_MIN_TILE_H = 64;
+const STRIP_MAX_TILE_H = 140;
+const STRIP_MAX_PANEL_SHARE = 0.2;
 /** The strip's gap, and the space between it and the stream, px. */
 const STRIP_GAP = 12;
 const STRIP_PAD = 8;
@@ -1030,13 +1033,14 @@ export function ScreenShareViewer({
 
         // Tiles are 16:9 and as big as the room allows: as wide as an even
         // share of the row, and as tall as what the stream at full width
-        // leaves under it. The Grid button is a square of the same height.
+        // leaves under it, up to a cap that keeps them thumbnails. The Grid
+        // button is a square of the same height.
         const slots = tiles.length + (hasGrid ? 1 : 0);
         const rowWidth = panelBox.width - 2 * STRIP_PAD - STRIP_GAP * Math.max(0, slots - 1);
         const byWidth = rowWidth / (tiles.length * (16 / 9) + (hasGrid ? 1 : 0));
         const byHeight = panelBox.height - panelBox.width * videoAspect - STRIP_GAP - STRIP_PAD;
         const tileH = Math.floor(
-          Math.max(STRIP_MIN_TILE_H, Math.min(byWidth, byHeight, panelBox.height / 2)),
+          Math.max(STRIP_MIN_TILE_H, Math.min(byWidth, byHeight, STRIP_MAX_TILE_H, panelBox.height * STRIP_MAX_PANEL_SHARE)),
         );
         const tileW = Math.floor((tileH * 16) / 9);
         const box = { width: tileW, height: tileH };
