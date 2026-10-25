@@ -15,14 +15,14 @@ import { Eye, LayoutGrid, Maximize2, Monitor, Video, X } from "lucide-react";
 /** How often the grid re-reads who is speaking, for the ring round a tile. */
 const GRID_SPEAKING_POLL_MS = 150;
 
-/** The strip under a focused feed shows this many tiles; past it, the last
- *  one becomes a count of the rest. */
-const STRIP_MAX_TILES = 10;
+/** The strip under a focused feed shows this many tiles, chosen by who spoke
+ *  last. */
+const STRIP_MAX_TILES = 5;
 /** Strip tile height bounds, px. Below the minimum the strip scrolls instead;
  *  the maximum, and the share of the panel, keep the stream the main thing. */
 const STRIP_MIN_TILE_H = 64;
-const STRIP_MAX_TILE_H = 140;
-const STRIP_MAX_PANEL_SHARE = 0.2;
+const STRIP_MAX_TILE_H = 120;
+const STRIP_MAX_PANEL_SHARE = 0.18;
 /** The strip's gap, and the space between it and the stream, px. */
 const STRIP_GAP = 12;
 const STRIP_PAD = 8;
@@ -436,11 +436,13 @@ export function ScreenShareViewer({
   const gridVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
   const gridContainerRef = useRef<HTMLDivElement | null>(null);
   const [gridBox, setGridBox] = useState({ width: 0, height: 0 });
-  // The focused layout's panel, and the focused feed's height over its width:
-  // between them they say how much room the stream leaves for the strip.
+  // The focused layout's panel, measured to size the strip's tiles.
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [panelBox, setPanelBox] = useState({ width: 0, height: 0 });
-  const [videoAspect, setVideoAspect] = useState(9 / 16);
+  // When each person last spoke, for picking who the strip shows. Stamped
+  // as someone starts or stops, so it changes only when `speaking` does.
+  const [lastSpoke, setLastSpoke] = useState<Map<string, number>>(() => new Map());
+  const sampledSpeakingRef = useRef<Set<string>>(new Set());
   const [speaking, setSpeaking] = useState<Set<string>>(() => new Set());
   const [, setStreamVersion] = useState(0);
 
@@ -700,9 +702,17 @@ export function ScreenShareViewer({
     if (compact || !speakingUsersRef) return;
     const id = setInterval(() => {
       const next = speakingUsersRef.current;
-      setSpeaking((prev) =>
-        prev.size === next.size && [...next].every((u) => prev.has(u)) ? prev : new Set(next),
-      );
+      const prev = sampledSpeakingRef.current;
+      if (prev.size === next.size && [...next].every((u) => prev.has(u))) return;
+      const sample = new Set(next);
+      sampledSpeakingRef.current = sample;
+      setSpeaking(sample);
+      const now = Date.now();
+      setLastSpoke((stamps) => {
+        const out = new Map(stamps);
+        for (const userId of [...prev, ...sample]) out.set(userId, now);
+        return out;
+      });
     }, GRID_SPEAKING_POLL_MS);
     return () => clearInterval(id);
   }, [compact, speakingUsersRef]);
@@ -761,11 +771,6 @@ export function ScreenShareViewer({
     observer.observe(el);
     return () => observer.disconnect();
   }, [viewerVisible, compact, gridMode]);
-
-  const readAspect = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
-    const { videoWidth, videoHeight } = e.currentTarget;
-    if (videoWidth > 0 && videoHeight > 0) setVideoAspect(videoHeight / videoWidth);
-  }, []);
 
   if (
     !state.screenViewerOpen ||
@@ -867,14 +872,12 @@ export function ScreenShareViewer({
       className="flex flex-col min-h-0 h-full bg-black/95"
       style={compact ? undefined : { gap: STRIP_GAP }}
     >
-      {/* Main video. Full size it sits at the top at its own height, shrinking
-          to fit, so the strip follows straight under it rather than at the
-          bottom of the panel. */}
+      {/* Main video. It has every pixel above the strip, which sits on the
+          panel's bottom edge, and is centred in them — Discord's layout. */}
       <div
         ref={videoContainerRef}
         className={cn(
-          "bg-black min-h-0 relative group overflow-hidden",
-          compact ? "flex-1 flex items-center justify-center" : "flex flex-col",
+          "flex-1 flex items-center justify-center bg-black min-h-0 relative group overflow-hidden",
           // `active:` rather than the drag flag: that lives in a ref, which
           // never re-renders, so the grabbing cursor never actually appeared.
           zoom > 1 && "cursor-grab active:cursor-grabbing",
@@ -889,20 +892,18 @@ export function ScreenShareViewer({
         style={{ touchAction: "none" }}
       >
         {showingWebcam && focusedWebcam && webcamStreamsMap.has(focusedWebcam) ? (
-          <div className={cn("w-full", compact ? "h-full flex items-center justify-center" : "flex flex-col min-h-0")}>
+          <div className="w-full h-full flex items-center justify-center">
             <video
               ref={mainWebcamVideoRef}
               autoPlay
               playsInline
-              onLoadedMetadata={readAspect}
-              onResize={readAspect}
-              className={cn("object-contain w-full bg-black select-none", compact ? "h-full" : "min-h-0")}
+              className="object-contain w-full h-full bg-black select-none"
               draggable={false}
             />
           </div>
         ) : currentSharer && screenStreamsMap.has(currentSharer) ? (
           <div
-            className={cn("w-full", compact ? "h-full" : "flex flex-col min-h-0")}
+            className="w-full h-full"
             style={{
               transform: zoom > 1
                 ? `scale(${zoom}) translate(${pan.x / zoom}%, ${pan.y / zoom}%)`
@@ -915,9 +916,7 @@ export function ScreenShareViewer({
               ref={mainVideoRef}
               autoPlay
               playsInline
-              onLoadedMetadata={readAspect}
-              onResize={readAspect}
-              className={cn("object-contain w-full bg-black select-none", compact ? "h-full" : "min-h-0")}
+              className="object-contain w-full h-full bg-black select-none"
               draggable={false}
             />
           </div>
@@ -1011,11 +1010,11 @@ export function ScreenShareViewer({
       </div>
 
       {!compact && (() => {
-        // Every other feed, then everyone in the call, as one list: at most
-        // STRIP_MAX_TILES of them, the last a count of the rest when more.
-        type StripTile =
-          | { kind: "screen" | "cam" | "member"; userId: string; muted?: boolean }
-          | { kind: "more"; count: number };
+        // Every other feed, then everyone in the call. The strip shows the
+        // STRIP_MAX_TILES whose owners spoke last — feeds first while nobody
+        // has — in this order, so a tile does not hop along the row each
+        // time someone talks.
+        type StripTile = { kind: "screen" | "cam" | "member"; userId: string; muted?: boolean };
         const all: StripTile[] = [
           ...sharers
             .filter((id) => showingWebcam || id !== currentSharer)
@@ -1025,22 +1024,25 @@ export function ScreenShareViewer({
             .map((userId) => ({ kind: "cam" as const, userId })),
           ...voiceMembers.map((m) => ({ kind: "member" as const, userId: m.userId, muted: m.muted })),
         ];
-        const tiles: StripTile[] =
-          all.length > STRIP_MAX_TILES
-            ? [...all.slice(0, STRIP_MAX_TILES - 1), { kind: "more", count: all.length - (STRIP_MAX_TILES - 1) }]
-            : all;
+        const spokeAt = (t: StripTile) => lastSpoke.get(t.userId) ?? 0;
+        const picked = new Set(
+          all
+            .map((t, i) => ({ t, i }))
+            .sort((a, b) => spokeAt(b.t) - spokeAt(a.t) || a.i - b.i)
+            .slice(0, STRIP_MAX_TILES)
+            .map(({ t }) => t),
+        );
+        const tiles = all.filter((t) => picked.has(t));
         const hasGrid = feedCount > 1;
 
-        // Tiles are 16:9 and as big as the room allows: as wide as an even
-        // share of the row, and as tall as what the stream at full width
-        // leaves under it, up to a cap that keeps them thumbnails. The Grid
-        // button is a square of the same height.
+        // Tiles are 16:9, as wide as an even share of the row up to a cap
+        // that keeps them thumbnails. The Grid button is a square of the
+        // same height.
         const slots = tiles.length + (hasGrid ? 1 : 0);
         const rowWidth = panelBox.width - 2 * STRIP_PAD - STRIP_GAP * Math.max(0, slots - 1);
         const byWidth = rowWidth / (tiles.length * (16 / 9) + (hasGrid ? 1 : 0));
-        const byHeight = panelBox.height - panelBox.width * videoAspect - STRIP_GAP - STRIP_PAD;
         const tileH = Math.floor(
-          Math.max(STRIP_MIN_TILE_H, Math.min(byWidth, byHeight, STRIP_MAX_TILE_H, panelBox.height * STRIP_MAX_PANEL_SHARE)),
+          Math.max(STRIP_MIN_TILE_H, Math.min(byWidth, STRIP_MAX_TILE_H, panelBox.height * STRIP_MAX_PANEL_SHARE)),
         );
         const tileW = Math.floor((tileH * 16) / 9);
         const box = { width: tileW, height: tileH };
@@ -1063,18 +1065,6 @@ export function ScreenShareViewer({
               </button>
             )}
             {tiles.map((tile) => {
-              if (tile.kind === "more") {
-                return (
-                  <div
-                    key="more"
-                    className="flex shrink-0 items-center justify-center rounded-lg border-2 border-transparent bg-neutral-800 text-white/80 font-semibold select-none"
-                    style={{ ...box, fontSize: tileH * 0.3 }}
-                    title={`${tile.count} more`}
-                  >
-                    +{tile.count}
-                  </div>
-                );
-              }
               const { kind, userId } = tile;
               if (kind === "screen") {
                 return (
