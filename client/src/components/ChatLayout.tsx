@@ -5,6 +5,7 @@ import { useAppContext, screenStreamsMap } from "@/lib/store";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useScreenShareThumbnails } from "@/hooks/useScreenShareThumbnails";
+import { useDraggableThumb } from "@/hooks/useDraggableThumb";
 import { AppSidebar } from "./AppSidebar";
 import { ChatArea } from "./ChatArea";
 import { MembersPanel } from "./MembersPanel";
@@ -437,6 +438,8 @@ export function ChatLayout() {
       : isOnVoiceRoom && callView === "streams"
         ? "full"
         : "thumb";
+  // The thumbnail can be dragged off whatever it covers.
+  const thumbDrag = useDraggableThumb(videoPanelRef, viewerMode === "thumb");
 
   // Sync hidden video's srcObject with the selected screen sharer's stream
   useEffect(() => {
@@ -814,10 +817,12 @@ export function ChatLayout() {
                   // a strip that is mostly letterboxing.
                   <div
                     ref={videoPanelRef}
+                    style={thumbDrag.style}
+                    {...thumbDrag.handlers}
                     className={
                       viewerMode === "thumb"
                         ? cn(
-                            "group absolute right-3 z-20 aspect-video overflow-hidden rounded-lg border border-border bg-black shadow-xl",
+                            "group absolute right-3 z-20 aspect-video select-none overflow-hidden rounded-lg border border-border bg-black shadow-xl",
                             // Below the chat's own header, so its buttons stay reachable.
                             isMobile ? "top-12 w-40" : "top-16 w-72",
                             // Popped out to the browser's window, the page needs
