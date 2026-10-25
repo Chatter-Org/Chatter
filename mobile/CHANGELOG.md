@@ -13,12 +13,16 @@ How to keep this up to date:
   shows the same thing. CI fails if you forget.
 -->
 
-## Unreleased
+## 0.2.0 — October 25, 2026
 
 ### New
 - Theater channels work on your phone. Watch together in sync: YouTube links, uploaded videos or any video link. Play, pause and skip for everyone, react with emoji at a moment in the video, and see who's watching. Turn your phone on its side for a bigger picture.
 - Whiteboard channels work on your phone. Draw together live with the pen, eraser, lines, rectangles, ellipses and fill, in any colour and size. Pinch to zoom, undo your last stroke, and send the board into the chat as a picture.
 - Cast videos to your TV. Tap the cast button on a video in a message to play it on a Chromecast.
+- Report a message to a server's moderators: hold it and choose Report.
+- Server owners and moderators can mute, move or disconnect people in a voice channel: tap the shield next to their name.
+- Links to channels (#channel-name) in messages show as tappable pills that take you there.
+- If you're timed out, or a server asks you to accept its rules first, the message box says so, and you can read and accept the rules right there.
 - You can turn vibration off. Settings → Appearance → Haptic feedback.
 - Settings → What's new shows these notes in the app.
 

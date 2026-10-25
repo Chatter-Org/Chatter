@@ -14,7 +14,7 @@ const IS_DEV = process.env.APP_VARIANT === "development";
  * which only ever grows — Android installs an APK over an older one only when
  * its versionCode is higher.
  */
-const VERSION = process.env.CHATTER_VERSION ?? "0.1.0";
+const VERSION = process.env.CHATTER_VERSION ?? "0.2.0";
 const VERSION_CODE = Number(process.env.CHATTER_VERSION_CODE ?? "1");
 
 /**
