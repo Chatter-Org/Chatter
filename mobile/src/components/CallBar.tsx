@@ -3,7 +3,6 @@ import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { GestureDetector, usePanGesture, useTapGesture, useSimultaneousGestures } from "react-native-gesture-handler";
 import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
-import * as Haptics from "expo-haptics";
 import {
   Bluetooth,
   ChevronUp,
@@ -28,6 +27,7 @@ import type { LucideProps } from "lucide-react-native";
 import { displayUserId } from "@chatter/core/utils";
 import { readProfileAccent, speakingStyle } from "@chatter/core/profileTheme";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
+import { buzz } from "@/platform/haptics";
 import { useSpeaking } from "@/voice/speaking";
 import { useAudioRoutes } from "@/voice/useCallService";
 import { callService, type AudioRoute } from "../../modules/chatter-call";
@@ -177,10 +177,7 @@ function BarButton({
 }) {
   return (
     <Pressable
-      onPress={() => {
-        void Haptics.selectionAsync();
-        onPress();
-      }}
+      onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -200,7 +197,7 @@ function TalkButton({ talking, disabled, onTalk }: { talking: boolean; disabled?
   return (
     <Pressable
       onPressIn={() => {
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        buzz();
         onTalk(true);
       }}
       onPressOut={() => onTalk(false)}
@@ -494,10 +491,7 @@ function CallAction({
 }) {
   return (
     <Pressable
-      onPress={() => {
-        void Haptics.selectionAsync();
-        onPress();
-      }}
+      onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={label}

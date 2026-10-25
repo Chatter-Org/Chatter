@@ -3,7 +3,6 @@ import { Pressable, View } from "react-native";
 import { GestureDetector, useCompetingGestures, useLongPressGesture, usePanGesture } from "react-native-gesture-handler";
 import Animated, { interpolate, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
-import * as Haptics from "expo-haptics";
 import { EyeOff, MessagesSquare, MoreHorizontal, Reply } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
 import type { FormatOptions } from "@chatter/core/messageFormat";
@@ -18,6 +17,7 @@ import { MessageMedia } from "./MessageMedia";
 import { EmojiGlyph } from "./EmojiPickerSheet";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
+import { buzz } from "@/platform/haptics";
 import { useNameFont } from "@/ui/nameFonts";
 
 /** The web's avatar size below 768px (h-7). */
@@ -62,7 +62,6 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   const dx = useSharedValue(0);
   const armed = useSharedValue(false);
 
-  const buzz = () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
   const pan = usePanGesture({
     // Leftward only: rightward belongs to the panels.
     activeOffsetX: [-14, 100000],
@@ -90,7 +89,7 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   // never arrived. The two compete; moving first makes it a swipe.
   const pressed = useSharedValue(false);
   const hold = () => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    buzz("medium");
     onLongPress(message);
   };
   const longPress = useLongPressGesture({
@@ -171,6 +170,22 @@ function RowContent({
         <View className="h-px flex-1 bg-border" />
         <View className={cn("rounded-full px-2 py-0.5", left ? "bg-destructive/10" : "bg-success/10")}>
           <T className={cn("text-xs font-medium", left ? "text-destructive/80" : "text-success/80")} numberOfLines={1}>
+            {body}
+          </T>
+        </View>
+        <T className="text-2xs text-muted-foreground/80">{time}</T>
+        <View className="h-px flex-1 bg-border" />
+      </View>
+    );
+  }
+
+  if (message.content.msgtype === "m.watchparty") {
+    // The theater's notices ("X paused the video at 1:23"): the web's blue pill.
+    return (
+      <View className="flex-row items-center gap-2 px-2 py-1">
+        <View className="h-px flex-1 bg-border" />
+        <View className="rounded-full bg-blue-500/10 px-2 py-0.5">
+          <T className="text-xs font-medium text-blue-400/80" numberOfLines={1}>
             {body}
           </T>
         </View>

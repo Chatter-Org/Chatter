@@ -2,9 +2,8 @@ import { useEffect, useSyncExternalStore } from "react";
 import type { TextStyle } from "react-native";
 import { Directory, File, Paths } from "expo-file-system";
 import * as Font from "expo-font";
-import { getAccessToken } from "@chatter/core/api";
 import { isSafeNameFontUrl } from "@chatter/core/nameFont";
-import { serverAsset } from "@/platform/server";
+import { serverAsset, sessionHeaders } from "@/platform/server";
 
 /**
  * People's own fonts on their names — the web's `ensureFontFace` (fontFace.ts).
@@ -50,8 +49,8 @@ async function load(url: string) {
     if (!dir.exists) dir.create({ intermediates: true });
     let file = new File(dir, `${family}.${ext}`);
     if (!file.exists) {
-      const token = getAccessToken();
-      file = await File.downloadFileAsync(remote, file, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
+      const headers = sessionHeaders(remote);
+      file = await File.downloadFileAsync(remote, file, headers ? { headers } : undefined);
     }
     await Font.loadAsync({ [family]: file.uri });
     states.set(url, "ready");

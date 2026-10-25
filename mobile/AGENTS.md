@@ -47,6 +47,13 @@ and what is next.
   (`usePanGesture`, `GestureDetector`). Rightward swipes belong to the panels,
   leftward ones to messages (swipe to reply) unless they start at the edge.
 
+## The changelog
+
+A change people using the app would notice gets a line in `CHANGELOG.md`
+under "Unreleased" (New, Changed or Fixed), written for them: what changed,
+in plain words, no code names. It is shared as the release notes and shown in
+Settings → What's new, which `npm run changelog` generates from it.
+
 ## Building on Windows
 
 Long paths must be enabled, and a CMake ≥ 3.31 installed in the SDK
@@ -63,6 +70,7 @@ it. Test accounts live in `~/.chatter-dev/test-accounts.json`, outside the repo.
 
 ```bash
 npm run typecheck && npm run lint             # before calling anything done (CI runs both)
+npm run changelog                             # after editing CHANGELOG.md (CI checks it)
 npx expo install <package>                    # never npm install: picks the SDK's version
 npm run prebuild                              # regenerate android/ after app.config or modules/ change
 cd android && ./gradlew app:assembleDebug     # dev APK (APP_VARIANT=development); install with adb install -r

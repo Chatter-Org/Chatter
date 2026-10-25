@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
-import * as Haptics from "expo-haptics";
 import { Copy, Flag, Link2, MessagesSquare, Pencil, Pin, PinOff, Reply, SmilePlus, Trash2 } from "lucide-react-native";
 import { apiReportMessage, type MatrixMessage } from "@chatter/core/api";
 import { messageLinkFor } from "@chatter/core/messageLinks";
@@ -66,7 +65,6 @@ export function MessageActions({
     !!message && !mine && !deleted && message.content.msgtype !== "m.system" && !!room && !room.is_direct && room.moderation?.reports_enabled !== false;
 
   const run = (fn: () => void) => () => {
-    void Haptics.selectionAsync().catch(() => {});
     fn();
     onClose();
   };

@@ -7,6 +7,7 @@ import { apiCreateForumPost, apiEditForumPost, apiGetForumPost } from "@chatter/
 import { useChatter } from "@/state/ChatterProvider";
 import { AttachSheet, MAX_ATTACHMENTS } from "@/components/AttachSheet";
 import { Tile } from "@/components/Composer";
+import { ComposerSuggestions, useComposerSuggestions } from "@/components/ComposerSuggestions";
 import { TagPicker, uploadForumAttachments } from "@/components/forum/ForumParts";
 import { openForumPost } from "@/components/forum/ForumView";
 import { showToast } from "@/platform/toast";
@@ -35,6 +36,7 @@ export default function NewForumPost() {
 
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const mentions = useComposerSuggestions(body, setBody, { emoji: false });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [files, setFiles] = useState<PickedFile[]>([]);
   const [progress, setProgress] = useState<Record<number, number>>({});
@@ -127,7 +129,8 @@ export default function NewForumPost() {
             <TextField value={title} onChangeText={setTitle} placeholder="Post title" maxLength={200} autoFocus={!editId} />
           </Field>
           <Field label="Body (Optional)">
-            <TextField value={body} onChangeText={setBody} placeholder="Write your post content..." maxLength={4000} multiline className="min-h-28" />
+            <TextField value={body} onChangeText={setBody} {...mentions.input} placeholder="Write your post content..." maxLength={4000} multiline className="min-h-28" />
+            <ComposerSuggestions items={mentions.items} onPick={mentions.pick} />
           </Field>
           <TagPicker tags={tags} value={selectedTags} onChange={setSelectedTags} />
           {!editId ? (

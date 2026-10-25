@@ -10,6 +10,8 @@ import { ChatView } from "@/components/ChatView";
 import { ThreadView } from "./thread";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ForumView, openForumPost } from "@/components/forum/ForumView";
+import { TheaterView } from "@/components/theater/TheaterView";
+import { WhiteboardView } from "@/components/whiteboard/WhiteboardView";
 import { router } from "expo-router";
 import type { NotificationTarget } from "@chatter/core/notifications";
 import { on } from "@/platform/events";
@@ -68,11 +70,24 @@ function Conversation() {
   const channel = state.channels.find((c) => c.channel_id === state.currentChannelId);
   const room = state.currentRoomId ? state.roomInfoMap[state.currentRoomId] : undefined;
   const forum = channel?.channel_type === "forum" || (!channel && room?.room_type === "forum");
+  // A theater (a watch party room, before channels) shows its video over the
+  // conversation; a whiteboard is a canvas with the conversation a tap away.
+  const theater = channel?.channel_type === "theater" || (!channel && room?.room_type === "watchparty");
+  const whiteboard = channel?.channel_type === "whiteboard" || (!channel && room?.room_type === "whiteboard");
+  const scope = `${state.currentRoomId}|${channel?.channel_id ?? ""}`;
   return (
     <View className="flex-1 bg-background" style={leftDocked ? { borderLeftWidth: 0 } : undefined}>
       <ChatHeader />
       <StreamOptInBar />
-      {forum ? <ForumView key={`${state.currentRoomId}|${channel?.channel_id ?? ""}`} /> : <ChatView />}
+      {forum ? (
+        <ForumView key={scope} />
+      ) : theater ? (
+        <TheaterView key={scope} />
+      ) : whiteboard ? (
+        <WhiteboardView key={scope} />
+      ) : (
+        <ChatView />
+      )}
     </View>
   );
 }

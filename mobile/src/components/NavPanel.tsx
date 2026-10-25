@@ -2,7 +2,6 @@ import { memo, useEffect, useMemo, useState, type ComponentType, type ReactNode 
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
-import * as Haptics from "expo-haptics";
 import { router, type Href } from "expo-router";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
@@ -67,7 +66,6 @@ const CHANNEL_ICON: Record<Channel["channel_type"], ComponentType<LucideProps>> 
 };
 
 const holdsCall = (c: Channel) => c.channel_type === "voice" || c.channel_type === "spatial";
-const tick = () => void Haptics.selectionAsync().catch(() => {});
 
 export function NavPanel({ rail, onRail }: { rail: RailSelection; onRail(selection: RailSelection): void }) {
   const state = useChatter();
@@ -95,7 +93,6 @@ export function NavPanel({ rail, onRail }: { rail: RailSelection; onRail(selecti
   const me = state.userId ? state.userPresence[state.userId] : undefined;
 
   const pickServer = (roomId: string) => {
-    tick();
     onRail({ kind: "server", roomId });
     if (state.currentRoomId !== roomId) void selectRoom(roomId).catch(() => {});
   };
@@ -113,7 +110,6 @@ export function NavPanel({ rail, onRail }: { rail: RailSelection; onRail(selecti
           unread={dmUnread}
           mentions={dmMentions}
           onPress={() => {
-            tick();
             onRail({ kind: "dms" });
           }}
         >
@@ -283,7 +279,6 @@ function ChannelList({ roomId }: { roomId: string }) {
   }, [state.channels, state.channelCategories]);
 
   const open = (channel: Channel) => {
-    tick();
     // A voice channel is a call: tapping it walks in (as on the web), and the
     // conversation on screen stays where it was.
     if (holdsCall(channel)) {
@@ -434,7 +429,6 @@ function ThreadPreviews({ channel }: { channel: Channel }) {
   const threads = state.channelThreads[channel.channel_id];
   if (!threads?.length) return null;
   const open = async (threadId: string) => {
-    tick();
     panels.close();
     if (state.currentChannelId !== channel.channel_id) await selectChannel(channel.channel_id).catch(() => {});
     void openThread(threadId).catch(() => {});
@@ -523,10 +517,7 @@ function Occupant({ member, channel }: { member: VoiceChannelMember; channel: Ch
       {canModerate ? (
         <>
           <Pressable
-            onPress={() => {
-              tick();
-              setModerating(true);
-            }}
+            onPress={() => setModerating(true)}
             accessibilityRole="button"
             accessibilityLabel={`Moderate ${name}`}
             hitSlop={8}
@@ -621,7 +612,6 @@ function DmList({ rooms }: { rooms: RoomInfo[] }) {
                 )
               }
               onPress={() => {
-                tick();
                 if (state.currentRoomId !== room.room_id) void selectRoom(room.room_id).catch(() => {});
                 close();
               }}

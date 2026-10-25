@@ -18,7 +18,7 @@ import { SettingsSection } from "@/ui/settings";
  * responses, and files fetched to open or share. Not what the picker copied
  * in — a staged upload still points at it — nor the dev tools' own.
  */
-const CLEARABLE = ["image_cache", "image_manager_disk_cache", "ExpoVideoCache", "http-cache", "shared", "downloads"];
+const CLEARABLE = ["image_cache", "image_manager_disk_cache", "ExpoVideoCache", "http-cache", "shared", "downloads", "whiteboard"];
 
 function clearable(): Directory[] {
   return CLEARABLE.map((name) => new Directory(Paths.cache, name)).filter((d) => d.exists);

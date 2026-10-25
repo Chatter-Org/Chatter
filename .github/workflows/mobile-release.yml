@@ -118,7 +118,14 @@ jobs:
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
+        # The notes are this version's section of CHANGELOG.md, written for the
+        # people installing it; the commit list if it has none.
         run: |
+          if node scripts/changelog.mjs --notes "$CHATTER_VERSION" > dist/notes.md; then
+            notes=(--notes-file dist/notes.md)
+          else
+            notes=(--generate-notes)
+          fi
           gh release create "$GITHUB_REF_NAME" dist/*.apk \
             --title "Chatter for Android ${CHATTER_VERSION}" \
-            --generate-notes
+            "${notes[@]}"

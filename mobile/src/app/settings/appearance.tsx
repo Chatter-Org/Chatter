@@ -8,17 +8,19 @@ import { currentServer } from "@/platform/server";
 import { showToast } from "@/platform/toast";
 import { SYSTEM_THEME, customThemeColors, useTheme } from "@/theme/ThemeProvider";
 import { THEME_COLORS, type ThemeColors } from "@/theme/themes.generated";
-import { Button } from "@/ui/controls";
+import { Button, Switch } from "@/ui/controls";
 import { ScreenHeader } from "@/ui/ScreenHeader";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
+import { updateDevicePrefs, useDevicePrefs } from "@/state/devicePrefs";
 import { UI_HEADING, UI_HINT } from "@/ui/roles";
 import { Field, TextField } from "@/ui/settings";
 
 /**
  * How Chatter looks — the web's Appearance dialog: the built-in themes, the
  * ones you made (synced with your account, so the web's are here too), and
- * making, importing and sharing one.
+ * making, importing and sharing one. Then how it feels to touch: the phone's
+ * buzz, which is this device's own.
  */
 export default function AppearanceSettings() {
   const theme = useTheme();
@@ -28,6 +30,7 @@ export default function AppearanceSettings() {
   const [importError, setImportError] = useState("");
   const system = THEME_COLORS[theme.mode === "light" ? "light" : "dark"];
   const activeCustom = theme.customThemes.find((t) => t.id === theme.preference);
+  const prefs = useDevicePrefs();
 
   const doImport = () => {
     try {
@@ -115,6 +118,17 @@ export default function AppearanceSettings() {
               </Button>
             </Field>
           ) : null}
+        </View>
+
+        <View className="gap-3">
+          <T className={UI_HEADING}>Touch</T>
+          <View className="flex-row items-center gap-3">
+            <View className="flex-1 gap-0.5">
+              <T className="text-sm">Haptic feedback</T>
+              <T className={UI_HINT}>A short buzz when a swipe will reply, when you hold a message, and when push to talk goes live. Kept on this device.</T>
+            </View>
+            <Switch value={prefs.haptics} onValueChange={(haptics) => updateDevicePrefs({ haptics })} accessibilityLabel="Haptic feedback" />
+          </View>
         </View>
       </ScrollView>
     </View>

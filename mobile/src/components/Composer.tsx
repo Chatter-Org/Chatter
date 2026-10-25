@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, TextInput, View } from "react-native";
 import { Image } from "expo-image";
-import * as Haptics from "expo-haptics";
 import { CornerUpRight, File as FileIcon, Plus, RotateCw, SendHorizontal, Smile, X } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
 import { discardOutgoing, enqueueOutgoing, retryOutgoing, isSameTarget, type OutgoingTarget } from "@chatter/core/outgoingUploads";
@@ -15,16 +14,8 @@ import { GifPickerSheet } from "./GifPickerSheet";
 import { AttachSheet, MAX_ATTACHMENTS } from "./AttachSheet";
 import { EmojiPickerSheet } from "./EmojiPickerSheet";
 import { isCustomEmojiUrl } from "@chatter/core/emojiCatalog";
-import { findMentionMatches } from "@chatter/core/mentions";
-import {
-  completeToken,
-  findShortcodeMatches,
-  resolveShortcodes,
-  roomShortcodes,
-  shortcodeInsert,
-  tokenAtCaret,
-} from "@chatter/core/composerTokens";
-import { ComposerSuggestions, type Suggestion } from "./ComposerSuggestions";
+import { resolveShortcodes } from "@chatter/core/composerTokens";
+import { ComposerSuggestions, useComposerSuggestions } from "./ComposerSuggestions";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { useTheme } from "@/theme/ThemeProvider";
@@ -83,30 +74,6 @@ ${shared.text}` : shared.text));
     }
   }, [shared, takenShare]);
 
-  // Where the caret is, for the "@" and ":" suggestions; and a caret position
-  // to put it at after a suggestion is taken (the box otherwise leaves it at
-  // the end of the new text).
-  const [selection, setSelection] = useState({ start: 0, end: 0 });
-  const [placeCaret, setPlaceCaret] = useState<{ start: number; end: number } | undefined>();
-  const shortcodes = useMemo(() => roomShortcodes(room?.emoji_aliases), [room?.emoji_aliases]);
-  const token = selection.start === selection.end ? tokenAtCaret(text, selection.end) : null;
-  const suggestions = useMemo<Suggestion[]>(() => {
-    if (!token) return [];
-    if (token.kind === "mention") return findMentionMatches(state, token.query).map((match) => ({ kind: "mention", match }));
-    return findShortcodeMatches(shortcodes, token.query, 5).map((m) => ({ kind: "emoji", ...m }));
-    // The token's fields, not the object, which is new on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token?.kind, token?.query, shortcodes, state.roomMembers, state.customRoles, state.currentRoomId, state.roomInfoMap]);
-
-  const takeSuggestion = (item: Suggestion) => {
-    if (!token) return;
-    const insert = item.kind === "mention" ? `@${item.match.name}` : shortcodeInsert(item.value);
-    const next = completeToken(text, token, insert);
-    onChange(next.text);
-    setPlaceCaret({ start: next.caret, end: next.caret });
-    setSelection({ start: next.caret, end: next.caret });
-  };
-
   const here: OutgoingTarget | null = !state.currentRoomId
     ? null
     : threadEventId
@@ -125,6 +92,10 @@ ${shared.text}` : shared.text));
     if (roomId) draftTimer.current = setTimeout(() => void actions.saveDraft(roomId, channelId, value), 800);
   };
 
+  // The "@" and ":" suggestions over the box.
+  const suggestions = useComposerSuggestions(text, onChange);
+  const { shortcodes } = suggestions;
+
   const clearDraft = () => {
     setText("");
     if (draftTimer.current) clearTimeout(draftTimer.current);
@@ -135,7 +106,6 @@ ${shared.text}` : shared.text));
     // A ":name:" typed out in full becomes its emoji, as on the web.
     const body = resolveShortcodes(text.trim(), shortcodes);
     if (!canSend || sending || !state.currentRoomId) return;
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 
     // With files, the send is handed to the shared queue whole — destination
     // included — so it lands where it was written even if the reader moves on.
@@ -174,8 +144,9 @@ ${shared.text}` : shared.text));
   };
 
   return (
-    // ChatArea's composer at phone width: a top border, p-2.
-    <View className="border-t border-border bg-background p-2" style={{ paddingBottom: Math.max(8, bottomInset) }}>
+    // ChatArea's composer at phone width: a top border, and a little less
+    // padding than the web's p-2, which takes a lot of a phone's height.
+    <View className="border-t border-border bg-background px-2 pt-1.5" style={{ paddingBottom: Math.max(6, bottomInset) }}>
       {outgoing.map((batch) => {
         const elsewhere = !here || !isSameTarget(batch.target, here);
         return (
@@ -230,7 +201,7 @@ ${shared.text}` : shared.text));
         </View>
       ) : null}
 
-      <ComposerSuggestions items={suggestions} onPick={takeSuggestion} />
+      <ComposerSuggestions items={suggestions.items} onPick={suggestions.pick} />
 
       {staged.length > 0 ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-2 pb-2">
@@ -251,27 +222,25 @@ ${shared.text}` : shared.text));
           disabled={staged.length >= MAX_ATTACHMENTS}
           accessibilityRole="button"
           accessibilityLabel="Attach"
-          className="size-11 items-center justify-center rounded-md active:bg-accent"
+          className="size-10 items-center justify-center rounded-md active:bg-accent"
         >
-          <Icon as={Plus} size={22} tone="foreground" />
+          <Icon as={Plus} size={20} tone="foreground" />
         </Pressable>
-        <View className="min-h-11 flex-1 flex-row items-end rounded-lg border border-input pl-3">
+        <View className="min-h-10 flex-1 flex-row items-end rounded-lg border border-input pl-3">
           <TextInput
             value={text}
             onChangeText={onChange}
-            selection={placeCaret}
-            onSelectionChange={(e) => {
-              setSelection(e.nativeEvent.selection);
-              if (placeCaret) setPlaceCaret(undefined);
-            }}
+            {...suggestions.input}
             placeholder={placeholder}
             placeholderTextColor={colors["muted-foreground"]}
             multiline
-            className="max-h-40 flex-1 py-2 font-mono text-base leading-6 text-foreground"
+            // The messages' own size (MessageBody's BODY_TEXT), not the
+            // web's text-base, which is a size up from everything around it.
+            className="max-h-40 flex-1 py-2 font-mono text-[14.3px] leading-[21px] text-foreground"
             accessibilityLabel={placeholder}
           />
-          <Pressable onPress={() => setPickingEmoji(true)} accessibilityLabel="Emoji" className="h-11 w-10 items-center justify-center">
-            <Icon as={Smile} size={22} />
+          <Pressable onPress={() => setPickingEmoji(true)} accessibilityLabel="Emoji" className="h-10 w-10 items-center justify-center">
+            <Icon as={Smile} size={20} />
           </Pressable>
         </View>
         <Pressable
@@ -279,13 +248,13 @@ ${shared.text}` : shared.text));
           disabled={!canSend || sending}
           accessibilityRole="button"
           accessibilityLabel="Send"
-          // The web's Send at phone width: a primary size-11 button.
-          className={cn("size-11 items-center justify-center rounded-md bg-primary active:bg-primary/90", !canSend && "opacity-50")}
+          // The web's Send at phone width: a primary button, size-10 here.
+          className={cn("size-10 items-center justify-center rounded-md bg-primary active:bg-primary/90", !canSend && "opacity-50")}
         >
           {sending ? (
             <ActivityIndicator color={colors["primary-foreground"]} />
           ) : (
-            <Icon as={SendHorizontal} size={22} tone="primary-foreground" />
+            <Icon as={SendHorizontal} size={20} tone="primary-foreground" />
           )}
         </Pressable>
       </View>

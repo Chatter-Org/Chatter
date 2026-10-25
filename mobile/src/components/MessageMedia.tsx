@@ -3,25 +3,20 @@ import { Linking, Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
-import { Download, FileText, Pause, Play } from "lucide-react-native";
+import { Cast, Download, FileText, Pause, Play } from "lucide-react-native";
 import type { BodyMedia } from "@chatter/core/messageFormat";
-import { getAccessToken } from "@chatter/core/api";
-import { serverAsset } from "@/platform/server";
+import { serverAsset, sessionHeaders } from "@/platform/server";
+import { castVideo, useCast } from "@/platform/cast";
 import { serverImage } from "@/ui/media";
 import { Icon, T } from "@/ui/primitives";
 import { cn } from "@/ui/cn";
 import { ImageViewer } from "./ImageViewer";
+import { Tap } from "./Tap";
 import { GifActions } from "./GifPickerSheet";
 import { isGifUrl } from "@chatter/core/gifs";
 import { useDevicePrefs } from "@/state/devicePrefs";
 import { ForumLinkCard, LinkPreviewCard, MessageLinkCard } from "./LinkCards";
 import { saveServerFile } from "@/platform/files";
-
-/** The session header for media the server may only show to members. */
-function authHeaders(): Record<string, string> | undefined {
-  const token = getAccessToken();
-  return token ? { Authorization: `Bearer ${token}` } : undefined;
-}
 
 /** The last path segment, decoded: what an upload is called. */
 function fileName(url: string): string {
@@ -142,14 +137,36 @@ function InlineVideo({ url }: { url: string }) {
         <T className="absolute bottom-1.5 left-2 text-[11px] text-white/80" numberOfLines={1}>
           {fileName(url)}
         </T>
+        <CastButton url={url} />
       </Pressable>
     );
   }
-  return <Player url={url} />;
+  return (
+    <View style={{ width: "100%", maxWidth: 320 }}>
+      <Player url={url} />
+      <CastButton url={url} />
+    </View>
+  );
+}
+
+/** The web's cast button on a video, top right: there whenever a Cast device
+ *  is about, blue while casting. */
+function CastButton({ url }: { url: string }) {
+  const cast = useCast();
+  if (!cast.available) return null;
+  return (
+    <Tap
+      onPress={() => void castVideo(url)}
+      label={cast.connected && cast.deviceName ? `Cast to ${cast.deviceName}` : "Cast to a TV"}
+      className="absolute right-1.5 top-1.5 h-9 w-9 items-center justify-center rounded-full bg-black/60"
+    >
+      <Cast size={17} color={cast.connected ? "#60a5fa" : "#fff"} />
+    </Tap>
+  );
 }
 
 function Player({ url }: { url: string }) {
-  const player = useVideoPlayer({ uri: serverAsset(url)!, headers: authHeaders() }, (p) => {
+  const player = useVideoPlayer({ uri: serverAsset(url)!, headers: sessionHeaders(serverAsset(url)) }, (p) => {
     p.play();
   });
   return (
@@ -164,7 +181,7 @@ function Player({ url }: { url: string }) {
 }
 
 function AudioRow({ url }: { url: string }) {
-  const player = useAudioPlayer({ uri: serverAsset(url)!, headers: authHeaders() });
+  const player = useAudioPlayer({ uri: serverAsset(url)!, headers: sessionHeaders(serverAsset(url)) });
   const status = useAudioPlayerStatus(player);
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
   const progress = status.duration ? status.currentTime / status.duration : 0;

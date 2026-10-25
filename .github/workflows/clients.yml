@@ -85,3 +85,6 @@ jobs:
         run: npm run typecheck
       - name: Lint
         run: npm run lint
+      # Settings → What's new is generated from CHANGELOG.md.
+      - name: Changelog is current
+        run: npm run changelog -- --check

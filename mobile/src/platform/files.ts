@@ -1,7 +1,6 @@
 import { Directory, File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
-import { getAccessToken } from "@chatter/core/api";
-import { serverAsset } from "./server";
+import { serverAsset, sessionHeaders } from "./server";
 import { showToast } from "./toast";
 
 /**
@@ -17,8 +16,8 @@ export async function saveServerFile(path: string, name: string): Promise<void> 
     if (!dir.exists) dir.create({ intermediates: true });
     const target = new File(dir, name);
     if (target.exists) target.delete();
-    const token = getAccessToken();
-    const file = await File.downloadFileAsync(url, target, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
+    const headers = sessionHeaders(url);
+    const file = await File.downloadFileAsync(url, target, headers ? { headers } : undefined);
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(file.uri, { dialogTitle: name });
     } else {

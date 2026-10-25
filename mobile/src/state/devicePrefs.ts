@@ -11,10 +11,12 @@ export interface DevicePrefs {
   autoplayAnimated: boolean;
   /** Fetch a card for an ordinary link in a message (title, picture). */
   linkPreviews: boolean;
+  /** Buzz to confirm a gesture (swipe to reply, holding a message). */
+  haptics: boolean;
 }
 
 const KEY = "chatter_device_prefs";
-const DEFAULTS: DevicePrefs = { autoplayAnimated: true, linkPreviews: true };
+const DEFAULTS: DevicePrefs = { autoplayAnimated: true, linkPreviews: true, haptics: true };
 
 function read(): DevicePrefs {
   try {

@@ -16,9 +16,10 @@ import { T } from "@/ui/primitives";
  *
  * The unread count is taken as the channel opens (and its badge cleared
  * then); the line goes in once the messages it counts have loaded, and stays
- * until the reader leaves the channel.
+ * until the reader leaves the channel. That count comes back too, for the
+ * timeline to open where the line will be.
  */
-export function useNewDivider(): string | null {
+export function useNewDivider(): { firstUnread: string | null; unreadAtOpen: number } {
   const state = useChatter();
   const { clearUnread, markChannelRead } = useChatterActions();
   const [firstUnread, setFirstUnread] = useState<string | null>(null);
@@ -27,23 +28,28 @@ export function useNewDivider(): string | null {
 
   const roomId = state.currentRoomId;
   const channelId = state.currentChannelId;
-
-  useEffect(() => {
-    const next = `${roomId ?? ""}|${channelId ?? ""}`;
-    if (next === scope.current) return;
-    scope.current = next;
-    setFirstUnread(null);
-    pending.current = 0;
-    if (!roomId) return;
-    // A DM's unreads are the room's own bucket, not a channel's.
-    const count = channelId
+  const here = `${roomId ?? ""}|${channelId ?? ""}`;
+  // A DM's unreads are the room's own bucket, not a channel's.
+  const unreadNow = !roomId
+    ? 0
+    : channelId
       ? state.channelUnreadCounts[channelId] || 0
       : state.roomInfoMap[roomId]?.is_direct
         ? state.roomLooseUnreads[roomId] || 0
         : 0;
+  // The count as the conversation opened, before the effect below clears it.
+  const [opened, setOpened] = useState({ scope: "", count: 0 });
+  if (opened.scope !== here) setOpened({ scope: here, count: unreadNow });
+
+  useEffect(() => {
+    if (here === scope.current) return;
+    scope.current = here;
+    setFirstUnread(null);
+    pending.current = 0;
+    if (!roomId) return;
     markChannelRead(roomId, channelId ?? undefined);
-    if (count > 0) {
-      pending.current = count;
+    if (unreadNow > 0) {
+      pending.current = unreadNow;
       clearUnread(roomId, channelId);
     }
     // Read from the state of the moment the channel opened, on purpose.
@@ -60,7 +66,7 @@ export function useNewDivider(): string | null {
     }
   }, [state.messages, state.userId]);
 
-  return firstUnread;
+  return { firstUnread, unreadAtOpen: opened.scope === here ? opened.count : unreadNow };
 }
 
 /** The web's "New" line: red, the word at the right. */

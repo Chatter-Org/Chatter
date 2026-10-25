@@ -47,6 +47,9 @@ FCM push notifications are **on hold until the project owner says otherwise**.
 - [x] Polls: vote, voters, end early, results; create from the composer's + sheet
 - [x] Events: the header's events button (live/soon dot), RSVP, guest list, add to calendar (.ics share); schedule, edit, cancel, delete with the phone's date and time pickers
 - [x] Unread marker line and "jump to unread" (the web's "New" line and unread bar)
+- [x] Each channel opens at the "New" line, where it was left (for the run of the app) or the newest message; the timeline mounts afresh per channel once its messages are in
+- [x] Theater channels (the web's WatchPartyArea): the room's shared timeline (`components/theater/sync.ts`), uploads and direct links in expo-video, YouTube through its IFrame API in a WebView; play/pause/seek for everyone, drift correction, reactions pinned to the video, viewers, `m.watchparty` notices; full screen on its side
+- [x] Whiteboard channels (the web's WhiteboardArea): the 2000×2000 board on a Skia surface drawn by the web's rules (flood fill included), one finger draws, two pinch and pan; live strokes and cursors, undo (which works for strokes just drawn, unlike the web's), clear, the board as a picture into the conversation
 - [x] Profiles: a sheet from any avatar, name or member (banner, status, about, Steam game, mutual friends, roles, profile colour); Message, friend and block from it
 - [x] Name fonts (people's own fonts on their names): in messages, the member list and profiles; fetched with the session and cached; checked with a .ttf (a .woff or .woff2 that Android will not load stays in the app's font; not yet tried on a device)
 - [x] Friends and DMs: new message / group DM picker, adding people to a DM, Friends screen (requests, pending, add by username, blocked)
@@ -76,6 +79,7 @@ FCM push notifications are **on hold until the project owner says otherwise**.
 - [x] Share screen (MediaProjection): Share screen in the call sheet, Android's own prompt (one app or the whole screen), a "You are sharing your screen · Stop" strip instead of a hall-of-mirrors preview; sent with the shared `StreamPublisher` at the web's detail profile
 - [x] A camera or screen share that connects but sends no pictures (a capture refused after the prompt) gives up and says so, rather than showing as live
 - [x] Picture-in-picture window shaped to the stream
+- [x] Cast a message's video to a Chromecast (react-native-google-cast, the Default Media Receiver as on the web, captions from the server's sidecars); not offered where the server requires sign-in for uploads, since a receiver cannot sign in
 - [x] Voice moderation (owners and moderators): the shield beside a channel's occupant opens a sheet to server mute, move to another voice channel or disconnect, as the web's voice member menu does
 
 ### Design (match the web)
@@ -124,6 +128,8 @@ FCM push notifications are **on hold until the project owner says otherwise**.
 
 - `tests/http_contract.rs` fails at register (500): the suite predates mandatory TOTP enrolment.
 - The web login screen's halftone background throws when laid out at zero width (`createImageData`).
+- Whiteboard undo on the web does nothing on the server for a stroke drawn in the same visit: the stroke keeps its `local_…` id because the client drops its own echo (the phone swaps in the echoed id).
+- The server drops a watcher from a theater's viewer list on any disconnect, and the web never rejoins; the phone rejoins on `socket_reopened`.
 
 ## Developing
 

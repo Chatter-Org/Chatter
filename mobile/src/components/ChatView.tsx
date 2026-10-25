@@ -10,6 +10,7 @@ import { router } from "expo-router";
 import { ArrowDown } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
 import { groupsWith, startsNewDay } from "@chatter/core/messageFormat";
+import { oldestUnreadEventId } from "@chatter/core/unreads";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { MessageRow } from "./MessageRow";
 import { MessageActions } from "./MessageActions";
@@ -25,6 +26,10 @@ type Row =
   | { kind: "day"; key: string; label: string }
   | { kind: "new"; key: string }
   | { kind: "message"; key: string; message: MatrixMessage; grouped: boolean };
+
+/** Where each conversation was left, for as long as the app runs: the message
+ *  at the top of the screen, keyed "room|channel". None means the bottom. */
+const leftAt = new Map<string, string>();
 
 const ChatScroll = forwardRef<any, ScrollViewProps>(function ChatScroll(props, ref) {
   return <KeyboardChatScrollView ref={ref} {...props} keyboardLiftBehavior="always" />;
@@ -52,8 +57,9 @@ export function ChatView() {
 
   const roomId = state.currentRoomId;
   const channelId = state.currentChannelId;
+  const scope = `${roomId ?? ""}|${channelId ?? ""}`;
 
-  const firstUnread = useNewDivider();
+  const { firstUnread, unreadAtOpen } = useNewDivider();
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     state.messages.forEach((message, i) => {
@@ -83,6 +89,47 @@ export function ChatView() {
     });
     return out;
   }, [state.messages, firstUnread]);
+
+  // Where a conversation opens, decided once its messages are here, as on
+  // Discord: at the "New" line if anything came in while you were away (or
+  // at the oldest loaded message, when more came in than is loaded);
+  // otherwise where you left it; otherwise at the newest. The list is mounted
+  // afresh for each conversation from that moment, so it starts there rather
+  // than where the last one's scroll left it — which was near the top, and
+  // reaching the top loaded a page of older history on every switch.
+  const [landing, setLanding] = useState<{ scope: string; index: number | null } | null>(null);
+  if (rows.length > 0 && landing?.scope !== scope) {
+    const indexOf = (eventId: string | null | undefined) =>
+      eventId ? rows.findIndex((r) => r.kind === "message" && r.message.event_id === eventId) : -1;
+    let index: number | null = null;
+    if (state.pendingJump?.roomId === roomId) {
+      // The jump below takes it from the bottom.
+    } else if (unreadAtOpen > 0) {
+      const at = indexOf(firstUnread ?? oldestUnreadEventId(state.messages, unreadAtOpen, state.userId));
+      // A row of what came before it, for context.
+      index = at >= 0 ? Math.max(0, at - 1) : 0;
+    } else {
+      const at = indexOf(leftAt.get(scope));
+      if (at >= 0) index = at;
+    }
+    setLanding({ scope, index });
+    setAtBottom(index === null);
+  }
+  const landed = landing?.scope === scope ? landing : null;
+
+  // The top message on screen, remembered as where this conversation was
+  // left whenever the reader is somewhere other than the bottom.
+  const topOnScreen = useRef<{ scope: string; eventId: string } | null>(null);
+  const onViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: { item: Row; index: number | null }[] }) => {
+      let top: { item: Row; index: number | null } | undefined;
+      for (const v of viewableItems) {
+        if (v.item.kind === "message" && (top === undefined || (v.index ?? 0) < (top.index ?? 0))) top = v;
+      }
+      if (top?.item.kind === "message") topOnScreen.current = { scope, eventId: top.item.message.event_id };
+    },
+    [scope],
+  );
 
   const { rowData, nameOf } = useMessageRows();
   const panels = usePanels();
@@ -218,21 +265,37 @@ export function ChatView() {
       <UnreadBanner />
       {/* Tabletop: the messages stand on the top half, above the hinge. */}
       <View style={tabletopListHeight !== null ? { height: tabletopListHeight } : { flex: 1 }}>
+      {landed ? (
       <FlashList
+        key={landed.scope}
         ref={listRef}
         data={rows}
         keyExtractor={(row) => row.key}
         getItemType={(row) => (row.kind === "message" ? (row.grouped ? "grouped" : "full") : row.kind)}
         renderItem={renderItem}
         renderScrollComponent={ChatScroll}
-        maintainVisibleContentPosition={{ startRenderingFromBottom: true, autoscrollToBottomThreshold: 0.2 }}
+        initialScrollIndex={landed.index ?? undefined}
+        // Following new messages down only from the bottom: opened higher up, the
+        // list stays put until the reader gets there.
+        maintainVisibleContentPosition={{
+          startRenderingFromBottom: landed.index === null,
+          autoscrollToBottomThreshold: landed.index === null || atBottom ? 0.2 : undefined,
+        }}
         onStartReached={() => void actions.loadOlderMessages()}
         onStartReachedThreshold={0.5}
         onScroll={(e) => {
+          // Until the list has shown its first rows it is still settling into
+          // place, and reports itself at the bottom before it has measured
+          // anything: that would forget where the reader left off, and have
+          // the list follow the newest message down from there.
+          if (topOnScreen.current?.scope !== scope) return;
           const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
           const fromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height);
           setAtBottom(fromBottom < 80);
+          if (fromBottom < 80) leftAt.delete(scope);
+          else leftAt.set(scope, topOnScreen.current.eventId);
         }}
+        onViewableItemsChanged={onViewableItemsChanged}
         scrollEventThrottle={100}
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
@@ -245,6 +308,7 @@ export function ChatView() {
         }
         ListFooterComponent={<View style={{ height: 12 }} />}
       />
+      ) : null}
       </View>
       {/* Below the hinge, the composer sits at the bottom of the lower half. */}
       {tabletopListHeight !== null ? <View className="flex-1 border-t border-border" /> : null}
@@ -280,7 +344,9 @@ export function ChatView() {
   );
 }
 
-/** Who is typing, in the web's words, always holding its line's height. */
+/** Who is typing, in the web's words: a line over the bottom of the
+ *  conversation while anyone is, rather than a strip kept empty above the
+ *  composer the rest of the time. */
 function TypingLine({ names }: { names: string[] }) {
   const text =
     names.length === 0
@@ -292,20 +358,17 @@ function TypingLine({ names }: { names: string[] }) {
           : names.length === 3
             ? `${names[0]}, ${names[1]}, and ${names[2]} are typing...`
             : "Multiple users are yapping....";
+  if (!text) return null;
   return (
-    <View className="h-5 flex-row items-center gap-1.5 px-4">
-      {text ? (
-        <>
-          <View className="flex-row gap-0.5">
-            {[0, 1, 2].map((i) => (
-              <View key={i} className="h-1 w-1 rounded-full bg-muted-foreground" />
-            ))}
-          </View>
-          <T className="flex-1 text-xs italic text-muted-foreground" numberOfLines={1}>
-            {text}
-          </T>
-        </>
-      ) : null}
+    <View className="absolute bottom-full left-0 right-0 h-5 flex-row items-center gap-1.5 bg-background/90 px-4" pointerEvents="none">
+      <View className="flex-row gap-0.5">
+        {[0, 1, 2].map((i) => (
+          <View key={i} className="h-1 w-1 rounded-full bg-muted-foreground" />
+        ))}
+      </View>
+      <T className="flex-1 text-xs italic text-muted-foreground" numberOfLines={1}>
+        {text}
+      </T>
     </View>
   );
 }

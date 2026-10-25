@@ -1,8 +1,8 @@
-import { memo } from "react";
-import { Pressable, View } from "react-native";
-import * as Haptics from "expo-haptics";
+import { memo, useMemo, useState } from "react";
+import { Pressable, View, type TextInputProps } from "react-native";
 import { AtSign } from "lucide-react-native";
-import type { MentionMatch } from "@chatter/core/mentions";
+import { findMentionMatches, type MentionMatch } from "@chatter/core/mentions";
+import { completeToken, findShortcodeMatches, roomShortcodes, shortcodeInsert, tokenAtCaret } from "@chatter/core/composerTokens";
 import { useChatter } from "@/state/ChatterProvider";
 import { Avatar } from "./Avatar";
 import { EmojiGlyph } from "./EmojiPickerSheet";
@@ -11,6 +11,50 @@ import { Icon, T } from "@/ui/primitives";
 export type Suggestion =
   | { kind: "mention"; match: MentionMatch }
   | { kind: "emoji"; name: string; value: string };
+
+/**
+ * The "@" and ":" suggestions for a text box: where its caret is, what the
+ * word at the caret could finish as, and taking one. A box spreads `input`
+ * onto its TextInput and shows `items` in ComposerSuggestions. The forum's
+ * boxes, as on the web, offer mentions only (`emoji: false`).
+ */
+export function useComposerSuggestions(text: string, onChange: (value: string) => void, { emoji = true }: { emoji?: boolean } = {}) {
+  const state = useChatter();
+  const room = state.currentRoomId ? state.roomInfoMap[state.currentRoomId] : undefined;
+  // And a caret position to put it at after a suggestion is taken (the box
+  // otherwise leaves it at the end of the new text).
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const [placeCaret, setPlaceCaret] = useState<{ start: number; end: number } | undefined>();
+  const shortcodes = useMemo(() => roomShortcodes(room?.emoji_aliases), [room?.emoji_aliases]);
+  const found = selection.start === selection.end ? tokenAtCaret(text, selection.end) : null;
+  const token = found && (emoji || found.kind === "mention") ? found : null;
+  const items = useMemo<Suggestion[]>(() => {
+    if (!token) return [];
+    if (token.kind === "mention") return findMentionMatches(state, token.query).map((match) => ({ kind: "mention", match }));
+    return findShortcodeMatches(shortcodes, token.query, 5).map((m) => ({ kind: "emoji", ...m }));
+    // The token's fields, not the object, which is new on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token?.kind, token?.query, shortcodes, state.roomMembers, state.customRoles, state.currentRoomId, state.roomInfoMap]);
+
+  const pick = (item: Suggestion) => {
+    if (!token) return;
+    const insert = item.kind === "mention" ? `@${item.match.name}` : shortcodeInsert(item.value);
+    const next = completeToken(text, token, insert);
+    onChange(next.text);
+    setPlaceCaret({ start: next.caret, end: next.caret });
+    setSelection({ start: next.caret, end: next.caret });
+  };
+
+  const input: Pick<TextInputProps, "selection" | "onSelectionChange"> = {
+    selection: placeCaret,
+    onSelectionChange: (e) => {
+      setSelection(e.nativeEvent.selection);
+      if (placeCaret) setPlaceCaret(undefined);
+    },
+  };
+
+  return { items, pick, input, shortcodes };
+}
 
 /**
  * What the composer offers to finish: members and roles after an "@", emoji
@@ -34,10 +78,7 @@ export const ComposerSuggestions = memo(function ComposerSuggestions({
       {items.slice(0, 5).map((item) => (
         <Pressable
           key={item.kind === "mention" ? `${item.match.kind}:${item.match.id}` : `emoji:${item.name}`}
-          onPress={() => {
-            void Haptics.selectionAsync();
-            onPick(item);
-          }}
+          onPress={() => onPick(item)}
           accessibilityRole="menuitem"
           className="min-h-11 flex-row items-center gap-3 px-3 py-1.5 active:bg-accent"
         >
