@@ -83,10 +83,12 @@ export function ForumArea() {
   const canManageTags =
     !!forumChannel &&
     (forumChannel.created_by === state.userId || !!state.myPermissions?.manage_channels);
-  // Pins are the same two people's, plus the room's creator for a room that is
-  // a forum itself (it has no channel to have created). The server checks it.
+  // Pins are the same two people's and anyone who can manage forum posts,
+  // plus the room's creator for a room that is a forum itself (it has no
+  // channel to have created). The server checks it.
   const canPin =
     !!state.myPermissions?.manage_channels ||
+    !!state.myPermissions?.manage_forum_posts ||
     (forumChannel ? forumChannel.created_by === state.userId : roomInfo?.creator === state.userId);
 
   const [posts, setPosts] = useState<ForumPost[]>([]);
@@ -110,11 +112,8 @@ export function ForumArea() {
   // Sort state
   const [sortMode, setSortMode] = useState<SortMode>("activity");
 
-  const isOwnerOrMod = useCallback(() => {
-    const members = state.roomMembers;
-    const me = members.find((m) => m.userId === state.userId);
-    return me?.role === "owner" || me?.role === "moderator";
-  }, [state.roomMembers, state.userId]);
+  // Owners and moderators hold this too; the server checks it per channel.
+  const canManagePosts = !!state.myPermissions?.manage_forum_posts;
 
   // The tag is passed rather than read from state: a caller that has just set
   // the filter would otherwise load with the one before it.
@@ -421,7 +420,7 @@ export function ForumArea() {
           {posts
             .filter((post) => !isSearching || !tagFilter || (post.tags ?? []).includes(tagFilter))
             .map((post) => {
-            const canDelete = post.author === state.userId || isOwnerOrMod();
+            const canDelete = post.author === state.userId || canManagePosts;
             return (
               <ForumPostCard
                 key={post.post_id}

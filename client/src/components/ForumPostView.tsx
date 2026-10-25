@@ -74,6 +74,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
   // anyone's post, though not change its words. The server checks the same.
   const canRetag =
     !!state.myPermissions?.manage_channels ||
+    !!state.myPermissions?.manage_forum_posts ||
     (post?.channel_id
       ? postChannel?.created_by === state.userId
       : state.roomInfoMap[roomId]?.creator === state.userId);
@@ -149,11 +150,8 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
     }
   }, [addCommentImages, state.uploadLimitBytes]);
 
-  const isOwnerOrMod = useCallback(() => {
-    const members = state.roomMembers;
-    const me = members.find((m) => m.userId === state.userId);
-    return me?.role === "owner" || me?.role === "moderator";
-  }, [state.roomMembers, state.userId]);
+  // Owners and moderators hold this too; the server checks it per channel.
+  const canManagePosts = !!state.myPermissions?.manage_forum_posts;
 
   const loadPost = useCallback(async () => {
     try {
@@ -417,7 +415,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
     const isFolded = folded.has(comment.comment_id);
     const isEditing = editingCommentId === comment.comment_id;
     const isReplyTarget = replyingTo?.comment_id === comment.comment_id;
-    const canDeleteComment = comment.author === state.userId || isOwnerOrMod();
+    const canDeleteComment = comment.author === state.userId || canManagePosts;
     const isCommentAuthor = comment.author === state.userId;
     // The post's author, answering in their own thread, is worth marking.
     const isThreadAuthor = comment.author === post!.author;

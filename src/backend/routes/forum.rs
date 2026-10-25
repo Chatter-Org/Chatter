@@ -6,8 +6,7 @@ use super::super::{
     },
     helpers::{
         broadcast_to_room, channel_permissions, effective_permissions, error_response,
-        extract_token, generate_id, get_user_from_token, is_moderator_or_owner, now_millis,
-        valid_profile_color,
+        extract_token, generate_id, get_user_from_token, now_millis, valid_profile_color,
     },
     moderation::{automod_refusal, participation_refusal},
     push::{added_mentions, spawn_message_push, MessageNotification},
@@ -534,9 +533,22 @@ async fn forum_pin_of(state: &AppState, post_id: &str) -> Option<ForumPinRecord>
         .flatten()
 }
 
+/// Whether this member may delete anyone's posts and comments in this forum
+/// channel. Owners and moderators hold `manage_forum_posts` already.
+async fn can_manage_posts(
+    state: &AppState,
+    room_id: &str,
+    channel_id: &str,
+    user_id: &str,
+) -> bool {
+    channel_permissions(state, room_id, channel_id, user_id)
+        .await
+        .manage_forum_posts
+}
+
 /// Whoever set this forum up: the channel's creator, or the room's for a room
 /// that is a forum itself with no forum channels. A moderator or owner reaches
-/// the pin gate through `manage_channels` instead, so this only names the extra
+/// the pin gate through `manage_channels` or `manage_forum_posts` instead, so this only names the extra
 /// case — the plain member who built the forum and can still curate it.
 async fn forum_owner_of(state: &AppState, room_id: &str, channel_id: &str) -> String {
     if channel_id.is_empty() {
@@ -829,8 +841,9 @@ pub(crate) async fn delete_post(
         .flatten()
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Post not found"))?;
 
-    // Check permission: author or moderator/owner
-    if post.author != user_id && !is_moderator_or_owner(&state, &room_id, &user_id).await {
+    if post.author != user_id
+        && !can_manage_posts(&state, &room_id, &post.channel_id, &user_id).await
+    {
         return Err(error_response(
             StatusCode::FORBIDDEN,
             "Only the author or a moderator can delete this post",
@@ -996,11 +1009,25 @@ pub(crate) async fn delete_comment(
         .flatten()
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Comment not found"))?;
 
-    if comment.author != user_id && !is_moderator_or_owner(&state, &room_id, &user_id).await {
-        return Err(error_response(
-            StatusCode::FORBIDDEN,
-            "Only the author or a moderator can delete this comment",
-        ));
+    if comment.author != user_id {
+        let channel_id = state
+            .db
+            .collection::<ForumPostRecord>("forum_posts")
+            .find_one(doc! { "_id": &post_id, "room_id": &room_id })
+            .await
+            .ok()
+            .flatten()
+            .map(|post| post.channel_id);
+        let allowed = match channel_id {
+            Some(channel_id) => can_manage_posts(&state, &room_id, &channel_id, &user_id).await,
+            None => false,
+        };
+        if !allowed {
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                "Only the author or a moderator can delete this comment",
+            ));
+        }
     }
 
     let _ = coll
@@ -1063,7 +1090,7 @@ pub(crate) async fn edit_post(
         require_post_visible(&state, &post, &user_id).await?;
         let perms = channel_permissions(&state, &room_id, &post.channel_id, &user_id).await;
         let forum_owner = forum_owner_of(&state, &room_id, &post.channel_id).await;
-        let curator = user_id == forum_owner || perms.manage_channels;
+        let curator = user_id == forum_owner || perms.manage_channels || perms.manage_forum_posts;
         if !curator {
             return Err(error_response(
                 StatusCode::FORBIDDEN,
@@ -1430,8 +1457,8 @@ pub(crate) async fn search_posts(
 
 /// Pin a forum post to its forum channel. Whoever set the forum up (its channel
 /// creator, or the room's creator for a room that is a forum itself) and anyone
-/// who can manage channels — owners and moderators — may pin; a plain member
-/// may not. The pin is the post's own row, so pinning does not touch the post
+/// who can manage channels or forum posts — owners and moderators — may pin; a
+/// plain member may not. The pin is the post's own row, so pinning does not touch the post
 /// and a moderator's pin survives the author editing their own post.
 pub(crate) async fn pin_post(
     State(state): State<Arc<AppState>>,
@@ -1451,7 +1478,7 @@ pub(crate) async fn pin_post(
 
     let perms = channel_permissions(&state, &room_id, &post.channel_id, &user_id).await;
     let forum_owner = forum_owner_of(&state, &room_id, &post.channel_id).await;
-    if user_id != forum_owner && !perms.manage_channels {
+    if user_id != forum_owner && !perms.manage_channels && !perms.manage_forum_posts {
         return Err(error_response(
             StatusCode::FORBIDDEN,
             "Only the forum's creator or a moderator can pin its posts",
@@ -1529,7 +1556,7 @@ pub(crate) async fn unpin_post(
 
     let perms = channel_permissions(&state, &room_id, &record.channel_id, &user_id).await;
     let forum_owner = forum_owner_of(&state, &room_id, &record.channel_id).await;
-    if user_id != forum_owner && !perms.manage_channels {
+    if user_id != forum_owner && !perms.manage_channels && !perms.manage_forum_posts {
         return Err(error_response(
             StatusCode::FORBIDDEN,
             "Only the forum's creator or a moderator can unpin its posts",

@@ -82,6 +82,13 @@ export const PERMISSION_SECTIONS: PermissionSection[] = [
         channelScoped: true,
       },
       {
+        key: "manage_forum_posts",
+        label: "Manage Forum Posts",
+        description: "Delete anyone's forum posts and comments, and pin or retag posts.",
+        elevated: true,
+        channelScoped: true,
+      },
+      {
         key: "kick_members",
         label: "Kick Members",
         description: "Remove members from the room. They can rejoin.",

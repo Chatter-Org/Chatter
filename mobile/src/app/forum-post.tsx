@@ -81,7 +81,8 @@ export default function ForumPostScreen() {
   const channel = state.channels.find((c) => c.channel_id === params.channel);
   const tags = channel?.forum_tags ?? [];
   const myRole = state.roomMembers.find((m) => m.userId === state.userId)?.role;
-  const isOwnerOrMod = myRole === "owner" || myRole === "moderator";
+  // The role check covers a server too old to send manage_forum_posts.
+  const canManagePosts = !!state.myPermissions?.manage_forum_posts || myRole === "owner" || myRole === "moderator";
 
   const [thread, setThread] = useState<ForumThreadState>({ post: null, comments: [] });
   const [missing, setMissing] = useState(false);
@@ -239,7 +240,7 @@ export default function ForumPostScreen() {
     );
   }
 
-  const canManagePost = post.author === state.userId || isOwnerOrMod;
+  const canManagePost = post.author === state.userId || canManagePosts;
 
   const header = (
     <View>
@@ -443,7 +444,7 @@ export default function ForumPostScreen() {
         comment={acting}
         post={post}
         mine={!!acting && acting.author === state.userId}
-        canDelete={!!acting && (acting.author === state.userId || isOwnerOrMod)}
+        canDelete={!!acting && (acting.author === state.userId || canManagePosts)}
         onClose={() => setActing(null)}
         onReply={startReply}
         onEdit={startEdit}

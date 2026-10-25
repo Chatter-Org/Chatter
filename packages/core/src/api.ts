@@ -1368,6 +1368,7 @@ export interface RolePermissions {
   manage_channels: boolean;
   manage_roles: boolean;
   manage_messages: boolean;
+  manage_forum_posts: boolean;
   manage_webhooks: boolean;
   manage_emojis: boolean;
   manage_events: boolean;

@@ -65,9 +65,10 @@ export function ForumView() {
   // Whoever set the forum up decides its tags, as does anyone who can manage
   // the room's channels (the server checks the same two things).
   const canManageTags = !!forumChannel && (forumChannel.created_by === state.userId || !!state.myPermissions?.manage_channels);
-  const canPin = !!state.myPermissions?.manage_channels || (forumChannel ? forumChannel.created_by === state.userId : roomInfo?.creator === state.userId);
+  const canPin = !!state.myPermissions?.manage_channels || !!state.myPermissions?.manage_forum_posts || (forumChannel ? forumChannel.created_by === state.userId : roomInfo?.creator === state.userId);
   const myRole = state.roomMembers.find((m) => m.userId === state.userId)?.role;
-  const isOwnerOrMod = myRole === "owner" || myRole === "moderator";
+  // The role check covers a server too old to send manage_forum_posts.
+  const canManagePosts = !!state.myPermissions?.manage_forum_posts || myRole === "owner" || myRole === "moderator";
 
   const [posts, setPosts] = useState<ForumPost[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -297,7 +298,7 @@ export function ForumView() {
         post={acting}
         roomId={roomId}
         canPin={canPin}
-        canDelete={!!acting && (acting.author === state.userId || isOwnerOrMod)}
+        canDelete={!!acting && (acting.author === state.userId || canManagePosts)}
         onClose={() => setActing(null)}
       />
     </View>

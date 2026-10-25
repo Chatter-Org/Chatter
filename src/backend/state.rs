@@ -987,6 +987,9 @@ pub(crate) struct RolePermissions {
     pub(crate) manage_roles: bool,
     #[serde(default)]
     pub(crate) manage_messages: bool,
+    /// Delete anyone's forum posts and comments, and pin and retag posts.
+    #[serde(default)]
+    pub(crate) manage_forum_posts: bool,
     #[serde(default)]
     pub(crate) manage_webhooks: bool,
     #[serde(default)]
@@ -1029,6 +1032,7 @@ impl RolePermissions {
             manage_channels: true,
             manage_roles: true,
             manage_messages: true,
+            manage_forum_posts: true,
             manage_webhooks: true,
             manage_emojis: true,
             manage_events: true,
@@ -1043,6 +1047,7 @@ impl RolePermissions {
         Self {
             manage_channels: true,
             manage_messages: true,
+            manage_forum_posts: true,
             manage_webhooks: true,
             manage_emojis: true,
             manage_events: true,
@@ -1055,7 +1060,7 @@ impl RolePermissions {
 
     /// Every permission name, in the order the UI presents them. A channel
     /// overwrite addresses permissions by these names.
-    pub(crate) const NAMES: [&'static str; 16] = [
+    pub(crate) const NAMES: [&'static str; 17] = [
         "view_channel",
         "send_messages",
         "attach_files",
@@ -1066,6 +1071,7 @@ impl RolePermissions {
         "manage_channels",
         "manage_roles",
         "manage_messages",
+        "manage_forum_posts",
         "manage_webhooks",
         "manage_emojis",
         "manage_events",
@@ -1086,6 +1092,7 @@ impl RolePermissions {
             "manage_channels" => self.manage_channels,
             "manage_roles" => self.manage_roles,
             "manage_messages" => self.manage_messages,
+            "manage_forum_posts" => self.manage_forum_posts,
             "manage_webhooks" => self.manage_webhooks,
             "manage_emojis" => self.manage_emojis,
             "manage_events" => self.manage_events,
@@ -1108,6 +1115,7 @@ impl RolePermissions {
             "manage_channels" => self.manage_channels = value,
             "manage_roles" => self.manage_roles = value,
             "manage_messages" => self.manage_messages = value,
+            "manage_forum_posts" => self.manage_forum_posts = value,
             "manage_webhooks" => self.manage_webhooks = value,
             "manage_emojis" => self.manage_emojis = value,
             "manage_events" => self.manage_events = value,
@@ -1131,6 +1139,7 @@ impl RolePermissions {
             manage_channels: self.manage_channels || other.manage_channels,
             manage_roles: self.manage_roles || other.manage_roles,
             manage_messages: self.manage_messages || other.manage_messages,
+            manage_forum_posts: self.manage_forum_posts || other.manage_forum_posts,
             manage_webhooks: self.manage_webhooks || other.manage_webhooks,
             manage_emojis: self.manage_emojis || other.manage_emojis,
             manage_events: self.manage_events || other.manage_events,
@@ -1158,6 +1167,7 @@ impl Default for RolePermissions {
             manage_channels: false,
             manage_roles: false,
             manage_messages: false,
+            manage_forum_posts: false,
             manage_webhooks: false,
             manage_emojis: false,
             manage_events: false,
