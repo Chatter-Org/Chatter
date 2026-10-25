@@ -60,7 +60,11 @@ other.
 
 ## A release
 
-Tag the commit and push the tag:
+First the notes. In `CHANGELOG.md`, rename "Unreleased" to the version and
+date (`## 0.2.0 — November 2, 2026`), run `npm run changelog` so the app's
+Settings → What's new matches, and commit.
+
+Then tag the commit and push the tag:
 
 ```bash
 git tag mobile-v0.2.0
@@ -68,7 +72,8 @@ git push origin mobile-v0.2.0
 ```
 
 The workflow builds it and creates a GitHub Release, "Chatter for Android
-0.2.0", with `chatter-0.2.0.apk` attached and notes generated from the commits.
+0.2.0", with `chatter-0.2.0.apk` attached and that version's section of
+`CHANGELOG.md` as its notes (the commit list if it has none): the text to share.
 Each build's `versionCode` is the workflow's run number, which only grows, so
 every build installs over the one before.
 

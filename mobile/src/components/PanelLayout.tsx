@@ -12,7 +12,6 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
-import * as Haptics from "expo-haptics";
 
 /**
  * The three-panel shell: servers and channels on the left, the conversation
@@ -157,7 +156,6 @@ export function PanelLayout({
       show: (side) => {
         if (side === "left" && leftDocked) return;
         if (side === "right" && rightDocked) return setRightBeside(true);
-        void Haptics.selectionAsync().catch(() => {});
         animateTo(side);
       },
       close: () => {

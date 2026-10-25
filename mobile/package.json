@@ -66,6 +66,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
     "port-theme": "node scripts/port-theme.mjs",
+    "changelog": "node scripts/changelog.mjs",
     "seed": "node scripts/seed-dev.mjs"
   },
   "private": true

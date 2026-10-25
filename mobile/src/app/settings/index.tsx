@@ -3,7 +3,7 @@ import { Alert, Pressable, ScrollView, View } from "react-native";
 import { router, type Href } from "expo-router";
 import Constants from "expo-constants";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Bell, ChevronRight, Database, LogOut, Mic, Palette, Server, ShieldCheck, type LucideProps } from "lucide-react-native";
+import { Bell, ChevronRight, Database, LogOut, Mic, Palette, Server, ShieldCheck, Sparkles, type LucideProps } from "lucide-react-native";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { currentServer } from "@/platform/server";
@@ -20,11 +20,12 @@ import { UI_HEADING, UI_HINT, UI_META } from "@/ui/roles";
  * or out and off this server.
  */
 const SECTIONS: { href: Href; icon: ComponentType<LucideProps>; label: string; hint: string }[] = [
-  { href: "/settings/appearance", icon: Palette, label: "Appearance", hint: "Themes, and your own" },
+  { href: "/settings/appearance", icon: Palette, label: "Appearance", hint: "Themes, and haptic feedback" },
   { href: "/settings/notifications", icon: Bell, label: "Notifications", hint: "What each server tells you, and sounds" },
   { href: "/settings/voice", icon: Mic, label: "Voice", hint: "Push to talk, volume, mic test" },
   { href: "/settings/account", icon: ShieldCheck, label: "Account", hint: "Two-factor, password, sessions" },
   { href: "/settings/data", icon: Database, label: "Data and storage", hint: "Media, and what is kept on this device" },
+  { href: "/settings/whats-new", icon: Sparkles, label: "What's new", hint: "What changed in each version" },
 ];
 
 export default function Settings() {

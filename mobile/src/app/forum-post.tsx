@@ -47,6 +47,7 @@ import { MessageBody } from "@/components/MessageBody";
 import { MessageMedia } from "@/components/MessageMedia";
 import { AttachSheet, MAX_ATTACHMENTS } from "@/components/AttachSheet";
 import { Tile } from "@/components/Composer";
+import { ComposerSuggestions, useComposerSuggestions } from "@/components/ComposerSuggestions";
 import { useShowProfile } from "@/components/ProfileSheet";
 import { useMessageRows } from "@/components/useMessageRows";
 import { ForumReactions, TagList, forumMedia, forumTime, uploadForumAttachments } from "@/components/forum/ForumParts";
@@ -97,6 +98,7 @@ export default function ForumPostScreen() {
   const [sending, setSending] = useState(false);
   const [landing, setLanding] = useState<string | null>(null);
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const mentions = useComposerSuggestions(body, setBody, { emoji: false });
   const listRef = useRef<FlatList<Row>>(null);
 
   const keyboard = useReanimatedKeyboardAnimation();
@@ -335,6 +337,7 @@ export default function ForumPostScreen() {
             </Pressable>
           </View>
         ) : null}
+        <ComposerSuggestions items={mentions.items} onPick={mentions.pick} />
         {staged.length > 0 ? (
           <View className="mb-1.5 flex-row flex-wrap gap-2 px-1">
             {staged.map((f, i) => (
@@ -365,6 +368,7 @@ export default function ForumPostScreen() {
             ref={inputRef}
             value={body}
             onChangeText={setBody}
+            {...mentions.input}
             placeholder={replyingTo ? "Write a reply..." : "Write a comment..."}
             placeholderTextColor={colors["muted-foreground"]}
             multiline

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
-import * as Haptics from "expo-haptics";
 import { Copy, Link2, MessagesSquare, Pencil, Pin, PinOff, Reply, SmilePlus, Trash2 } from "lucide-react-native";
 import type { MatrixMessage } from "@chatter/core/api";
 import { messageLinkFor } from "@chatter/core/messageLinks";
@@ -56,7 +55,6 @@ export function MessageActions({
   const isPinned = !!message && state.pinnedMessages.some((m) => m.event_id === message.event_id);
 
   const run = (fn: () => void) => () => {
-    void Haptics.selectionAsync().catch(() => {});
     fn();
     onClose();
   };
