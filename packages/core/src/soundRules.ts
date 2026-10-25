@@ -7,7 +7,7 @@
  */
 
 /** The effects a room's pack can replace. Keep in sync with PACK_EVENTS in backend/sounds.rs. */
-export type SoundEvent = "mention" | "voice-join" | "voice-leave" | "mute" | "unmute";
+export type SoundEvent = "mention" | "voice-join" | "voice-leave" | "mute" | "unmute" | "stream-start";
 
 /** A room's overrides: event name -> `/external/...` URL. */
 export type SoundPack = Partial<Record<SoundEvent, string>>;
@@ -25,6 +25,8 @@ export const BUILT_IN: Record<SoundEvent, string | null> = {
   "voice-leave": null,
   mute: "/external/mute.wav",
   unmute: "/external/unmute.wav",
+  // "ui sound 9" by nezuai, CC BY 4.0 — credited in the README.
+  "stream-start": "/external/stream-start.wav",
 };
 
 /**
@@ -41,6 +43,7 @@ export const EVENT_GAIN: Record<SoundEvent, number> = {
   "voice-leave": 1,
   mute: 0.3,
   unmute: 0.3,
+  "stream-start": 1,
 };
 
 /** The longest a chosen sound may run. Mirrors MAX_SOUND_SECS in

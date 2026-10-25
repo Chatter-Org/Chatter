@@ -52,8 +52,9 @@ export interface Host {
   playDeferredArrivalSound(): void;
   /** Forget the held arrival sound (the call it announced is not happening). */
   dropDeferredArrivalSound(): void;
-  /** Warm anything a first sound would otherwise wait on. */
-  prewarmSounds(): void;
+  /** Warm anything a first sound would otherwise wait on: the built-in
+   *  effects with no list, or these sound files (a room's pack). */
+  prewarmSounds(urls?: string[]): void;
 
   /** The server sent the account's GIF favourites; hand them to whatever keeps them. */
   adoptGifFavorites(payload: unknown): void;

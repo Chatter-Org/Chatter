@@ -177,6 +177,7 @@ export function reducer(state: AppState, action: Action): AppState {
             ? { ...state.roomLooseUnreads, [action.payload]: 0 }
             : state.roomLooseUnreads,
         myPermissions: null,
+        myRestriction: null,
         companionPanel: null,
         roomEvents: [],
         pinnedMessages: [],
@@ -899,6 +900,33 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case "SET_MY_PERMISSIONS":
       return { ...state, myPermissions: action.payload };
+    case "SET_MY_RESTRICTION":
+      return { ...state, myRestriction: action.payload };
+    case "SET_REPORT_COUNT":
+      return {
+        ...state,
+        reportCounts: { ...state.reportCounts, [action.payload.roomId]: action.payload.count },
+      };
+    case "SET_ROOM_MODERATION": {
+      const existing = state.roomInfoMap[action.payload.roomId];
+      if (!existing) return state;
+      return {
+        ...state,
+        roomInfoMap: {
+          ...state.roomInfoMap,
+          [action.payload.roomId]: { ...existing, moderation: action.payload.moderation },
+        },
+      };
+    }
+    case "SET_MEMBER_TIMEOUT":
+      return {
+        ...state,
+        roomMembers: state.roomMembers.map((m) =>
+          m.userId === action.payload.userId
+            ? { ...m, timeoutUntil: action.payload.timeoutUntil > Date.now() ? action.payload.timeoutUntil : undefined }
+            : m,
+        ),
+      };
     case "SET_MEMBER_CUSTOM_ROLES":
       return { ...state, memberCustomRoles: action.payload };
     case "UPDATE_MEMBER_CUSTOM_ROLES":

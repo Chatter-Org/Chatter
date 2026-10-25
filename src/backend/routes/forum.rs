@@ -9,6 +9,7 @@ use super::super::{
         extract_token, generate_id, get_user_from_token, is_moderator_or_owner, now_millis,
         valid_profile_color,
     },
+    moderation::{automod_refusal, participation_refusal},
     push::{added_mentions, spawn_message_push, MessageNotification},
     state::{
         AppState, ChannelRecord, ForumCommentRecord, ForumPinRecord, ForumPostRecord, ForumTag,
@@ -85,6 +86,25 @@ async fn validate_forum_member(
 /// No channel is the room itself, for a room that is a forum and has no forum
 /// channels — its posts carry an empty `channel_id`. A room that does have
 /// forum channels must name one, or a post would land in none of them.
+/// What stops `user_id` writing in the forum right now: a timeout, rules not
+/// yet accepted, or automod refusing `text`. Forum posting is not gated on
+/// `send_messages`, so these are asked for here rather than arriving through
+/// the permission set.
+async fn posting_refusal(
+    state: &Arc<AppState>,
+    room_id: &str,
+    user_id: &str,
+    text: &str,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    if let Some(refusal) = participation_refusal(state, room_id, user_id).await {
+        return Err(refusal);
+    }
+    if let Some(refusal) = automod_refusal(state, room_id, user_id, text, false).await {
+        return Err(refusal);
+    }
+    Ok(())
+}
+
 async fn forum_channel(
     state: &AppState,
     room_id: &str,
@@ -568,6 +588,13 @@ pub(crate) async fn create_post(
             "Body must be at most 4000 characters",
         ));
     }
+    posting_refusal(
+        &state,
+        &room_id,
+        &user_id,
+        &format!("{title}\n{}", req.body),
+    )
+    .await?;
 
     let images = requested_images(&req.image_url, &req.image_urls);
     let videos = requested_media(&req.video_urls);
@@ -862,6 +889,7 @@ pub(crate) async fn create_comment(
             "Comment body must be 1-2000 characters",
         ));
     }
+    posting_refusal(&state, &room_id, &user_id, &req.body).await?;
 
     let images = requested_images(&req.image_url, &req.image_urls);
     let videos = requested_media(&req.video_urls);
@@ -1050,6 +1078,15 @@ pub(crate) async fn edit_post(
         }
     }
 
+    if req.title.is_some() || req.body.is_some() {
+        let text = format!(
+            "{}\n{}",
+            req.title.as_deref().unwrap_or(""),
+            req.body.as_deref().unwrap_or("")
+        );
+        posting_refusal(&state, &room_id, &user_id, &text).await?;
+    }
+
     let mut set_doc = mongodb::bson::Document::new();
     let new_title;
     let new_body;
@@ -1172,6 +1209,7 @@ pub(crate) async fn edit_comment(
             "Comment body must be 1-2000 characters",
         ));
     }
+    posting_refusal(&state, &room_id, &user_id, &req.body).await?;
 
     let now = now_millis();
     let _ = coll

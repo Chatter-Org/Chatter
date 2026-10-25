@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import type { ConnQualityData } from "./VoiceControls";
 import { useAppContext } from "@/lib/store";
+import { useChannelLinkText } from "@/hooks/useChannelLinkText";
 import {
   Hash, Volume2, Volume1, VolumeX, Plus, Pencil, Trash2, ChevronDown, ChevronRight,
   Mic, MicOff, PhoneOff, HeadphoneOff, Camera, FolderPlus, GripVertical, PanelLeftClose, PanelLeftOpen, Lock, Shield, ImagePlus, X, Scissors,
@@ -120,7 +121,8 @@ import { useConfirm } from "@/components/ConfirmDialog";
 interface ChannelListProps {
   /** Renders full-bleed inside the mobile drawer instead of as a resizable column. */
   asDrawer?: boolean;
-  /** Called after the user picks a channel, so the mobile drawer can close. */
+  /** Called after the user picks a channel, so the mobile drawer can close
+   *  and an open stream viewer can make way for the chat. */
   onChannelSelected?: () => void;
   onJoinVoiceChannel: (channelId: string) => void;
   onLeaveVoice?: () => void;
@@ -157,6 +159,7 @@ function VoiceTimer({ since }: { since: number }) {
 export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceChannel, onLeaveVoice, onToggleMute, onToggleDeafen, onToggleScreenShare, isScreenSharing, onToggleWebcam, isWebcamActive, connQualityRef, setUserVolumeRef, speakingUsersRef, onCollapsedChange }: ChannelListProps) {
   const confirm = useConfirm();
   const { state, dispatch, selectRoom, selectChannel, createChannel, updateChannel, deleteChannel, moderateVoice, openThread } = useAppContext();
+  const channelLinkText = useChannelLinkText();
   const readable = useReadableColor();
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -595,7 +598,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
                     void openThread(thread.threadId);
                     onChannelSelected?.();
                   }}
-                  title={thread.name}
+                  title={channelLinkText(thread.name)}
                   className={`flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-xs transition-colors hover:bg-accent/50 ${
                     state.activeThreadEventId === thread.threadId
                       ? "text-foreground"
@@ -603,7 +606,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
                   }`}
                 >
                   <MessagesSquare className="h-3 w-3 shrink-0" />
-                  <span className="flex-1 truncate">{thread.name}</span>
+                  <span className="flex-1 truncate">{channelLinkText(thread.name)}</span>
                   {thread.replyCount > 0 && (
                     <span className="shrink-0 tabular-nums opacity-70">{thread.replyCount}</span>
                   )}

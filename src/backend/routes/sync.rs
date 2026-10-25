@@ -163,6 +163,9 @@ async fn build_joined_room(
                 if let Some(ts) = e.joined_at {
                     content["joined_at"] = json!(ts);
                 }
+                if let Some(ts) = e.timeout_until {
+                    content["timeout_until"] = json!(ts);
+                }
                 json!({
                     "type": "m.room.member",
                     "state_key": e.user_id,
@@ -289,6 +292,12 @@ async fn build_joined_room(
             "type": "m.room.theme",
             "state_key": "",
             "content": {"suggested_theme": room_data.suggested_theme},
+            "sender": room_data.creator
+        }),
+        json!({
+            "type": "m.room.moderation",
+            "state_key": "",
+            "content": crate::backend::moderation::public_view(&room_data),
             "sender": room_data.creator
         }),
     ];

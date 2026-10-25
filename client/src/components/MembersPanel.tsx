@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
-import { ChevronLeft, ChevronRight, Crown, Shield, Smartphone, Gamepad2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Crown, Shield, Smartphone, Gamepad2 } from "lucide-react";
+import { formatTimeoutEnd } from "@/components/moderation/moderationUtils";
 import { useAppContext } from "@/lib/store";
 import { useReadableColor } from "@/lib/theme";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -164,6 +165,11 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
             )}
             {member.role === "moderator" && (
               <Shield className="h-3 w-3 text-blue-400 shrink-0" />
+            )}
+            {!!member.timeoutUntil && (
+              <span title={`Timed out until ${formatTimeoutEnd(member.timeoutUntil)}`} className="shrink-0">
+                <Clock className="h-3 w-3 text-orange-400" />
+              </span>
             )}
             {presence?.isMobile && status !== "offline" && (
               <Smartphone className="h-3 w-3 text-success shrink-0" />

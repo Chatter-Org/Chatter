@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useAppContext } from "@/lib/store";
+import { useChannelLinkText } from "@/hooks/useChannelLinkText";
 import { apiSearchMessages, type MatrixMessage } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { displayUserId } from "@/lib/utils";
@@ -15,6 +16,7 @@ const RESULT_LIMIT = 20;
  *  fans out and merges — fine for a self-hosted server's handful of rooms. */
 export function CrossRoomSearch({ onSelectRoom }: CrossRoomSearchProps) {
   const { state } = useAppContext();
+  const channelLinkText = useChannelLinkText();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MatrixMessage[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -89,7 +91,7 @@ export function CrossRoomSearch({ onSelectRoom }: CrossRoomSearchProps) {
                     <span className="font-medium text-foreground truncate">{sender}</span>
                     <span className="truncate">in {info?.name || "unknown room"}</span>
                   </span>
-                  <span className="text-sm truncate max-w-full">{msg.content.body}</span>
+                  <span className="text-sm truncate max-w-full">{channelLinkText(msg.content.body)}</span>
                 </button>
               );
             })}

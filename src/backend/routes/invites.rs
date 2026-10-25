@@ -18,6 +18,28 @@ use rand::Rng;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+/// The most uses one invite can be given. Past this it is an open door, and
+/// "unlimited" says so more honestly.
+const MAX_INVITE_USES: i64 = 1000;
+
+const USED_UP: &str = "This invite has been used the maximum number of times";
+
+fn invite_used_up(invite: &InviteRecord) -> bool {
+    invite.max_uses > 0 && invite.uses >= invite.max_uses
+}
+
+/// What the audit log says about a new invite's limits.
+fn invite_limits_detail(max_uses: i64, expires_in_days: Option<u64>) -> String {
+    let mut parts = Vec::new();
+    if max_uses > 0 {
+        parts.push(format!("max uses {max_uses}"));
+    }
+    if let Some(days) = expires_in_days {
+        parts.push(format!("expires in {days}d"));
+    }
+    parts.join(", ")
+}
+
 fn generate_invite_code() -> String {
     const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
     let mut rng = rand::thread_rng();
@@ -71,9 +93,17 @@ pub(crate) async fn create_invite(
         ));
     }
 
+    let body = body.map(|Json(b)| b).unwrap_or_default();
     let expires_at = body
-        .and_then(|b| b.expires_in_days)
+        .expires_in_days
         .map(|days| now_millis() + days as i64 * 24 * 60 * 60 * 1000);
+    let max_uses = body.max_uses.unwrap_or(0);
+    if !(0..=MAX_INVITE_USES).contains(&max_uses) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("An invite can allow at most {MAX_INVITE_USES} uses"),
+        ));
+    }
 
     let code = generate_invite_code();
     let record = InviteRecord {
@@ -83,6 +113,8 @@ pub(crate) async fn create_invite(
         click_count: 0,
         created_at: now_millis(),
         expires_at,
+        max_uses,
+        uses: 0,
     };
 
     let inv_coll = state.db.collection::<InviteRecord>("invites");
@@ -94,11 +126,13 @@ pub(crate) async fn create_invite(
         &user_id,
         audit::AuditAction::InviteCreated,
         &code,
-        "",
+        &invite_limits_detail(max_uses, body.expires_in_days),
     )
     .await;
 
-    Ok(Json(json!({ "code": code, "expires_at": expires_at })))
+    Ok(Json(
+        json!({ "code": code, "expires_at": expires_at, "max_uses": max_uses }),
+    ))
 }
 
 pub(crate) async fn list_invites(
@@ -136,6 +170,8 @@ pub(crate) async fn list_invites(
                 "click_count": inv.click_count,
                 "created_at": inv.created_at,
                 "expires_at": inv.expires_at,
+                "max_uses": inv.max_uses,
+                "uses": inv.uses,
             }));
         }
     }
@@ -213,6 +249,9 @@ pub(crate) async fn get_invite_info(
             return Err(error_response(StatusCode::GONE, "Invite has expired"));
         }
     }
+    if invite_used_up(&invite) {
+        return Err(error_response(StatusCode::GONE, USED_UP));
+    }
 
     let rooms_coll = state.db.collection::<RoomRecord>("rooms");
     let room = rooms_coll
@@ -270,8 +309,53 @@ pub(crate) async fn accept_invite(
         ));
     }
 
-    if let Err(msg) = do_join_room(&state, &invite.room_id, &user_id).await {
-        return Err(error_response(StatusCode::FORBIDDEN, msg));
+    // Someone already in the room is sent there without spending a use: a
+    // member clicking the link again has not joined anyone.
+    let already_member = {
+        let rm = state.room_members.read().await;
+        rm.get(&invite.room_id)
+            .is_some_and(|m| m.contains(&user_id))
+    };
+    if already_member {
+        return Ok(Json(json!({ "room_id": invite.room_id })));
+    }
+
+    // A limited invite's use is claimed before the join, in one conditional
+    // update, so two people racing for the last use cannot both get it.
+    let limited = invite.max_uses > 0;
+    if limited {
+        let claimed = inv_coll
+            .update_one(
+                doc! {
+                    "_id": &code,
+                    "$expr": { "$lt": [{ "$ifNull": ["$uses", 0] }, "$max_uses"] },
+                },
+                doc! { "$inc": { "uses": 1_i64 } },
+            )
+            .await
+            .map(|r| r.modified_count == 1)
+            .unwrap_or(false);
+        if !claimed {
+            return Err(error_response(StatusCode::GONE, USED_UP));
+        }
+    }
+
+    match do_join_room(&state, &invite.room_id, &user_id).await {
+        Err(msg) => {
+            // Refused (a ban), so the use it claimed goes back.
+            if limited {
+                let _ = inv_coll
+                    .update_one(doc! { "_id": &code }, doc! { "$inc": { "uses": -1_i64 } })
+                    .await;
+            }
+            return Err(error_response(StatusCode::FORBIDDEN, msg));
+        }
+        Ok(_) if !limited => {
+            let _ = inv_coll
+                .update_one(doc! { "_id": &code }, doc! { "$inc": { "uses": 1_i64 } })
+                .await;
+        }
+        Ok(_) => {}
     }
 
     Ok(Json(json!({ "room_id": invite.room_id })))

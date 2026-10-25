@@ -4,7 +4,7 @@ use crate::backend::{
     metrics::{MediaKind, METRICS},
     state::{AppState, ScreenPublisherState, ScreenSubscriberState},
     webrtc::{
-        create_peer_connection, ice_candidate_to_json, parse_ice_candidate,
+        create_peer_connection, ice_candidate_to_json, parse_ice_candidate, relay_packet,
         rewrite_rtcp_feedback_for_publisher, CandidateGate,
     },
 };
@@ -31,7 +31,9 @@ pub(crate) fn subscriber_key(viewer_user_id: &str, sharer_user_id: &str) -> Stri
     format!("{}|{}", viewer_user_id, sharer_user_id)
 }
 
-/// Send the current viewer list to the sharer so they can display viewer count.
+/// Send the current viewer list to the sharer and to everyone watching, so
+/// each of them can show the viewer count. Someone who has just stopped
+/// watching is not sent it; their client shows no count once it stops either.
 pub(crate) async fn send_screen_viewers_update(state: &AppState, sharer_user_id: &str) {
     let viewers: Vec<String> = {
         let subs = state.screen_subscribers.read().await;
@@ -46,6 +48,9 @@ pub(crate) async fn send_screen_viewers_update(state: &AppState, sharer_user_id:
         "viewers": viewers,
     });
     send_to_user(state, sharer_user_id, &msg).await;
+    for viewer in viewers.iter().filter(|v| v.as_str() != sharer_user_id) {
+        send_to_user(state, viewer, &msg).await;
+    }
 }
 
 /// Check if user is in any voice channel (channel_id-keyed map).
@@ -832,7 +837,14 @@ pub(crate) async fn handle_screen_webrtc_subscribe_offer(
                 // packets arriving the client's frozen-video check never fired. The
                 // task ends when the subscription is torn down, which aborts it, or
                 // when the sharer stops.
-                Ok(rtp_packet) => match local_track.write_rtp(&rtp_packet).await {
+                Ok(rtp_packet) => match local_track
+                    .write_rtp(&relay_packet(
+                        &rtp_packet,
+                        rtp_packet.header.sequence_number,
+                        rtp_packet.header.timestamp,
+                    ))
+                    .await
+                {
                     Ok(bytes) => METRICS.record_out(MediaKind::Screen, bytes),
                     Err(_) => continue,
                 },
@@ -905,7 +917,14 @@ pub(crate) async fn handle_screen_webrtc_subscribe_offer(
                                 // packets arriving the client's frozen-video check never fired. The
                                 // task ends when the subscription is torn down, which aborts it, or
                                 // when the sharer stops.
-                                match audio_local_track.write_rtp(&rtp_packet).await {
+                                match audio_local_track
+                                    .write_rtp(&relay_packet(
+                                        &rtp_packet,
+                                        rtp_packet.header.sequence_number,
+                                        rtp_packet.header.timestamp,
+                                    ))
+                                    .await
+                                {
                                     Ok(bytes) => METRICS.record_out(MediaKind::Screen, bytes),
                                     Err(_) => continue,
                                 }

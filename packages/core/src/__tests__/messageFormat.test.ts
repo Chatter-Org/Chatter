@@ -121,5 +121,7 @@ describe("timeline", () => {
 describe("plainText", () => {
   it("drops the markers and keeps the words", () => {
     expect(plainText("**hi** _there_ %%%you%%% :emoji{x}:")).toBe("hi there you :emoji:");
+    const channels = [{ channel_id: "#_a", name: "general", channel_type: "text" as const }];
+    expect(plainText("in <##_a> and <##_b>", channels)).toBe("in #general and #unknown");
   });
 });

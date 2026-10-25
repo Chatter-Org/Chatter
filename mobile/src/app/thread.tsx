@@ -15,6 +15,7 @@ import { MessageBody } from "@/components/MessageBody";
 import { MessageMedia } from "@/components/MessageMedia";
 import { MessageActions } from "@/components/MessageActions";
 import { Composer } from "@/components/Composer";
+import { RestrictionBar, isRestricted } from "@/components/RestrictionBar";
 import { useMessageRows } from "@/components/useMessageRows";
 import { Icon, T } from "@/ui/primitives";
 import { UI_HEADING, UI_META } from "@/ui/roles";
@@ -165,7 +166,9 @@ export function ThreadView({ onClose, top }: { onClose(): void; top: number }) {
       )}
 
       <Animated.View style={lift}>
-        {threadId ? (
+        {threadId && isRestricted(state.myRestriction) ? (
+          <RestrictionBar bottomInset={insets.bottom} />
+        ) : threadId ? (
           <Composer
             key={threadId}
             threadEventId={threadId}

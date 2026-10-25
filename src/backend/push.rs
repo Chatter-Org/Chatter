@@ -237,6 +237,51 @@ pub(crate) fn notification_body(body: &str) -> String {
     }
 }
 
+/// A link to a channel as a message body carries it: `<#` + the channel id +
+/// `>`. Channel ids start with `#`, so the token reads `<##_…>`. Port of
+/// `CHANNEL_LINK` in `client/src/lib/channelLinks.ts`.
+static CHANNEL_LINK: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"<#([^\s<>]+)>").expect("valid regex"));
+
+fn has_channel_links(body: &str) -> bool {
+    CHANNEL_LINK.is_match(body)
+}
+
+/// Every `<#channel>` in a body as `#name` — or `#unknown` when the reader
+/// cannot view that channel, or it is not one of this room's. `allowed` is
+/// `get_allowed_channel_ids`'s answer: `None` means unrestricted. Port of
+/// `plainChannelLinks`.
+pub(crate) fn render_channel_links(
+    body: &str,
+    names: &HashMap<String, String>,
+    allowed: Option<&[String]>,
+) -> String {
+    CHANNEL_LINK
+        .replace_all(body, |caps: &regex::Captures| {
+            let id = &caps[1];
+            let visible = allowed.is_none_or(|ids| ids.iter().any(|a| a == id));
+            match names.get(id) {
+                Some(name) if visible => format!("#{name}"),
+                _ => "#unknown".to_string(),
+            }
+        })
+        .into_owned()
+}
+
+/// Channel id → name for one room.
+async fn channel_names_for(state: &AppState, room_id: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let coll = state.db.collection::<Document>("channels");
+    if let Ok(mut cursor) = coll.find(doc! { "room_id": room_id }).await {
+        while let Ok(Some(d)) = cursor.try_next().await {
+            if let (Ok(id), Ok(name)) = (d.get_str("_id"), d.get_str("name")) {
+                out.insert(id.to_string(), name.to_string());
+            }
+        }
+    }
+    out
+}
+
 // ─── Subscriptions ───────────────────────────────────────────────────────────
 
 /// A browser push subscription, as handed over by `PushManager.subscribe`.
@@ -390,10 +435,20 @@ async fn deliver_message(state: &Arc<AppState>, n: &MessageNotification, sent_ts
     let dnd = dnd_users(state, &recipients).await;
     let role_names = role_names_by_user(state, &n.room_id, &recipients).await;
 
-    let payload_for = |title: String| {
+    // A `<#channel>` link reads as the channel's name only to someone who can
+    // view that channel, so the body is resolved per recipient. The names are
+    // fetched once, and only when there is a link to resolve.
+    let has_links = has_channel_links(&n.body);
+    let channel_names = if has_links {
+        channel_names_for(state, &n.room_id).await
+    } else {
+        HashMap::new()
+    };
+
+    let payload_for = |title: String, body: &str| {
         json!({
             "title": title,
-            "body": notification_body(&n.body),
+            "body": notification_body(body),
             "icon": n.icon,
             // One notification per channel (or thread) — a burst collapses
             // instead of stacking, matching the client's tag.
@@ -412,14 +467,19 @@ async fn deliver_message(state: &Arc<AppState>, n: &MessageNotification, sent_ts
     };
 
     for (user_id, subs) in subscriptions {
+        let allowed = if !n.channel_id.is_empty() || has_links {
+            get_allowed_channel_ids(state, &n.room_id, &user_id).await
+        } else {
+            None
+        };
         // A member who cannot read the channel must not be told what was said
         // in it, whatever their notification level says.
-        if !n.channel_id.is_empty() {
-            if let Some(allowed) = get_allowed_channel_ids(state, &n.room_id, &user_id).await {
-                if !allowed.contains(&n.channel_id) {
-                    continue;
-                }
-            }
+        if !n.channel_id.is_empty()
+            && allowed
+                .as_ref()
+                .is_some_and(|ids| !ids.contains(&n.channel_id))
+        {
+            continue;
         }
 
         let is_mention = mentions_user(
@@ -452,7 +512,12 @@ async fn deliver_message(state: &Arc<AppState>, n: &MessageNotification, sent_ts
         } else {
             format!("{} · {}", n.sender_name, n.room_name)
         };
-        let payload = payload_for(title);
+        let body = if has_links {
+            render_channel_links(&n.body, &channel_names, allowed.as_deref())
+        } else {
+            n.body.clone()
+        };
+        let payload = payload_for(title, &body);
 
         for sub in subs {
             send_one(state, vapid, &sub, payload.as_bytes()).await;
@@ -1008,6 +1073,25 @@ mod tests {
         assert!(mentions_user("@moderator help", "@a:h", &roles, false));
         // Suppressed role mentions render but must not wake anyone.
         assert!(!mentions_user("@moderator help", "@a:h", &roles, true));
+    }
+
+    #[test]
+    fn channel_links_resolve_per_reader() {
+        let names = HashMap::from([
+            ("#_pub".to_string(), "general".to_string()),
+            ("#_priv".to_string(), "staff".to_string()),
+        ]);
+        let body = "see <##_pub> and <##_priv> and <##_gone>";
+        assert_eq!(
+            render_channel_links(body, &names, None),
+            "see #general and #staff and #unknown"
+        );
+        let allowed = vec!["#_pub".to_string()];
+        assert_eq!(
+            render_channel_links(body, &names, Some(&allowed)),
+            "see #general and #unknown and #unknown"
+        );
+        assert_eq!(render_channel_links("a <b> #c", &names, None), "a <b> #c");
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::{
     },
 };
 use tokio::{
-    sync::{broadcast, mpsc, RwLock},
+    sync::{broadcast, mpsc, watch, RwLock},
     task::JoinHandle,
 };
 use webrtc::{
@@ -93,7 +93,7 @@ pub struct AppState {
     pub(crate) voice_publishers: RwLock<HashMap<String, VoicePublisherState>>,
     // One entry per listener, keyed by their user id.
     pub(crate) voice_listeners: RwLock<HashMap<String, VoiceListenerState>>,
-    pub(crate) link_previews: RwLock<HashMap<String, CachedPreview>>,
+    pub(crate) link_previews: RwLock<HashMap<String, PreviewEntry>>,
     pub(crate) totp_attempts: RwLock<HashMap<String, TotpAttemptRecord>>,
     // Token buckets for rate limiting and slowmode, keyed by "<bucket>:<who>".
     // Ephemeral on purpose: a restart forgiving everyone's limit is a better
@@ -224,6 +224,127 @@ pub(crate) struct RoomRecord {
     /// second place for the two to disagree, and nothing here renders it.
     #[serde(default)]
     pub(crate) suggested_theme: String,
+    /// Rules, reports and automod. Owner-edited, and never sent whole to
+    /// members: the blocked-word list is for moderators' eyes (see
+    /// `moderation::public_view`).
+    #[serde(default)]
+    pub(crate) moderation: ModerationSettings,
+}
+
+/// How a room is moderated. Every field defaults to what a room behaved like
+/// before these settings existed, so an old room reads back unchanged.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct ModerationSettings {
+    /// Markdown shown to members. Empty is no rules.
+    #[serde(default)]
+    pub(crate) rules: String,
+    /// When set, a member must accept `rules` before they can post, react or
+    /// speak. Owners and moderators are never held by it.
+    #[serde(default)]
+    pub(crate) rules_required: bool,
+    /// Whether members can report messages to the room's moderators.
+    #[serde(default = "default_true")]
+    pub(crate) reports_enabled: bool,
+    #[serde(default)]
+    pub(crate) automod: AutomodSettings,
+}
+
+impl Default for ModerationSettings {
+    fn default() -> Self {
+        Self {
+            rules: String::new(),
+            rules_required: false,
+            reports_enabled: true,
+            automod: AutomodSettings::default(),
+        }
+    }
+}
+
+/// A timeout: `user_id` cannot post, react or speak in `room_id` until
+/// `until` (epoch ms). Kept apart from `room_members` because leaving deletes
+/// that record — a timeout stored there could be escaped by leaving and
+/// coming back. One in the past is no timeout, so nothing clears it when it
+/// ends. Keyed `{room_id}:{user_id}`.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct MemberTimeoutRecord {
+    #[serde(rename = "_id")]
+    pub(crate) id: String,
+    pub(crate) room_id: String,
+    pub(crate) user_id: String,
+    pub(crate) until: i64,
+}
+
+impl MemberTimeoutRecord {
+    pub(crate) fn key(room_id: &str, user_id: &str) -> String {
+        format!("{room_id}:{user_id}")
+    }
+}
+
+/// A member's report of a message, waiting for a moderator.
+///
+/// Keeps a copy of what the message said when it was reported: the point of a
+/// report is that a moderator can judge it, and the author deleting or editing
+/// it first must not make that impossible. Only moderators can read it back.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct ReportRecord {
+    #[serde(rename = "_id")]
+    pub(crate) report_id: String,
+    pub(crate) room_id: String,
+    pub(crate) event_id: String,
+    #[serde(default)]
+    pub(crate) channel_id: String,
+    /// Set when the message is a thread reply.
+    #[serde(default)]
+    pub(crate) thread_id: String,
+    pub(crate) reporter: String,
+    /// The message's author.
+    pub(crate) reported_user: String,
+    #[serde(default)]
+    pub(crate) reason: String,
+    /// The message's body when it was reported.
+    #[serde(default)]
+    pub(crate) body: String,
+    /// When the message was sent, so the queue can jump to it.
+    #[serde(default)]
+    pub(crate) message_ts: i64,
+    pub(crate) created_at: i64,
+    /// "open", "resolved" (acted on) or "dismissed" (nothing wrong).
+    pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) resolved_by: String,
+    #[serde(default)]
+    pub(crate) resolved_at: i64,
+    /// Whether the moderator deleted the message when resolving.
+    #[serde(default)]
+    pub(crate) message_deleted: bool,
+}
+
+/// Filters run on every message before it is stored. Anyone who can manage
+/// messages is exempt, as with slowmode.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub(crate) struct AutomodSettings {
+    #[serde(default)]
+    pub(crate) enabled: bool,
+    /// Matched case-insensitively as whole words; an entry ending in `*`
+    /// matches as a prefix.
+    #[serde(default)]
+    pub(crate) blocked_words: Vec<String>,
+    /// Refuse any message with a web link in it.
+    #[serde(default)]
+    pub(crate) block_links: bool,
+    /// Refuse invite links, this instance's or anyone else's.
+    #[serde(default)]
+    pub(crate) block_invites: bool,
+    /// The most @mentions one message may carry. 0 is no limit.
+    #[serde(default)]
+    pub(crate) max_mentions: u32,
+    /// Refuse a message identical to the sender's last few in this room.
+    #[serde(default)]
+    pub(crate) block_repeats: bool,
+    /// Time out whoever trips a filter, for this many seconds. 0 only refuses
+    /// the message.
+    #[serde(default)]
+    pub(crate) timeout_secs: i64,
 }
 
 /// A thread, kept as its own record rather than derived from its messages.
@@ -409,6 +530,9 @@ pub(crate) struct RoomMemberRecord {
     pub(crate) role: String,
     #[serde(default)]
     pub(crate) joined_at: i64,
+    /// When the member accepted the room's rules; 0 if they have not.
+    #[serde(default)]
+    pub(crate) rules_accepted_at: i64,
 }
 
 fn default_member_role() -> String {
@@ -546,6 +670,14 @@ pub(crate) struct InviteRecord {
     pub(crate) created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) expires_at: Option<i64>,
+    /// How many people may join through this link. 0 is unlimited, which is
+    /// also what every invite written before limits existed reads back as.
+    #[serde(default)]
+    pub(crate) max_uses: i64,
+    /// How many people have joined through it. Not `click_count`, which counts
+    /// anyone who opened the link, joined or not.
+    #[serde(default)]
+    pub(crate) uses: i64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1147,12 +1279,19 @@ pub(crate) struct PresenceRecord {
     pub(crate) desktop_game: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Default, Serialize)]
 pub(crate) struct CachedPreview {
     pub(crate) title: Option<String>,
     pub(crate) description: Option<String>,
     pub(crate) image: Option<String>,
     pub(crate) site_name: Option<String>,
+}
+
+/// A link preview, fetched or being fetched. The cell is shared so everyone
+/// asking for the same URL while it is in flight waits on one fetch.
+pub(crate) struct PreviewEntry {
+    pub(crate) created: std::time::Instant,
+    pub(crate) cell: Arc<tokio::sync::OnceCell<CachedPreview>>,
 }
 
 #[derive(Clone)]
@@ -1185,15 +1324,26 @@ pub(crate) struct ScreenSubscriberState {
     pub(crate) audio_forward_task: Option<JoinHandle<()>>,
 }
 
+/// One encoding of a camera: its `rid` ("h", "l"; empty for a camera sent
+/// without simulcast), its SSRC, and the channel its packets fan out on.
+#[derive(Clone)]
+pub(crate) struct WebcamLayer {
+    pub(crate) rid: String,
+    pub(crate) ssrc: u32,
+    pub(crate) rtp_sender: broadcast::Sender<rtp::packet::Packet>,
+}
+
 #[derive(Clone)]
 #[allow(dead_code)]
 pub(crate) struct WebcamPublisherState {
     pub(crate) room_id: String,
     pub(crate) channel_id: String,
     pub(crate) peer_connection: Arc<RTCPeerConnection>,
-    pub(crate) media_ssrc: Option<u32>,
     pub(crate) video_codec: Option<RTCRtpCodecCapability>,
-    pub(crate) rtp_sender: Option<broadcast::Sender<rtp::packet::Packet>>,
+    /// The encodings that have arrived. A simulcast camera's arrive one at a
+    /// time, so each viewer's forwarder watches this rather than reading it
+    /// once.
+    pub(crate) layers: Arc<watch::Sender<Vec<WebcamLayer>>>,
 }
 
 pub(crate) struct WebcamSubscriberState {
@@ -1201,6 +1351,8 @@ pub(crate) struct WebcamSubscriberState {
     pub(crate) sharer_user_id: String,
     pub(crate) peer_connection: Arc<RTCPeerConnection>,
     pub(crate) forward_task: JoinHandle<()>,
+    /// What the viewer has asked for; the forwarder moves them when it changes.
+    pub(crate) quality: watch::Sender<crate::backend::ws::webcam_simulcast::WebcamQuality>,
 }
 
 #[derive(Clone)]

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppContext } from "@/lib/store";
+import { useChannelLinkText } from "@/hooks/useChannelLinkText";
 import {
   apiSync,
   apiGetAllRooms,
@@ -90,6 +91,7 @@ function statusColor(status: string) {
 }
 
 export function ActivityPage() {
+  const channelLinkText = useChannelLinkText();
   const { state, selectRoom, openMessage, openDM, loadFriendPresence, acceptFriendRequest, rejectFriendRequest, removeFriend, unblockUser, loadUnreads, sendFriendRequest } = useAppContext();
   const [activities, setActivities] = useState<RoomActivity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -359,7 +361,7 @@ export function ActivityPage() {
                             <p className="text-xs text-muted-foreground truncate mt-0.5">
                               <span className="font-medium">{displayUserId(lastMessage.sender)}</span>
                               {": "}
-                              {lastMessage.body}
+                              {channelLinkText(lastMessage.body)}
                             </p>
                           ) : (
                             <p className="text-xs text-muted-foreground mt-0.5 italic">

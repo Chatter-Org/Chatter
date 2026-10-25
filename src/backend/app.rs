@@ -356,6 +356,26 @@ async fn create_indexes(db: &mongodb::Database) {
         )
         .await;
 
+    // member_timeouts: a room's timeouts in force, for its member list
+    let _ = db
+        .collection::<mongodb::bson::Document>("member_timeouts")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "room_id": 1, "until": 1 })
+                .build(),
+        )
+        .await;
+
+    // reports: a room's queue, newest first, filtered by status
+    let _ = db
+        .collection::<mongodb::bson::Document>("reports")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "room_id": 1, "status": 1, "created_at": -1 })
+                .build(),
+        )
+        .await;
+
     // push_subscriptions: index on user_id — every push resolves a room's
     // members to their devices through this
     let _ = db

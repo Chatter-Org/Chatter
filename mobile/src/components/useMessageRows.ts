@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import type { MatrixMessage } from "@chatter/core/api";
 import { externalSender, senderNameColor, type FormatOptions } from "@chatter/core/messageFormat";
 import { mentionRoleColors } from "@chatter/core/mentions";
+import { visibleChannels } from "@chatter/core/channelLinks";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import type { MessageRowProps } from "./MessageRow";
@@ -26,8 +27,10 @@ export function useMessageRows() {
       currentUserId: state.userId,
       roleColors: mentionRoleColors(state.customRoles, roomInfo),
       emojiAliases: Object.fromEntries(Object.entries(roomInfo?.emoji_aliases ?? {}).map(([alias, url]) => [url as string, alias])),
+      channels: visibleChannels(state),
     }),
-    [state.userId, state.customRoles, roomInfo],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.userId, state.customRoles, roomInfo, state.channels, state.roomMembers, state.memberCustomRoles],
   );
 
   const nameOf = useCallback(

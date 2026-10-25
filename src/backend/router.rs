@@ -33,15 +33,21 @@ use super::{
         },
         gif_favorites::{apply_gif_favorites_op, get_gif_favorites},
         invites::{accept_invite, create_invite, delete_invite, get_invite_info, list_invites},
+        link_preview::link_preview,
         media::{
-            delete_upload, gif_search, link_preview, list_uploads, upload_abort, upload_chunk,
-            upload_complete, upload_file, upload_guard, upload_init, upload_status,
+            delete_upload, gif_search, list_uploads, upload_abort, upload_chunk, upload_complete,
+            upload_file, upload_guard, upload_init, upload_status,
         },
         message_links::get_message_preview,
         messages::{
             delete_notification, delete_thread, edit_message, get_room_messages, get_room_threads,
             get_thread_messages, redact_message, search_messages, send_message,
             send_thread_message, set_thread_name,
+        },
+        moderation::{
+            accept_rules, bulk_delete_messages, create_report, get_moderation_settings,
+            list_reports, remove_timeout, resolve_report, timeout_member,
+            update_moderation_settings,
         },
         notification_settings::{get_notification_settings, set_notification_level},
         pins::{list_pins, pin_message, unpin_message},
@@ -279,6 +285,27 @@ pub(crate) fn build_router() -> Router<Arc<AppState>> {
         .route(
             "/api/rooms/{room_id}/members/{user_id}",
             delete(kick_member),
+        )
+        .route(
+            "/api/rooms/{room_id}/moderation",
+            get(get_moderation_settings).put(update_moderation_settings),
+        )
+        .route("/api/rooms/{room_id}/rules/accept", post(accept_rules))
+        .route(
+            "/api/rooms/{room_id}/reports",
+            get(list_reports).post(create_report),
+        )
+        .route(
+            "/api/rooms/{room_id}/reports/{report_id}/resolve",
+            post(resolve_report),
+        )
+        .route(
+            "/api/rooms/{room_id}/messages/bulk-delete",
+            post(bulk_delete_messages),
+        )
+        .route(
+            "/api/rooms/{room_id}/members/{user_id}/timeout",
+            put(timeout_member).delete(remove_timeout),
         )
         .route("/api/rooms/{room_id}/bans", get(list_banned_users))
         .route("/api/rooms/{room_id}/ban/{user_id}", post(ban_member))

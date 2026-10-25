@@ -7,6 +7,25 @@ import { ScreenFpsMenu } from "./voice/ScreenFpsMenu";
 import { useScreenShareFps } from "@/hooks/useScreenShareFps";
 import { ClipControls } from "./voice/ClipControls";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { gridLayout, GRID_GAP } from "@chatter/core/voice/grid";
+import { WEBCAM_HIGH_QUALITY_MIN_WIDTH } from "@/lib/webrtc";
+import type { WebcamQuality } from "@/lib/webrtc";
+import { Eye, LayoutGrid, Maximize2, Monitor, Video, X } from "lucide-react";
+
+/** How often the grid re-reads who is speaking, for the ring round a tile. */
+const GRID_SPEAKING_POLL_MS = 150;
+
+/** The strip under a focused feed shows this many tiles, chosen by who spoke
+ *  last. */
+const STRIP_MAX_TILES = 5;
+/** Strip tile height bounds, px. Below the minimum the strip scrolls instead;
+ *  the maximum, and the share of the panel, keep the stream the main thing. */
+const STRIP_MIN_TILE_H = 64;
+const STRIP_MAX_TILE_H = 120;
+const STRIP_MAX_PANEL_SHARE = 0.18;
+/** The strip's gap, and the space between it and the stream, px. */
+const STRIP_GAP = 12;
+const STRIP_PAD = 8;
 
 
 /** Header bar shown above the resizable panel group — always visible */
@@ -359,14 +378,72 @@ export function ScreenShareHeader({
   );
 }
 
-/** Video content — goes inside the resizable panel */
-export function ScreenShareViewer() {
+/**
+ * The thumbnail's buttons, over the stream while the chat has the area: back
+ * to the streams, or stop watching. A click anywhere else on the video is
+ * also the way back, since the thumbnail is too small to watch in for long.
+ */
+export function MiniViewerControls({
+  onExpand,
+  onClose,
+}: {
+  onExpand: () => void;
+  onClose: () => void;
+}) {
+  const isMobile = useIsMobile();
+  const btn = cn(
+    "flex items-center justify-center rounded bg-black/60 text-white/80 hover:bg-black/80 hover:text-white cursor-pointer",
+    isMobile ? "h-9 w-9" : "h-7 w-7",
+  );
+  return (
+    <>
+      <button
+        className="absolute inset-0 cursor-pointer"
+        onClick={onExpand}
+        aria-label="Back to the streams"
+      />
+      <div className="absolute right-1.5 top-1.5 flex gap-1 transition-opacity can-hover:opacity-0 can-hover:group-hover:opacity-100">
+        <button className={btn} onClick={onExpand} title="Back to the streams">
+          <Maximize2 className="h-3.5 w-3.5" />
+        </button>
+        <button className={btn} onClick={onClose} title="Stop watching">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Video content. `compact` is the thumbnail over the chat: one feed, no
+ * grid, strip, zoom or volume — the one being watched, or with nothing
+ * picked the first screen, else the first camera.
+ */
+export function ScreenShareViewer({
+  speakingUsersRef,
+  compact = false,
+}: {
+  speakingUsersRef?: React.MutableRefObject<Set<string>>;
+  compact?: boolean;
+} = {}) {
   const { state, dispatch } = useAppContext();
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const mainWebcamVideoRef = useRef<HTMLVideoElement>(null);
   const videoContainerRef = useRef<HTMLDivElement | null>(null);
   const thumbVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
   const webcamVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
+  // Grid tiles, keyed `screen:<user>` or `cam:<user>` — one person can be both.
+  const gridVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const gridContainerRef = useRef<HTMLDivElement | null>(null);
+  const [gridBox, setGridBox] = useState({ width: 0, height: 0 });
+  // The focused layout's panel, measured to size the strip's tiles.
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [panelBox, setPanelBox] = useState({ width: 0, height: 0 });
+  // When each person last spoke, for picking who the strip shows. Stamped
+  // as someone starts or stops, so it changes only when `speaking` does.
+  const [lastSpoke, setLastSpoke] = useState<Map<string, number>>(() => new Map());
+  const sampledSpeakingRef = useRef<Set<string>>(new Set());
+  const [speaking, setSpeaking] = useState<Set<string>>(() => new Set());
   const [, setStreamVersion] = useState(0);
 
   // Per-sharer volume state (persists when switching between sharers)
@@ -385,11 +462,11 @@ export function ScreenShareViewer() {
   const pinch = useRef<{ dist: number; zoom: number } | null>(null);
   const lastTapAt = useRef(0);
 
-  // Reset zoom/pan when switching sharers
+  // Reset zoom/pan when switching sharers, or shrinking to the thumbnail
   useEffect(() => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
-  }, [state.selectedScreenSharer]);
+  }, [state.selectedScreenSharer, compact]);
 
   // Clamp pan so the video edge can reach the container edge but not beyond.
   // The CSS applies: scale(z) translate(px/z %, py/z %).
@@ -488,8 +565,23 @@ export function ScreenShareViewer() {
   const sharers = state.activeScreenSharers;
   const webcamStreamers = state.activeWebcamStreamers;
 
-  const currentSharer = state.selectedScreenSharer;
-  const currentWebcamStreamer = state.selectedWebcamStreamer;
+  // A camera that has since gone off is no longer a choice, so it counts as
+  // none — it used to leave the viewer on "Connecting" for a feed that was gone.
+  const currentWebcamStreamer =
+    state.selectedWebcamStreamer && webcamStreamers.includes(state.selectedWebcamStreamer)
+      ? state.selectedWebcamStreamer
+      : null;
+  // The thumbnail has no grid to fall back on, so with nothing picked it
+  // shows the first screen; with no screens, the first camera follows below.
+  const currentSharer =
+    state.selectedScreenSharer ??
+    (compact && !currentWebcamStreamer ? sharers[0] ?? null : null);
+  const feedCount = sharers.length + webcamStreamers.length;
+  // Everyone at once until someone is picked: a call with cameras on is about
+  // the people, and one big face with the rest in a strip is a screen share's
+  // layout. Picking a feed focuses it; the strip's Grid button comes back.
+  const gridMode = !compact && feedCount >= 2 && !currentSharer && !currentWebcamStreamer;
+  const layout = gridLayout(feedCount, gridBox.width, gridBox.height);
   // A webcam is focused in the main view when explicitly selected, or when
   // there are no screen sharers at all.
   const focusedWebcam = currentWebcamStreamer
@@ -546,7 +638,84 @@ export function ScreenShareViewer() {
         el.play().catch(() => {});
       }
     });
+    // Grid tiles. A screen tile carries the share's sound — in the grid it is
+    // the only element playing it — at the volume set for that sharer.
+    gridVideoRefs.current.forEach((el, key) => {
+      const sep = key.indexOf(":");
+      const kind = key.slice(0, sep);
+      const userId = key.slice(sep + 1);
+      const stream = (kind === "screen" ? screenStreamsMap : webcamStreamsMap).get(userId);
+      if (stream && el.srcObject !== stream) {
+        el.srcObject = stream;
+        el.play().catch(() => {});
+      }
+      if (kind === "screen") {
+        el.muted = userId === state.userId;
+        el.volume = screenMuted[userId] ? 0 : (screenVolumes[userId] ?? 50) / 100;
+      }
+    });
   });
+
+  // Each camera is asked for at the size it is drawn: the full picture for
+  // the one in focus or a big grid tile, the small copy for a thumbnail or a
+  // small tile. Only changes are sent.
+  const sentQualityRef = useRef<Map<string, WebcamQuality>>(new Map());
+  useEffect(() => {
+    // An unmeasured grid has no tile size yet; asking now would only be
+    // taken back a frame later.
+    if (gridMode && gridBox.width === 0) return;
+    for (const userId of webcamStreamers) {
+      if (userId === state.userId) continue;
+      // The thumbnail is narrower than the small copy is wide.
+      const quality: WebcamQuality = compact
+        ? "low"
+        : gridMode
+        ? layout.tileWidth >= WEBCAM_HIGH_QUALITY_MIN_WIDTH ? "high" : "low"
+        : showingWebcam && userId === focusedWebcam ? "high" : "low";
+      if (sentQualityRef.current.get(userId) === quality) continue;
+      sentQualityRef.current.set(userId, quality);
+      window.dispatchEvent(
+        new CustomEvent("webcam-quality", { detail: { sharerId: userId, quality } }),
+      );
+    }
+  }, [compact, gridMode, gridBox.width, layout.tileWidth, webcamStreamers, showingWebcam, focusedWebcam, state.userId]);
+
+  // The grid is sized to the space it is given, which a resizable panel and a
+  // phone's rotation both change under it.
+  useEffect(() => {
+    const el = gridContainerRef.current;
+    if (!gridMode || !el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setGridBox((prev) =>
+        prev.width === width && prev.height === height ? prev : { width, height },
+      );
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [gridMode]);
+
+  // Who is speaking lives in a ref the call updates many times a second; the
+  // grid and the strip's people sample it rather than re-rendering on every
+  // level change.
+  useEffect(() => {
+    if (compact || !speakingUsersRef) return;
+    const id = setInterval(() => {
+      const next = speakingUsersRef.current;
+      const prev = sampledSpeakingRef.current;
+      if (prev.size === next.size && [...next].every((u) => prev.has(u))) return;
+      const sample = new Set(next);
+      sampledSpeakingRef.current = sample;
+      setSpeaking(sample);
+      const now = Date.now();
+      setLastSpoke((stamps) => {
+        const out = new Map(stamps);
+        for (const userId of [...prev, ...sample]) out.set(userId, now);
+        return out;
+      });
+    }, GRID_SPEAKING_POLL_MS);
+    return () => clearInterval(id);
+  }, [compact, speakingUsersRef]);
 
   const setVolume = useCallback((vol: number) => {
     if (!currentSharer) return;
@@ -569,7 +738,7 @@ export function ScreenShareViewer() {
   const viewerVisible = state.screenViewerOpen && (sharers.length > 0 || webcamStreamers.length > 0) && state.inVoiceChannel;
   useEffect(() => {
     const container = videoContainerRef.current;
-    if (!viewerVisible || !container) return;
+    if (!viewerVisible || compact || !container) return;
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -587,7 +756,21 @@ export function ScreenShareViewer() {
     };
     container.addEventListener("wheel", onWheel, { passive: false });
     return () => container.removeEventListener("wheel", onWheel);
-  }, [viewerVisible]);
+    // The grid has no zoom and unmounts the container; leaving it mounts a new one.
+  }, [viewerVisible, gridMode, compact]);
+
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!viewerVisible || compact || gridMode || !el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setPanelBox((prev) =>
+        prev.width === width && prev.height === height ? prev : { width, height },
+      );
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [viewerVisible, compact, gridMode]);
 
   if (
     !state.screenViewerOpen ||
@@ -597,9 +780,100 @@ export function ScreenShareViewer() {
     return null;
   }
 
+  const voiceMembers = state.voiceChannelId
+    ? state.voiceChannelMembers[state.voiceChannelId] ?? []
+    : [];
+
+  const nameOf = (userId: string) =>
+    userId === state.userId
+      ? "You"
+      : state.userPresence[userId]?.displayName || displayUserId(userId);
+
+  if (gridMode) {
+    const tiles = [
+      ...sharers.map((userId) => ({ kind: "screen" as const, userId })),
+      ...webcamStreamers.map((userId) => ({ kind: "cam" as const, userId })),
+    ];
+    return (
+      <div className="flex flex-col min-h-0 h-full bg-black/95">
+        <div
+          ref={gridContainerRef}
+          className="flex-1 min-h-0 flex items-center justify-center p-2 overflow-hidden"
+        >
+          <div
+            className="flex flex-wrap justify-center"
+            style={{
+              gap: GRID_GAP,
+              // Exactly `cols` tiles fit on a line, so the wrap makes the rows
+              // and a short last row sits centred under the others.
+              width: layout.cols * layout.tileWidth + (layout.cols - 1) * GRID_GAP,
+            }}
+          >
+            {tiles.map(({ kind, userId }) => {
+              const key = `${kind}:${userId}`;
+              const stream = (kind === "screen" ? screenStreamsMap : webcamStreamsMap).get(userId);
+              const isSpeaking = kind === "cam" && speaking.has(userId);
+              return (
+                <button
+                  key={key}
+                  className={cn(
+                    "relative overflow-hidden rounded-lg border-2 bg-neutral-900 cursor-pointer transition-colors",
+                    isSpeaking ? "border-success" : "border-transparent hover:border-white/30",
+                  )}
+                  style={{ width: layout.tileWidth, height: layout.tileHeight }}
+                  onClick={() =>
+                    dispatch({
+                      type: "SET_SCREEN_VIEWER",
+                      payload: kind === "screen" ? { sharer: userId } : { webcamStreamer: userId },
+                    })
+                  }
+                  title={`Focus ${nameOf(userId) === "You" ? "your" : `${nameOf(userId)}'s`} ${kind === "screen" ? "screen" : "camera"}`}
+                >
+                  {stream ? (
+                    <video
+                      ref={(el) => {
+                        if (el) gridVideoRefs.current.set(key, el);
+                        else gridVideoRefs.current.delete(key);
+                      }}
+                      autoPlay
+                      playsInline
+                      muted={kind === "cam" || userId === state.userId}
+                      className={cn(
+                        "w-full h-full select-none",
+                        kind === "cam" ? "object-cover" : "object-contain",
+                      )}
+                      draggable={false}
+                    />
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center text-xs text-white/50">
+                      Connecting…
+                    </div>
+                  )}
+                  <div className="absolute bottom-1.5 left-1.5 flex max-w-[85%] items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-xs text-white">
+                    {kind === "screen" ? (
+                      <Monitor className="h-3 w-3 shrink-0 text-info" />
+                    ) : (
+                      <Video className="h-3 w-3 shrink-0 text-blue-300" />
+                    )}
+                    <span className="truncate">{nameOf(userId)}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col min-h-0 h-full bg-black/95">
-      {/* Main video */}
+    <div
+      ref={compact ? undefined : panelRef}
+      className="flex flex-col min-h-0 h-full bg-black/95"
+      style={compact ? undefined : { gap: STRIP_GAP }}
+    >
+      {/* Main video. It has every pixel above the strip, which sits on the
+          panel's bottom edge, and is centred in them — Discord's layout. */}
       <div
         ref={videoContainerRef}
         className={cn(
@@ -668,6 +942,18 @@ export function ScreenShareViewer() {
           </div>
         )}
 
+      {/* The thumbnail's viewer count — a screen's only: a camera is someone
+          in the call, not a broadcast with an audience. */}
+      {compact && !showingWebcam && currentSharer && screenStreamsMap.has(currentSharer) && (
+        <div
+          className="pointer-events-none absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded bg-black/50 px-1.5 py-0.5 text-xs tabular-nums text-white/80"
+          title="Watching"
+        >
+          <Eye className="h-3 w-3" />
+          {(state.screenViewers[currentSharer] ?? []).filter((v) => v !== currentSharer).length}
+        </div>
+      )}
+
       {/* Zoom indicator */}
       {zoom > 1 && (
         <div className="absolute left-3 bottom-3 flex items-center gap-1.5 px-2 py-1 bg-black/60 rounded-lg text-xs text-white/80">
@@ -685,7 +971,7 @@ export function ScreenShareViewer() {
       )}
 
       {/* Volume controls overlay */}
-      {state.selectedScreenSharer &&
+      {!compact && state.selectedScreenSharer &&
         screenStreamsMap.has(state.selectedScreenSharer) && (
         <div className="absolute right-3 bottom-3 flex flex-col items-center gap-2 px-2 py-2.5 bg-black/60 rounded-lg can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity">
           <span className="text-xs text-white/60 tabular-nums">
@@ -723,78 +1009,140 @@ export function ScreenShareViewer() {
       )}
       </div>
 
-      {/* Unified thumbnail strip — shown whenever there are multiple feeds */}
-      {(sharers.length + webcamStreamers.length) > 1 && (
-        <div className="flex gap-2 p-2 bg-black/80 border-t border-white/10 overflow-x-auto shrink-0">
-          {sharers.map((sharerId) => {
-            const isSelected = !showingWebcam && sharerId === state.selectedScreenSharer;
-            return (
+      {!compact && (() => {
+        // Every other feed, then everyone in the call. The strip shows the
+        // STRIP_MAX_TILES whose owners spoke last — feeds first while nobody
+        // has — in this order, so a tile does not hop along the row each
+        // time someone talks.
+        type StripTile = { kind: "screen" | "cam" | "member"; userId: string; muted?: boolean };
+        const all: StripTile[] = [
+          ...sharers
+            .filter((id) => showingWebcam || id !== currentSharer)
+            .map((userId) => ({ kind: "screen" as const, userId })),
+          ...webcamStreamers
+            .filter((id) => !showingWebcam || id !== focusedWebcam)
+            .map((userId) => ({ kind: "cam" as const, userId })),
+          ...voiceMembers.map((m) => ({ kind: "member" as const, userId: m.userId, muted: m.muted })),
+        ];
+        const spokeAt = (t: StripTile) => lastSpoke.get(t.userId) ?? 0;
+        const picked = new Set(
+          all
+            .map((t, i) => ({ t, i }))
+            .sort((a, b) => spokeAt(b.t) - spokeAt(a.t) || a.i - b.i)
+            .slice(0, STRIP_MAX_TILES)
+            .map(({ t }) => t),
+        );
+        const tiles = all.filter((t) => picked.has(t));
+        const hasGrid = feedCount > 1;
+
+        // Tiles are 16:9, as wide as an even share of the row up to a cap
+        // that keeps them thumbnails. The Grid button is a square of the
+        // same height.
+        const slots = tiles.length + (hasGrid ? 1 : 0);
+        const rowWidth = panelBox.width - 2 * STRIP_PAD - STRIP_GAP * Math.max(0, slots - 1);
+        const byWidth = rowWidth / (tiles.length * (16 / 9) + (hasGrid ? 1 : 0));
+        const tileH = Math.floor(
+          Math.max(STRIP_MIN_TILE_H, Math.min(byWidth, STRIP_MAX_TILE_H, panelBox.height * STRIP_MAX_PANEL_SHARE)),
+        );
+        const tileW = Math.floor((tileH * 16) / 9);
+        const box = { width: tileW, height: tileH };
+        const label = "absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-0.5 flex items-center gap-1";
+
+        return (
+          // Centred by the inner row's margins rather than justify-center,
+          // which would push the first tiles out of reach of the scroll.
+          <div className="overflow-x-auto shrink-0" style={{ padding: `0 ${STRIP_PAD}px ${STRIP_PAD}px` }}>
+          <div className="flex w-max mx-auto" style={{ gap: STRIP_GAP }}>
+            {hasGrid && (
               <button
-                key={`screen-${sharerId}`}
-                className={cn(
-                  "relative shrink-0 w-28 rounded-md border-2 overflow-hidden bg-black aspect-video cursor-pointer transition-all",
-                  isSelected
-                    ? "border-info ring-1 ring-info/50"
-                    : "border-border/50 hover:border-info/50 opacity-70 hover:opacity-100"
-                )}
-                onClick={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { sharer: sharerId } })}
+                className="flex shrink-0 flex-col items-center justify-center gap-1 rounded-lg border-2 border-border/50 bg-black text-white/70 transition-all hover:border-white/40 hover:text-white cursor-pointer"
+                style={{ width: tileH, height: tileH }}
+                onClick={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { sharer: null } })}
+                title="Show everyone"
               >
-                <video
-                  ref={(el) => { if (el) thumbVideoRefs.current.set(sharerId, el); }}
-                  autoPlay playsInline muted
-                  className="w-full h-full object-contain"
-                />
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-0.5 flex items-center gap-1">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-info shrink-0">
-                    <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
-                  </svg>
-                  <p className="text-3xs text-info font-semibold truncate">
-                    {sharerId === state.userId ? "You" : displayUserId(sharerId)}
-                  </p>
-                </div>
+                <LayoutGrid className="h-5 w-5" />
+                <span className="text-xs font-semibold">Grid</span>
               </button>
-            );
-          })}
-          {webcamStreamers.map((userId) => {
-            const isSelected = showingWebcam && userId === focusedWebcam;
-            return (
-              <button
-                key={`webcam-${userId}`}
-                className={cn(
-                  "relative shrink-0 rounded-md border-2 overflow-hidden bg-black cursor-pointer transition-all",
-                  isSelected
-                    ? "border-blue-500 ring-1 ring-blue-500/50"
-                    : "border-border/50 hover:border-blue-500/50 opacity-70 hover:opacity-100"
-                )}
-                style={{ width: "7rem", aspectRatio: "4/3" }}
-                onClick={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { webcamStreamer: userId } })}
-              >
-                {webcamStreamsMap.has(userId) ? (
-                  <video
-                    ref={(el) => { if (el) webcamVideoRefs.current.set(userId, el); }}
-                    autoPlay playsInline muted={userId === state.userId}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-blue-400/50">
-                      <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-                    </svg>
-                  </div>
-                )}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-0.5 flex items-center gap-1">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-300 shrink-0">
-                    <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-                  </svg>
-                  <p className="text-3xs text-blue-300 font-semibold truncate">
-                    {userId === state.userId ? "You" : displayUserId(userId)}
-                  </p>
+            )}
+            {tiles.map((tile) => {
+              const { kind, userId } = tile;
+              if (kind === "screen") {
+                return (
+                  <button
+                    key={`screen-${userId}`}
+                    className="relative shrink-0 rounded-lg border-2 border-border/50 overflow-hidden bg-black cursor-pointer transition-all hover:border-info/50 opacity-80 hover:opacity-100"
+                    style={box}
+                    onClick={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { sharer: userId } })}
+                    title={`Watch ${nameOf(userId) === "You" ? "your" : `${nameOf(userId)}'s`} screen`}
+                  >
+                    <video
+                      ref={(el) => {
+                        if (el) thumbVideoRefs.current.set(userId, el);
+                        else thumbVideoRefs.current.delete(userId);
+                      }}
+                      autoPlay playsInline muted
+                      className="w-full h-full object-contain"
+                    />
+                    <div className={label}>
+                      <Monitor className="h-3 w-3 shrink-0 text-info" />
+                      <p className="text-xs text-info font-semibold truncate">{nameOf(userId)}</p>
+                    </div>
+                  </button>
+                );
+              }
+              if (kind === "cam") {
+                return (
+                  <button
+                    key={`webcam-${userId}`}
+                    className="relative shrink-0 rounded-lg border-2 border-border/50 overflow-hidden bg-black cursor-pointer transition-all hover:border-blue-500/50 opacity-80 hover:opacity-100"
+                    style={box}
+                    onClick={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { webcamStreamer: userId } })}
+                    title={`Watch ${nameOf(userId) === "You" ? "your" : `${nameOf(userId)}'s`} camera`}
+                  >
+                    {webcamStreamsMap.has(userId) ? (
+                      <video
+                        ref={(el) => {
+                          if (el) webcamVideoRefs.current.set(userId, el);
+                          else webcamVideoRefs.current.delete(userId);
+                        }}
+                        autoPlay playsInline muted={userId === state.userId}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <Video className="h-6 w-6 text-blue-400/50" />
+                      </div>
+                    )}
+                    <div className={label}>
+                      <Video className="h-3 w-3 shrink-0 text-blue-300" />
+                      <p className="text-xs text-blue-300 font-semibold truncate">{nameOf(userId)}</p>
+                    </div>
+                  </button>
+                );
+              }
+              const initial =
+                (state.userPresence[userId]?.displayName || displayUserId(userId))[0]?.toUpperCase() || "?";
+              const isSpeaking = speaking.has(userId) && !tile.muted;
+              return (
+                <div
+                  key={`member-${userId}`}
+                  className={cn(
+                    "flex shrink-0 items-center justify-center rounded-lg border-2 bg-neutral-800 transition-colors",
+                    isSpeaking ? "border-success" : "border-transparent",
+                  )}
+                  style={box}
+                  title={nameOf(userId)}
+                >
+                  <span className="font-semibold text-white/90 select-none" style={{ fontSize: tileH * 0.45 }}>
+                    {initial}
+                  </span>
                 </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

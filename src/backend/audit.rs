@@ -33,6 +33,12 @@ pub(crate) enum AuditAction {
     RoomSettingsUpdated,
     InviteCreated,
     InviteDeleted,
+    MemberTimedOut,
+    MemberTimeoutRemoved,
+    ModerationSettingsUpdated,
+    ReportResolved,
+    MessagesBulkDeleted,
+    AutomodBlocked,
 }
 
 impl AuditAction {
@@ -53,6 +59,12 @@ impl AuditAction {
             Self::RoomSettingsUpdated => "room.settings_updated",
             Self::InviteCreated => "invite.created",
             Self::InviteDeleted => "invite.deleted",
+            Self::MemberTimedOut => "member.timed_out",
+            Self::MemberTimeoutRemoved => "member.timeout_removed",
+            Self::ModerationSettingsUpdated => "room.moderation_updated",
+            Self::ReportResolved => "report.resolved",
+            Self::MessagesBulkDeleted => "message.bulk_deleted",
+            Self::AutomodBlocked => "automod.blocked",
         }
     }
 }

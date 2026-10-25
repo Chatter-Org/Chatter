@@ -5,16 +5,20 @@ import { useAppContext, screenStreamsMap } from "@/lib/store";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useScreenShareThumbnails } from "@/hooks/useScreenShareThumbnails";
+import { useDraggableThumb } from "@/hooks/useDraggableThumb";
 import { AppSidebar } from "./AppSidebar";
 import { ChatArea } from "./ChatArea";
 import { MembersPanel } from "./MembersPanel";
 import { ThreadPanel } from "./ThreadPanel";
 import { ChannelList } from "./ChannelList";
 import { VoiceControls, type ConnQualityData } from "./VoiceControls";
-import { ScreenShareViewer, ScreenShareHeader } from "./ScreenShareViewer";
+import { ScreenShareViewer, ScreenShareHeader, MiniViewerControls } from "./ScreenShareViewer";
 import { StreamOptInBar } from "./voice/StreamOptInBar";
 import { MobileCallBar } from "./voice/MobileCallBar";
 import { CreateRoomDialog, JoinRoomDialog } from "./RoomDialogs";
+import { RulesDialog } from "./moderation/RulesDialog";
+import { ReportDialog } from "./moderation/ReportDialog";
+import { ReportsPanel } from "./moderation/ReportsPanel";
 import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar";
 import {
   Sheet,
@@ -23,11 +27,6 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "@/components/ui/resizable";
 import { Toaster } from "@/components/ui/sonner";
 
 // Full-screen views the user reaches deliberately, and never more than one
@@ -52,7 +51,7 @@ const SpatialVoiceArea = lazyRetry(() =>
 const ActivityPage = lazyRetry(() =>
   import("./ActivityPage").then((m) => ({ default: m.ActivityPage })),
 );
-import { displayUserId } from "@/lib/utils";
+import { cn, displayUserId } from "@/lib/utils";
 import { lazyRetry } from "@/lib/lazyRetry";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { syncPushSubscription } from "@/lib/push";
@@ -62,9 +61,6 @@ import { toast } from "sonner";
 import { requestForumPost } from "@/lib/pendingForumPost";
 
 // ─── PiP helpers (bulletproof against Firefox / Safari quirks) ──────────────
-function pipEnabled(): boolean {
-  try { return !!document.pictureInPictureEnabled; } catch { return false; }
-}
 function pipActive(): boolean {
   try { return !!document.pictureInPictureElement; } catch { return false; }
 }
@@ -140,6 +136,10 @@ function MobileHeader({
  *  takes it to have none and puts the call controls in the bottom bar. */
 const CHANNELS_SETTLE_MS = 1500;
 
+/** How long "Start a video call" waits for the call to connect before it
+ *  forgets about the camera. */
+const VIDEO_CALL_JOIN_WAIT_MS = 15_000;
+
 export function ChatLayout() {
   const { state, dispatch, loadRooms, loadFriends, loadRoomGroups, loadUnreads, loadNotificationSettings, loadContinuity, selectRoom, selectChannel, openThread, closeThread } = useAppContext();
   const isMobile = useIsMobile();
@@ -156,7 +156,6 @@ export function ChatLayout() {
   // Which mobile drawer is open, and the room it was opened for — a room switch
   // then closes it by derivation rather than by an effect.
   const [mobileDrawer, setMobileDrawer] = useState<{ kind: "channels" | "members"; roomId: string | null } | null>(null);
-  const viewerContainerRef = useRef<HTMLDivElement>(null);
   const pipVideoRef = useRef<HTMLVideoElement>(null);
   const joinVoiceRef = useRef<
     ((channelId?: string, restore?: VoiceRestoreState) => void) | null
@@ -175,8 +174,6 @@ export function ChatLayout() {
   const setUserVolumeRef = useRef<((userId: string, vol: number) => void) | null>(null);
   const speakingUsersRef = useRef<Set<string>>(new Set());
   const [isPiP, setIsPiP] = useState(false);
-  // True when we want PiP but auto-enter failed (Firefox requires user gesture)
-  const [pipWanted, setPipWanted] = useState(false);
   // Flag to distinguish our code exiting PiP vs the user clicking "back to tab" / close
   const programmaticPipExitRef = useRef(false);
 
@@ -421,7 +418,28 @@ export function ChatLayout() {
     state.screenViewerOpen &&
     state.inVoiceChannel &&
     (state.activeScreenSharers.length > 0 || state.activeWebcamStreamers.length > 0);
-  const showViewer = hasActiveScreenShare && isOnVoiceRoom;
+  // While the viewer is open, the call's room shows either the streams or the
+  // channel's chat with the stream in a thumbnail over it, and every other
+  // room shows the thumbnail. Opening the viewer always lands on the streams
+  // — that is what the user just asked to see.
+  const [callView, setCallView] = useState<"streams" | "chat">("streams");
+  const [viewerWasOpen, setViewerWasOpen] = useState(hasActiveScreenShare);
+  if (viewerWasOpen !== hasActiveScreenShare) {
+    setViewerWasOpen(hasActiveScreenShare);
+    if (hasActiveScreenShare) setCallView("streams");
+  }
+  // The call's room keeps its own views (a watch party, a spatial floor, …)
+  // free of the viewer, as it always has.
+  const isSpecialView =
+    isWatchPartyRoom || isSpatialChannel || isShowcaseChannel || isWhiteboardRoom || isForumRoom;
+  const viewerMode: "none" | "full" | "thumb" =
+    !hasActiveScreenShare || (isOnVoiceRoom && isSpecialView)
+      ? "none"
+      : isOnVoiceRoom && callView === "streams"
+        ? "full"
+        : "thumb";
+  // The thumbnail can be dragged off whatever it covers.
+  const thumbDrag = useDraggableThumb(videoPanelRef, viewerMode === "thumb");
 
   // Sync hidden video's srcObject with the selected screen sharer's stream
   useEffect(() => {
@@ -480,40 +498,14 @@ export function ChatLayout() {
     pipExit().catch(() => { programmaticPipExitRef.current = false; });
   }, []);
 
-  // Auto-PiP: when navigating away from voice room while watching a screen share
+  // The stream follows the user out of the call's room as the in-page
+  // thumbnail, not the browser's PiP window: on Wayland a browser cannot place
+  // that window, so it opened over the middle of the chat and fell behind the
+  // page at the first click. The header's button still pops it out on request,
+  // and coming back to the call's room takes it back in.
   useEffect(() => {
-    if (!pipEnabled()) {
-      // Browser doesn't support PiP at all — just show the banner
-      if (hasActiveScreenShare && !isOnVoiceRoom) setPipWanted(true);
-      else setPipWanted(false);
-      return;
-    }
-    const video = pipVideoRef.current;
-    if (!video) return;
-    if (hasActiveScreenShare && !isOnVoiceRoom) {
-      // Navigated away — try to pop into PiP automatically
-      if (!pipActive() && video.srcObject) {
-        pipRequest(video)
-          .then(() => setPipWanted(false))
-          .catch(() => {
-            // Firefox (and others) require a user gesture — show manual banner instead
-            setPipWanted(true);
-          });
-      }
-    } else if (isOnVoiceRoom) {
-      // Returned to voice room — exit PiP if active, clear wanted flag
-      setPipWanted(false);
-      safeExitPiP();
-    }
+    if (isOnVoiceRoom || !hasActiveScreenShare) safeExitPiP();
   }, [hasActiveScreenShare, isOnVoiceRoom, safeExitPiP]);
-
-  // Close PiP when leaving voice or when screen share stops
-  useEffect(() => {
-    if (!hasActiveScreenShare) {
-      setPipWanted(false);
-      safeExitPiP();
-    }
-  }, [hasActiveScreenShare, safeExitPiP]);
 
   const togglePiP = useCallback(() => {
     const video = pipVideoRef.current;
@@ -521,20 +513,9 @@ export function ChatLayout() {
     if (pipActive()) {
       safeExitPiP();
     } else if (video.srcObject) {
-      pipRequest(video)
-        .then(() => setPipWanted(false))
-        .catch(() => {});
+      pipRequest(video).catch(() => {});
     }
   }, [safeExitPiP]);
-
-  // Manually enter PiP from a user click (provides the gesture Firefox needs)
-  const manualEnterPiP = useCallback(() => {
-    const video = pipVideoRef.current;
-    if (!video || !video.srcObject) return;
-    pipRequest(video)
-      .then(() => setPipWanted(false))
-      .catch(() => {});
-  }, []);
 
   // Navigate back to the voice room and restore inline viewer
   const returnToStream = useCallback(() => {
@@ -552,17 +533,39 @@ export function ChatLayout() {
   const voiceRoomName = state.voiceRoomId
     ? state.roomInfoMap[state.voiceRoomId]?.name || "voice channel"
     : "voice channel";
-  const showPipBanner = hasActiveScreenShare && !isOnVoiceRoom && (isPiP || pipWanted);
+  const showPipBanner = hasActiveScreenShare && !isOnVoiceRoom && isPiP;
 
   // On a phone the channel column would eat most of the viewport, so it moves
   // into a drawer and the chat gets the full width.
   // A DM's call is room-scoped: passing the room id as the channel id is the
   // path the server keeps for rooms without channels, and it stops a call in
   // some other room's channel from being resolved as the DM's own.
+  // "Start a video call" is a join followed by the camera, and the camera can
+  // only start once the call is up — so the wish is held until it is, and
+  // dropped if the call never arrives.
+  const videoCallPendingRef = useRef<{ roomId: string; at: number } | null>(null);
+  useEffect(() => {
+    const pending = videoCallPendingRef.current;
+    if (!pending) return;
+    if (Date.now() - pending.at > VIDEO_CALL_JOIN_WAIT_MS) {
+      videoCallPendingRef.current = null;
+    } else if (state.inVoiceChannel && state.voiceRoomId === pending.roomId) {
+      videoCallPendingRef.current = null;
+      startWebcamRef.current?.();
+    }
+  }, [state.inVoiceChannel, state.voiceRoomId]);
+
   const dmCall = {
     join: () => {
       if (state.currentRoomId) joinVoiceRef.current?.(state.currentRoomId);
     },
+    joinWithVideo: () => {
+      if (!state.currentRoomId) return;
+      videoCallPendingRef.current = { roomId: state.currentRoomId, at: Date.now() };
+      joinVoiceRef.current?.(state.currentRoomId);
+    },
+    startWebcam: () => startWebcamRef.current?.(),
+    stopWebcam: () => stopWebcamRef.current?.(),
     leave: () => leaveVoiceRef.current?.(),
     toggleMute: () => toggleMuteRef.current?.(),
     toggleDeafen: () => toggleDeafenRef.current?.(),
@@ -601,7 +604,12 @@ export function ChatLayout() {
     <ChannelList
       asDrawer={asDrawer}
       onCollapsedChange={asDrawer ? undefined : setChannelPanelCollapsed}
-      onChannelSelected={asDrawer ? () => setMobileDrawer(null) : undefined}
+      onChannelSelected={() => {
+        // Picking a channel is asking for its chat, so the streams shrink to
+        // the thumbnail over it.
+        setCallView("chat");
+        if (asDrawer) setMobileDrawer(null);
+      }}
       onJoinVoiceChannel={(channelId) => {
         const ch = state.channels.find((c) => c.channel_id === channelId);
         if (ch) dispatch({ type: "SET_VOICE_STATE", payload: { voiceChannelName: ch.name } });
@@ -691,36 +699,10 @@ export function ChatLayout() {
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-info" />
                   </span>
                   <p className="text-xs text-info truncate">
-                    {isPiP
-                      ? <>Watching <span className="font-semibold">{sharerName}</span> in PiP</>
-                      : <>Screen share from <span className="font-semibold">{sharerName}</span> is active</>
-                    }
+                    Watching <span className="font-semibold">{sharerName}</span> in PiP
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {/* Firefox fallback: manual PiP button (provides user gesture) */}
-                  {pipWanted && !isPiP && (
-                    <button
-                      onClick={manualEnterPiP}
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-info/20 text-info hover:bg-info/30 hover:text-info transition-colors cursor-pointer"
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                        <rect x="12" y="9" width="8" height="6" rx="1" />
-                      </svg>
-                      Pop out
-                    </button>
-                  )}
                   <button
                     onClick={returnToStream}
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-info/20 text-info hover:bg-info/30 hover:text-info transition-colors cursor-pointer"
@@ -792,7 +774,18 @@ export function ChatLayout() {
               ) : (
               <>
                 {showChannelColumn && !isMobile && renderChannelList(false)}
-                {isWatchPartyRoom ? (
+                {/* The viewer sits beside whichever view the room has, as
+                    one element for as long as it is open — filling the area
+                    on the call's room, or a thumbnail over any room's view —
+                    so switching views or rooms keeps its feed, its volume and
+                    the share's sound playing instead of tearing the video
+                    down. Under the full viewer the chat is unmounted rather
+                    than hidden: a hidden timeline would still mark messages
+                    read. */}
+                <div className="relative flex flex-1 min-h-0 min-w-0 overflow-hidden">
+                {viewerMode === "full" ? (
+                  <div className="flex-1" />
+                ) : isWatchPartyRoom ? (
                   <WatchPartyArea onJoinVoice={() => joinVoiceRef.current?.()} />
                 ) : isSpatialChannel ? (
                   <SpatialVoiceArea
@@ -806,54 +799,6 @@ export function ChatLayout() {
                   <WhiteboardArea />
                 ) : isForumRoom ? (
                   <ForumArea />
-                ) : showViewer ? (
-                  <div ref={viewerContainerRef} className="flex-1 flex flex-col min-h-0">
-                    <ResizablePanelGroup
-                      orientation="vertical"
-                      className="flex-1"
-                    >
-                      {/* A phone gives the video the smaller half: at 50/50
-                          the chat below it is about six messages tall, and the
-                          video is already past 16:9 at 40% of the column. */}
-                      <ResizablePanel defaultSize={isMobile ? 40 : 50} minSize={15}>
-                        {/* The header overlays the video rather than sitting
-                            above it: as a row of its own it took height from
-                            the video *and* the chat below, for a strip that is
-                            mostly letterboxing anyway. */}
-                        <div
-                          ref={videoPanelRef}
-                          className="relative h-full flex flex-col min-h-0"
-                        >
-                          <ScreenShareHeader
-                            containerRef={viewerContainerRef}
-                            hostRef={videoPanelRef}
-                            isPiP={isPiP}
-                            onTogglePiP={togglePiP}
-                          />
-                          <ScreenShareViewer />
-                        </div>
-                      </ResizablePanel>
-                      {/* The default separator is a 1px line with a 4px
-                          grab band — findable with a mouse, not with a thumb. */}
-                      <ResizableHandle
-                        withHandle
-                        className={
-                          isMobile
-                            ? "aria-[orientation=horizontal]:after:h-6 [&>div]:h-10 [&>div]:w-4"
-                            : undefined
-                        }
-                      />
-                      <ResizablePanel defaultSize={isMobile ? 60 : 50} minSize={15}>
-                        <div className="h-full flex flex-col min-h-0">
-                          {state.activeThreadEventId ? (
-                            <ThreadPanel />
-                          ) : (
-                            <ChatArea onJoinVoice={() => joinVoiceRef.current?.()} dmCall={dmCall} />
-                          )}
-                        </div>
-                      </ResizablePanel>
-                    </ResizablePanelGroup>
-                  </div>
                 ) : (
                   <div className="flex-1 flex flex-col min-h-0 min-w-0">
                     {/* Nothing opens the viewer on its own any more, so the
@@ -866,6 +811,49 @@ export function ChatLayout() {
                     )}
                   </div>
                 )}
+                {viewerMode !== "none" && (
+                  // The header overlays the video rather than sitting above
+                  // it: as a row of its own it took height from the video for
+                  // a strip that is mostly letterboxing.
+                  <div
+                    ref={videoPanelRef}
+                    style={thumbDrag.style}
+                    {...thumbDrag.handlers}
+                    className={
+                      viewerMode === "thumb"
+                        ? cn(
+                            "group absolute right-3 z-20 aspect-video select-none overflow-hidden rounded-lg border border-border bg-black shadow-xl",
+                            // Below the chat's own header, so its buttons stay reachable.
+                            isMobile ? "top-12 w-40" : "top-16 w-72",
+                            // Popped out to the browser's window, the page needs
+                            // no second copy — but the share's sound still
+                            // plays from here.
+                            isPiP && "hidden",
+                          )
+                        : "absolute inset-0 flex flex-col min-h-0"
+                    }
+                  >
+                    {viewerMode === "full" && (
+                      <ScreenShareHeader
+                        containerRef={videoPanelRef}
+                        hostRef={videoPanelRef}
+                        isPiP={isPiP}
+                        onTogglePiP={togglePiP}
+                      />
+                    )}
+                    <ScreenShareViewer speakingUsersRef={speakingUsersRef} compact={viewerMode === "thumb"} />
+                    {viewerMode === "thumb" && (
+                      <MiniViewerControls
+                        onExpand={() => {
+                          setCallView("streams");
+                          if (!isOnVoiceRoom && state.voiceRoomId) selectRoom(state.voiceRoomId);
+                        }}
+                        onClose={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { open: false } })}
+                      />
+                    )}
+                  </div>
+                )}
+                </div>
                 {!isMobile && (
                   <MembersPanel
                     collapsed={
@@ -981,6 +969,9 @@ export function ChatLayout() {
 
       <CreateRoomDialog open={createOpen} onOpenChange={setCreateOpen} />
       <JoinRoomDialog open={joinOpen} onOpenChange={setJoinOpen} />
+      <RulesDialog />
+      <ReportDialog />
+      <ReportsPanel />
 
 
       <Toaster />

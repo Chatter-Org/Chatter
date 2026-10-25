@@ -7,9 +7,13 @@ use super::super::{
     helpers::{
         apply_overwrites, broadcast_to_room, category_overwrites, channel_permissions,
         effective_permissions, error_response, extract_token, generate_id, get_user_from_token,
-        merged_overwrites, now_millis, outranks_role, role_authority, ungrantable_permission,
+        get_user_role, merged_overwrites, now_millis, outranks_role, role_authority,
+        ungrantable_permission,
     },
-    state::{AppState, ChannelRecord, CustomRoleRecord, MemberCustomRoleRecord, RolePermissions},
+    state::{
+        AppState, ChannelRecord, CustomRoleRecord, MemberCustomRoleRecord, RolePermissions,
+        RoomRecord,
+    },
 };
 use axum::{
     extract::{Path, Query, State},
@@ -627,9 +631,25 @@ pub(crate) async fn get_my_permissions(
         }
     };
 
-    Ok(Json(json!({
+    let mut out = json!({
         "permissions": serde_json::to_value(perms).unwrap_or_default(),
-    })))
+    });
+    // Why participation is off, when it is: the client words the composer
+    // and shows the rules from this rather than a bare "no permission".
+    if as_user.is_none() && as_role.is_none() {
+        if let Ok(Some(room)) = state
+            .db
+            .collection::<RoomRecord>("rooms")
+            .find_one(doc! { "_id": &room_id })
+            .await
+        {
+            let role = get_user_role(&state, &room_id, &user_id).await;
+            let restriction =
+                super::super::moderation::member_restriction(&state, &room, &user_id, &role).await;
+            out["restriction"] = restriction.to_json();
+        }
+    }
+    Ok(Json(out))
 }
 
 /// Resolve permissions for a hypothetical member whose only role is `role_id`,

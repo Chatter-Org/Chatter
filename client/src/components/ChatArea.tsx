@@ -19,6 +19,7 @@ import { MessageItem } from "./MessageItem";
 import { MessagePanel } from "./MessagePanel";
 import { MentionMenu } from "./MentionMenu";
 import { findMentionMatches } from "@/lib/mentions";
+import { channelMentionMatches, encodeChannelLinks, plainChannelLinks, visibleChannels } from "@/lib/channelLinks";
 import type { AppState, MessageTarget } from "@/lib/store/types";
 
 /** Everything the companion slot can show. MessagePanel handles all but the
@@ -40,7 +41,7 @@ import { isSameFile } from "@/lib/uploadResume";
 import { DMCallBar } from "./DMCallBar";
 import { usePendingFiles, MAX_ATTACHMENTS } from "@/hooks/usePendingFiles";
 import { useInterruptedUploads } from "@/hooks/useInterruptedUploads";
-import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, UserPlus, Pencil, Pin, Smile, Phone, PhoneOff, Paperclip, Plus, SendHorizontal } from "lucide-react";
+import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, UserPlus, Pencil, Pin, Smile, Phone, PhoneOff, Video, Paperclip, Plus, SendHorizontal } from "lucide-react";
 import { CommandBar } from "./CommandBar";
 import { AddToDMDialog } from "./AddToDMDialog";
 import { PollDialog } from "./PollDialog";
@@ -72,6 +73,8 @@ import { readProfileAccent } from "@/lib/profileTheme";
 import { toast } from "sonner";
 import { scrollBehavior } from "@/lib/theme/display";
 import { oldestUnreadEventId } from "@/lib/unreads";
+import { RestrictionNotice } from "@/components/moderation/RestrictionNotice";
+import { showRoomRules } from "@/components/moderation/moderationUtils";
 
 // Opening a channel holds the newest message while the page settles: avatars,
 // images and embeds all resolve their heights after the first render, and each
@@ -133,6 +136,10 @@ export interface DMCallHandlers {
   toggleDeafen: () => void;
   startScreenShare: () => void;
   stopScreenShare: () => void;
+  startWebcam: () => void;
+  stopWebcam: () => void;
+  /** Join, and offer the camera as soon as the call is up. */
+  joinWithVideo: () => void;
 }
 
 interface ChatAreaProps {
@@ -153,6 +160,14 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionSearch, setMentionSearch] = useState("");
   const [mentionStart, setMentionStart] = useState(-1);
+  // "@" offers people and roles, "#" offers channels; one menu serves both.
+  const [mentionTrigger, setMentionTrigger] = useState<"@" | "#">("@");
+  // The channels a "#name" can link to, which are the ones this user can see.
+  const linkChannels = useMemo(
+    () => visibleChannels(state),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.channels, state.userId, state.roomMembers, state.customRoles, state.memberCustomRoles],
+  );
   const [selectedMentionIdx, setSelectedMentionIdx] = useState(0);
   const [emojiAutocompleteOpen, setEmojiAutocompleteOpen] = useState(false);
   const [emojiSearch, setEmojiSearch] = useState("");
@@ -725,8 +740,10 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
     void saveDraft(roomId, channelId, "");
     dispatch({ type: "SET_REPLYING_TO", payload: null });
 
-    // Auto-resolve :shortcode: patterns to emoji in body text
-    const resolveShortcodes = (raw: string) => resolveShortcodesIn(raw, mergedShortcodes);
+    // Auto-resolve :shortcode: patterns to emoji in body text, and "#name"
+    // to the channel it names.
+    const resolveShortcodes = (raw: string) =>
+      resolveShortcodesIn(encodeChannelLinks(raw, linkChannels), mergedShortcodes);
 
     // The composer was cleared optimistically above, so a refused send has to
     // put the text back. Slow mode and rate limits make refusal an ordinary
@@ -878,13 +895,21 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
       preRange.setEnd(range.startContainer, range.startOffset);
       const before = preRange.toString();
       const lastAt = before.lastIndexOf("@");
+      const channelMatch = /(?:^|[\s(])#([^\s#@]*)$/.exec(before);
       if (
         lastAt !== -1 &&
         (lastAt === before.length - 1 || /^@\w*$/.test(before.substring(lastAt)))
       ) {
         const search = before.substring(lastAt + 1);
+        setMentionTrigger("@");
         setMentionSearch(search);
         setMentionStart(lastAt);
+        setMentionOpen(true);
+        setSelectedMentionIdx(0);
+      } else if (channelMatch) {
+        setMentionTrigger("#");
+        setMentionSearch(channelMatch[1]);
+        setMentionStart(before.length - channelMatch[1].length - 1);
         setMentionOpen(true);
         setSelectedMentionIdx(0);
       } else {
@@ -943,14 +968,14 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
       preRange.setStart(div, 0);
       preRange.setEnd(range.startContainer, range.startOffset);
       const before = preRange.toString();
-      const lastAt = before.lastIndexOf("@");
+      const lastAt = before.lastIndexOf(mentionTrigger);
       if (lastAt === -1) return;
-      // Build a range spanning from @ to current cursor
+      // Build a range spanning from the trigger to current cursor
       const atRange = rangeAtTextOffset(div, lastAt);
       if (!atRange) return;
       atRange.setEnd(range.startContainer, range.startOffset);
       atRange.deleteContents();
-      const textNode = document.createTextNode(`@${username} `);
+      const textNode = document.createTextNode(`${mentionTrigger}${username} `);
       atRange.insertNode(textNode);
       // Move cursor after the inserted text
       const newRange = document.createRange();
@@ -1454,9 +1479,14 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
   }, [scrollToEventId, state.messages]);
 
   const mentionMatches = useMemo(
-    () => (mentionOpen ? findMentionMatches(state, mentionSearch) : []),
+    () =>
+      !mentionOpen
+        ? []
+        : mentionTrigger === "#"
+          ? channelMentionMatches(linkChannels, mentionSearch)
+          : findMentionMatches(state, mentionSearch),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mentionOpen, mentionSearch, state.roomMembers, state.customRoles, state.currentRoomId, state.roomInfoMap],
+    [mentionOpen, mentionTrigger, mentionSearch, linkChannels, state.roomMembers, state.customRoles, state.currentRoomId, state.roomInfoMap],
   );
 
   const emojiMatches = emojiAutocompleteOpen
@@ -1583,6 +1613,17 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
           })()}
         </div>
         <div className="flex items-center gap-1">
+          {roomInfo?.is_direct && state.currentRoomId && dmCall && !inThisDmCall && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              onClick={dmCall.joinWithVideo}
+              title="Start a video call"
+            >
+              <Video className="h-4 w-4" />
+            </Button>
+          )}
           {roomInfo?.is_direct && state.currentRoomId && dmCall && (
             <Button
               variant="ghost"
@@ -1709,6 +1750,8 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
           onToggleDeafen={dmCall.toggleDeafen}
           onStartScreenShare={dmCall.startScreenShare}
           onStopScreenShare={dmCall.stopScreenShare}
+          onStartWebcam={dmCall.startWebcam}
+          onStopWebcam={dmCall.stopWebcam}
         />
       )}
 
@@ -1846,10 +1889,10 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
             <p className="text-xs font-semibold text-primary">
               Replying to {state.userPresence[state.replyingTo.sender]?.displayName || displayUserId(state.replyingTo.sender)}
             </p>
-            <p className="text-xs text-muted-foreground truncate inline-flex items-center gap-0.5">
+            <p className="text-xs text-muted-foreground truncate">
               {state.replyingTo.content.spoiler
                 ? <span className="italic">Spoiler message</span>
-                : renderInlineEmojis(state.replyingTo.content.body)}
+                : renderInlineEmojis(plainChannelLinks(state.replyingTo.content.body, linkChannels))}
             </p>
           </div>
           <button
@@ -1923,6 +1966,15 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
               {currentChannel?.read_only ? "This channel" : "This room"} is read-only. Only owners and moderators can send messages.
             </div>
           );
+        }
+        // A timeout or unaccepted rules switch posting off too; said first, so
+        // the user is told why instead of "no permission".
+        const restrictionNotice = <RestrictionNotice onShowRules={showRoomRules} />;
+        if (
+          state.myRestriction &&
+          (state.myRestriction.rulesPending || state.myRestriction.timeoutUntil > 0)
+        ) {
+          return restrictionNotice;
         }
         // A role can revoke posting outright; the server refuses either way, so
         // this only saves the user from typing into a dead composer.

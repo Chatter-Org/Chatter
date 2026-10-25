@@ -498,6 +498,36 @@ pub(crate) async fn effective_permissions_for(
     role: &str,
     role_ids: &[String],
 ) -> RolePermissions {
+    let (perms, room) = unrestricted_permissions_for(state, room_id, user_id, role, role_ids).await;
+    restricted(state, room.as_ref(), user_id, role, perms).await
+}
+
+/// Take a timeout or the rules gate into account (see `moderation.rs`).
+/// Applied last, after channel overwrites too, so no allow can undo it.
+/// `room` is `None` where nothing can restrict: a non-member, a DM, an owner.
+async fn restricted(
+    state: &AppState,
+    room: Option<&super::state::RoomRecord>,
+    user_id: &str,
+    role: &str,
+    mut perms: RolePermissions,
+) -> RolePermissions {
+    if let Some(room) = room {
+        let restriction = super::moderation::member_restriction(state, room, user_id, role).await;
+        super::moderation::apply_restriction(&mut perms, &restriction);
+    }
+    perms
+}
+
+/// The room-level set before any timeout or rules gate, and the room it was
+/// computed for — `None` when no restriction could apply.
+async fn unrestricted_permissions_for(
+    state: &AppState,
+    room_id: &str,
+    user_id: &str,
+    role: &str,
+    role_ids: &[String],
+) -> (RolePermissions, Option<super::state::RoomRecord>) {
     use super::state::{CustomRoleRecord, RoomRecord};
     use futures_util::TryStreamExt;
     use mongodb::bson::doc;
@@ -510,19 +540,22 @@ pub(crate) async fn effective_permissions_for(
             .map(|m| m.contains(&user_id.to_string()))
             .unwrap_or(false)
         {
-            return RolePermissions::none();
+            return (RolePermissions::none(), None);
         }
     }
 
     let rooms_coll = state.db.collection::<RoomRecord>("rooms");
-    if let Ok(Some(room)) = rooms_coll.find_one(doc! { "_id": room_id }).await {
-        if room.is_dm {
-            return RolePermissions::all();
-        }
+    let room = rooms_coll
+        .find_one(doc! { "_id": room_id })
+        .await
+        .ok()
+        .flatten();
+    if room.as_ref().is_some_and(|r| r.is_dm) {
+        return (RolePermissions::all(), None);
     }
 
     if role == "owner" {
-        return RolePermissions::all();
+        return (RolePermissions::all(), None);
     }
 
     // Union the custom roles the member holds.
@@ -543,11 +576,12 @@ pub(crate) async fn effective_permissions_for(
     }
 
     let base = custom.unwrap_or_default();
-    if role == "moderator" {
+    let perms = if role == "moderator" {
         base.union(&RolePermissions::moderator())
     } else {
         base
-    }
+    };
+    (perms, room)
 }
 
 /// Whether a user may pin, unpin, and otherwise curate other people's messages.
@@ -668,9 +702,10 @@ pub(crate) async fn channel_permissions(
     // role, and applying the overwrites needs the role ids.
     let role = get_user_role(state, room_id, user_id).await;
     let user_roles = get_user_custom_role_ids(state, room_id, user_id).await;
-    let base = effective_permissions_for(state, room_id, user_id, &role, &user_roles).await;
+    let (base, room) =
+        unrestricted_permissions_for(state, room_id, user_id, &role, &user_roles).await;
     if channel_id.is_empty() || overwrites_bypassed(&role) {
-        return base;
+        return restricted(state, room.as_ref(), user_id, &role, base).await;
     }
 
     let channels_coll = state.db.collection::<ChannelRecord>("channels");
@@ -678,16 +713,17 @@ pub(crate) async fn channel_permissions(
         .find_one(doc! { "_id": channel_id, "room_id": room_id })
         .await
     else {
-        return base;
+        return restricted(state, room.as_ref(), user_id, &role, base).await;
     };
 
     let category = category_overwrites(state, &channel).await;
-    apply_overwrites(
+    let perms = apply_overwrites(
         base,
         &merged_overwrites(&category, &channel),
         &user_roles,
         user_id,
-    )
+    );
+    restricted(state, room.as_ref(), user_id, &role, perms).await
 }
 
 /// The overwrites a channel inherits from its category, or nothing when the
@@ -1225,6 +1261,7 @@ pub(crate) async fn do_join_room(
         user_id: user_id.to_string(),
         role: "member".to_string(),
         joined_at: now_millis(),
+        rules_accepted_at: 0,
     };
     // Use insert, ignore duplicate errors
     let _ = collection.insert_one(record).await;
@@ -1317,6 +1354,8 @@ pub(crate) struct RoomMemberEntry {
     pub(crate) display_name: String,
     pub(crate) role: String,
     pub(crate) joined_at: Option<i64>,
+    /// When a timeout in force ends; `None` when there is none.
+    pub(crate) timeout_until: Option<i64>,
 }
 
 /// The name to show for a user who has set no display name: the local part of
@@ -1373,6 +1412,18 @@ pub(crate) async fn room_member_entries(
         }
     }
 
+    let mut timeouts: HashMap<String, i64> = HashMap::new();
+    if let Ok(mut cursor) = state
+        .db
+        .collection::<super::state::MemberTimeoutRecord>("member_timeouts")
+        .find(doc! { "room_id": room_id, "until": { "$gt": now_millis() } })
+        .await
+    {
+        while let Ok(Some(t)) = cursor.try_next().await {
+            timeouts.insert(t.user_id, t.until);
+        }
+    }
+
     let roles = {
         let rr = state.room_roles.read().await;
         rr.get(room_id).cloned().unwrap_or_default()
@@ -1394,6 +1445,7 @@ pub(crate) async fn room_member_entries(
                     .unwrap_or_else(|| fallback_display_name(mid).to_string()),
                 role: role.to_string(),
                 joined_at: joined_at.get(mid).copied(),
+                timeout_until: timeouts.get(mid).copied(),
             }
         })
         .collect()

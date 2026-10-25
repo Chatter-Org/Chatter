@@ -110,7 +110,7 @@ pub(crate) async fn list_audit_log(
 /// `refresh_tokens` is deliberately absent — those are live session material,
 /// they expire on their own, and restoring them would resurrect sessions that
 /// should have died with the old instance.
-const EXPORTED: [&str; 18] = [
+const EXPORTED: [&str; 20] = [
     "server_settings",
     "users",
     "rooms",
@@ -120,6 +120,7 @@ const EXPORTED: [&str; 18] = [
     "custom_roles",
     "member_custom_roles",
     "banned_users",
+    "member_timeouts",
     "messages",
     "reactions",
     "pins",
@@ -128,6 +129,7 @@ const EXPORTED: [&str; 18] = [
     "forum_posts",
     "invites",
     "audit_log",
+    "reports",
     "gif_favorites",
 ];
 

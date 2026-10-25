@@ -23,6 +23,7 @@ import { parseForumLink } from "./forumLinks";
 import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from "./mediaTypes";
 import { parseMessageLink } from "./messageLinks";
 import { displayUserId } from "./utils";
+import { CHANNEL_LINK, channelLinkOpens, plainChannelLinks, type LinkableChannel } from "./channelLinks";
 
 // ─── Inline ───────────────────────────────────────────────────────────────────
 
@@ -40,7 +41,16 @@ export type InlineNode =
       color: string;
     }
   | { type: "link"; url: string; /** Shortened for display. */ display: string }
-  | { type: "emoji"; url: string; /** The room's alias for it, when it has one. */ alias?: string };
+  | { type: "emoji"; url: string; /** The room's alias for it, when it has one. */ alias?: string }
+  | {
+      /** A `<#channel>` link (see channelLinks.ts). */
+      type: "channel";
+      id: string;
+      /** The channel's name, or null when the reader cannot see it: "#unknown". */
+      name: string | null;
+      /** Whether pressing it opens the channel — not for a voice channel. */
+      opens: boolean;
+    };
 
 export type BodyBlock =
   | { type: "paragraph"; children: InlineNode[] }
@@ -53,6 +63,9 @@ export interface FormatOptions {
   roleColors?: Map<string, string>;
   /** Custom emoji URL → alias, for naming an emoji. */
   emojiAliases?: Record<string, string>;
+  /** The channels the reader can see, which a `<#channel>` resolves against;
+   *  see channelLinks.ts visibleChannels. A link to any other reads "#unknown". */
+  channels?: LinkableChannel[];
 }
 
 const URL_RE = /(https?:\/\/[^\s]+)/g;
@@ -103,6 +116,10 @@ export function parseInline(text: string, options: FormatOptions = {}): InlineNo
   let s = text.replace(CUSTOM_EMOJI_RE, (_m, url: string) =>
     hold({ type: "emoji", url, alias: options.emojiAliases?.[url] }),
   );
+  s = s.replace(CHANNEL_LINK, (_m, id: string) => {
+    const channel = options.channels?.find((c) => c.channel_id === id);
+    return hold({ type: "channel", id, name: channel?.name ?? null, opens: !!channel && channelLinkOpens(channel) });
+  });
   s = s.replace(URL_RE, (url: string) => {
     if (urlIsDrawnElsewhere(url)) return "";
     return hold({ type: "link", url, display: url.length > 60 ? url.slice(0, 57) + "..." : url });
@@ -171,9 +188,10 @@ export function parseBody(body: string, options: FormatOptions = {}): BodyBlock[
   });
 }
 
-/** The plain text a body reads as — for previews, notifications, replies. */
-export function plainText(body: string): string {
-  return body
+/** The plain text a body reads as — for previews, notifications, replies.
+ *  Channel links resolve against `channels`, the ones the reader can see. */
+export function plainText(body: string, channels: LinkableChannel[] = []): string {
+  return plainChannelLinks(body, channels)
     .replace(CUSTOM_EMOJI_RE, ":emoji:")
     .replace(/```(?:\w+\n|\n?)([\s\S]*?)```/g, "$1")
     .replace(/%%%(.+?)%%%/g, "$1")

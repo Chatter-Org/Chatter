@@ -29,7 +29,11 @@ export function MentionMenu({
             onSelect(m.name);
           }}
         >
-          {m.kind === "role" ? (
+          {m.kind === "channel" ? (
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-secondary text-xs font-semibold">
+              #
+            </span>
+          ) : m.kind === "role" ? (
             <span
               className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold"
               style={{ backgroundColor: color ? `${color}33` : undefined, color: color || undefined }}
@@ -41,7 +45,7 @@ export function MentionMenu({
               {m.name[0]?.toUpperCase()}
             </span>
           )}
-          <span style={color ? { color } : undefined}>{m.name}</span>
+          <span className="truncate" style={color ? { color } : undefined}>{m.name}</span>
           {m.kind === "role" && (
             <span className="ml-auto text-xs text-muted-foreground">Role</span>
           )}

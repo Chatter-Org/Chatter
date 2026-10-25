@@ -562,3 +562,51 @@ const WEBCAM_PROFILE_60FPS: WebcamPublishProfile = {
 export function getWebcamPublishProfile(fps: 30 | 60): WebcamPublishProfile {
   return fps === 60 ? WEBCAM_PROFILE_60FPS : WEBCAM_PROFILE_30FPS;
 }
+
+// ─── Webcam simulcast ───────────────────────────────────────────────────────
+// A camera is sent twice — at full size and at a quarter — and the server
+// gives each viewer the one they need: the full picture for a camera they have
+// made big, the small one for a thumbnail or a grid tile. Without it every
+// viewer pulled the full 720p of every camera, so a grid of them cost a viewer
+// the bandwidth of that many big pictures to fill that many small boxes.
+//
+// The rids are the server's names for the two (`webcam_simulcast.rs`).
+
+/** One encoding of a simulcast camera, in the shape `sendEncodings` takes. */
+export interface WebcamEncoding {
+  rid: "l" | "h";
+  scaleResolutionDownBy: number;
+  maxBitrate: number;
+  maxFramerate: number;
+}
+
+/** The small copy: 320×180 from a 720p camera, enough for a tile. */
+const WEBCAM_LOW_BITRATE_BPS = 150_000;
+const WEBCAM_LOW_MAX_FPS = 15;
+
+/** The encodings to send a camera as, smallest first (the order browsers expect). */
+export function webcamEncodings(profile: WebcamPublishProfile): WebcamEncoding[] {
+  return [
+    {
+      rid: "l",
+      scaleResolutionDownBy: 4,
+      maxBitrate: WEBCAM_LOW_BITRATE_BPS,
+      maxFramerate: Math.min(WEBCAM_LOW_MAX_FPS, profile.targetFps),
+    },
+    {
+      rid: "h",
+      scaleResolutionDownBy: 1,
+      maxBitrate: profile.maxBitrateBps,
+      maxFramerate: profile.targetFps,
+    },
+  ];
+}
+
+/** What a viewer asks of a camera. */
+export type WebcamQuality = "high" | "low";
+
+/**
+ * Below this width a tile is served the small copy. It is 320 pixels wide,
+ * so up to about half again that it still looks sharp.
+ */
+export const WEBCAM_HIGH_QUALITY_MIN_WIDTH = 480;

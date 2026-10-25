@@ -80,6 +80,7 @@ FCM push notifications are **on hold until the project owner says otherwise**.
 - [x] A camera or screen share that connects but sends no pictures (a capture refused after the prompt) gives up and says so, rather than showing as live
 - [x] Picture-in-picture window shaped to the stream
 - [x] Cast a message's video to a Chromecast (react-native-google-cast, the Default Media Receiver as on the web, captions from the server's sidecars); not offered where the server requires sign-in for uploads, since a receiver cannot sign in
+- [x] Voice moderation (owners and moderators): the shield beside a channel's occupant opens a sheet to server mute, move to another voice channel or disconnect, as the web's voice member menu does
 
 ### Design (match the web)
 - [x] Shared control recipes (`packages/core/src/ui/recipes.ts`) used by the web's shadcn files and `src/ui/controls.tsx`; the web's 17.6px rem

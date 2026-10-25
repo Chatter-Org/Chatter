@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
-import { Copy, Link2, MessagesSquare, Pencil, Pin, PinOff, Reply, SmilePlus, Trash2 } from "lucide-react-native";
-import type { MatrixMessage } from "@chatter/core/api";
+import { Copy, Flag, Link2, MessagesSquare, Pencil, Pin, PinOff, Reply, SmilePlus, Trash2 } from "lucide-react-native";
+import { apiReportMessage, type MatrixMessage } from "@chatter/core/api";
 import { messageLinkFor } from "@chatter/core/messageLinks";
 import { canManageMessages } from "@chatter/core/permissions";
 import { isDeletedMessage } from "@chatter/core/messageFormat";
@@ -14,6 +14,8 @@ import { Sheet, SheetRow } from "@/ui/Sheet";
 import { EmojiPickerSheet } from "./EmojiPickerSheet";
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
+/** As on the web's report dialog. */
+const REPORT_REASONS = ["Spam", "Harassment", "Hate speech", "Explicit content", "Scam or phishing"];
 
 /**
  * What a held message offers: a quick reaction, reply, copy, a link to it,
@@ -35,6 +37,8 @@ export function MessageActions({
   const state = useChatter();
   const actions = useChatterActions();
   const [editing, setEditing] = useState(false);
+  const [reporting, setReporting] = useState(false);
+  const [reason, setReason] = useState("");
   const [picking, setPicking] = useState(false);
   const room = state.currentRoomId ? state.roomInfoMap[state.currentRoomId] : undefined;
   const [draft, setDraft] = useState("");
@@ -43,7 +47,10 @@ export function MessageActions({
   const [heldMessage, setHeldMessage] = useState(message);
   if (heldMessage !== message) {
     setHeldMessage(message);
-    if (message) setEditing(false);
+    if (message) {
+      setEditing(false);
+      setReporting(false);
+    }
   }
 
   const mine = !!message && message.sender === state.userId;
@@ -53,6 +60,9 @@ export function MessageActions({
   // As on the web: moderators pin, in the channel (a thread's pins are its own).
   const canPin = !!message && !deleted && !!onOpenThread && message.content.msgtype !== "m.system" && canManageMessages(state);
   const isPinned = !!message && state.pinnedMessages.some((m) => m.event_id === message.event_id);
+  // Reports go to the room's moderators, so a DM has nowhere to send one.
+  const canReport =
+    !!message && !mine && !deleted && message.content.msgtype !== "m.system" && !!room && !room.is_direct && room.moderation?.reports_enabled !== false;
 
   const run = (fn: () => void) => () => {
     fn();
@@ -61,9 +71,47 @@ export function MessageActions({
 
   return (
     // MessageItem's touch sheet: "Message", then its actions as rows.
-    <Sheet open={!!message} onClose={onClose} title={editing ? "Edit message" : "Message"}>
+    <Sheet open={!!message} onClose={onClose} title={editing ? "Edit message" : reporting ? "Report message" : "Message"}>
       <View>
-        {!message ? null : editing ? (
+        {!message ? null : reporting ? (
+          <View className="gap-2 px-4 pt-2">
+            <T className="text-xs text-muted-foreground">
+              Goes to this room&apos;s moderators, who see who reported it.
+            </T>
+            <View className="flex-row flex-wrap gap-1.5">
+              {REPORT_REASONS.map((r) => (
+                <Button key={r} size="sm" variant={reason === r ? "default" : "outline"} onPress={() => setReason(r)}>
+                  {r}
+                </Button>
+              ))}
+            </View>
+            <TextInput
+              value={reason}
+              onChangeText={setReason}
+              multiline
+              maxLength={500}
+              placeholder="What's wrong with it? (optional)"
+              className="max-h-32 rounded-md border border-input px-3 py-2 font-mono text-sm leading-5 text-foreground"
+            />
+            <View className="flex-row justify-end gap-2 pt-1">
+              <Button variant="ghost" size="sm" onPress={() => setReporting(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onPress={run(() => {
+                  if (!state.currentRoomId) return;
+                  apiReportMessage(state.currentRoomId, message.event_id, reason.trim())
+                    .then(() => showToast({ message: "Reported. The room's moderators will take a look." }))
+                    .catch((e) => showToast({ message: String(e?.message ?? e), tone: "error" }));
+                })}
+              >
+                Report
+              </Button>
+            </View>
+          </View>
+        ) : editing ? (
           <View className="gap-2 px-4 pt-2">
             {/* The web's edit box. */}
             <TextInput
@@ -148,6 +196,16 @@ export function MessageActions({
                   onPress={() => {
                     setDraft(body);
                     setEditing(true);
+                  }}
+                />
+              )}
+              {canReport && (
+                <SheetRow
+                  icon={Flag}
+                  label="Report message"
+                  onPress={() => {
+                    setReason("");
+                    setReporting(true);
                   }}
                 />
               )}

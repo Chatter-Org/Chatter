@@ -3,11 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AuthAvatarImage } from "./AuthImage";
 import { displayUserId } from "@/lib/utils";
-import { Mic, MicOff, HeadphoneOff, Monitor, PhoneOff, Phone } from "lucide-react";
+import { Mic, MicOff, HeadphoneOff, Monitor, PhoneOff, Phone, Video, VideoOff } from "lucide-react";
 import { LivePill } from "./voice/LivePill";
 
 /**
- * Voice and screen share for a DM.
+ * Voice, cameras and screen share for a DM.
  *
  * A DM has no channels, so its call is keyed by the room id — the path the
  * server has always kept for rooms that predate channels, where a `channel_id`
@@ -27,6 +27,8 @@ export function DMCallBar({
   onToggleDeafen,
   onStartScreenShare,
   onStopScreenShare,
+  onStartWebcam,
+  onStopWebcam,
 }: {
   roomId: string;
   onJoin: () => void;
@@ -35,6 +37,8 @@ export function DMCallBar({
   onToggleDeafen: () => void;
   onStartScreenShare: () => void;
   onStopScreenShare: () => void;
+  onStartWebcam: () => void;
+  onStopWebcam: () => void;
 }) {
   const { state, dispatch } = useAppContext();
 
@@ -92,6 +96,7 @@ export function DMCallBar({
 
   const me = members.find((m) => m.userId === state.userId);
   const sharers = members.filter((m) => m.screen_sharing);
+  const cameras = members.filter((m) => m.webcam_sharing);
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b bg-success/10 px-4 py-2 shrink-0">
@@ -120,6 +125,24 @@ export function DMCallBar({
             >
               <LivePill />
               Watch
+            </button>
+          ))}
+        {cameras
+          .filter((m) => m.userId !== state.userId)
+          .map((m) => (
+            <button
+              key={`cam-${m.userId}`}
+              onClick={() =>
+                dispatch({
+                  type: "SET_SCREEN_VIEWER",
+                  payload: { open: true, webcamStreamer: m.userId },
+                })
+              }
+              className="flex min-h-11 shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-xs text-foreground transition-colors hover:bg-accent cursor-pointer md:min-h-0"
+              title={`See ${name(m.userId)}'s camera`}
+            >
+              <Video className="h-3.5 w-3.5 text-destructive" />
+              {members.length === 2 ? "See camera" : name(m.userId)}
             </button>
           ))}
       </div>
@@ -152,6 +175,19 @@ export function DMCallBar({
           <HeadphoneOff
             className={`h-3.5 w-3.5 ${state.isDeafened ? "text-destructive" : ""}`}
           />
+        </Button>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7"
+          onClick={state.isWebcamActive ? onStopWebcam : onStartWebcam}
+          title={state.isWebcamActive ? "Turn camera off" : "Turn camera on"}
+        >
+          {state.isWebcamActive ? (
+            <VideoOff className="h-3.5 w-3.5 text-destructive" />
+          ) : (
+            <Video className="h-3.5 w-3.5" />
+          )}
         </Button>
         <Button
           size="icon"

@@ -567,6 +567,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadRooms = shared.loadRooms;
+  const loadMyPermissions = shared.loadMyPermissions;
   loadRoomsRef.current = loadRooms;
 
   // Unread counts are derived server-side from stored read markers, so they
@@ -576,27 +577,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const markChannelRead = shared.markChannelRead;
 
-  const moderateVoice = useCallback(
-    (
-      roomId: string,
-      targetUserId: string,
-      action: "mute" | "unmute" | "move" | "disconnect",
-      targetChannelId?: string,
-    ) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      ws.send(
-        JSON.stringify({
-          type: "voice_moderate",
-          room_id: roomId,
-          target_user_id: targetUserId,
-          action,
-          ...(targetChannelId ? { target_channel_id: targetChannelId } : {}),
-        }),
-      );
-    },
-    [],
-  );
+  const moderateVoice = shared.moderateVoice;
 
   const loadNotificationSettings = shared.loadNotificationSettings;
 
@@ -969,6 +950,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setManualStatus,
       updateProfile,
       kickMember,
+      loadMyPermissions,
       banMember,
       unbanMember,
       setMemberRole,
@@ -1008,7 +990,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       blockUser,
       unblockUser,
     }),
-    [login, register, logout, deleteAccount, loadRooms, selectRoom, loadOlderMessages, loadMessagesAround, sendMessage, openThread, openMessage, loadOlderThreadMessages, revealThreadMessage, closeThread, sendThreadMessage, setThreadName, deleteThread, deleteMessage, hardDeleteNotification, editMessage, addReaction, loadPins, loadEvents, createEvent, updateEvent, deleteEvent, createPoll, votePoll, closePoll, loadPoll, setRsvp, loadMorePins, loadMoreSearchResults, pinMessage, unpinMessage, createRoom, joinRoom, leaveRoom, loadVoiceMembers, sendTyping, getAllRooms, openDM, addToGroupDM, updateTopic, updateRoomSettings, setCustomStatus, setManualStatus, updateProfile, kickMember, banMember, unbanMember, setMemberRole, setNameColors, selectChannel, createChannel, updateChannel, deleteChannel, loadRoles, createRole, updateRole, deleteRole, assignMemberRoles, loadRoomGroups, createRoomGroup, deleteRoomGroup, renameRoomGroup, setGroupRooms, toggleGroupCollapsed, setSidebarOrder, loadFriends, loadFriendPresence, embedInteraction, loadUnreads, markChannelRead, loadNotificationSettings, loadContinuity, loadActiveThreads, saveDraft, saveResumePoint, setNotificationLevel, moderateVoice, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, blockUser, unblockUser],
+    [login, register, logout, deleteAccount, loadRooms, selectRoom, loadOlderMessages, loadMessagesAround, sendMessage, openThread, openMessage, loadOlderThreadMessages, revealThreadMessage, closeThread, sendThreadMessage, setThreadName, deleteThread, deleteMessage, hardDeleteNotification, editMessage, addReaction, loadPins, loadEvents, createEvent, updateEvent, deleteEvent, createPoll, votePoll, closePoll, loadPoll, setRsvp, loadMorePins, loadMoreSearchResults, pinMessage, unpinMessage, createRoom, joinRoom, leaveRoom, loadVoiceMembers, sendTyping, getAllRooms, openDM, addToGroupDM, updateTopic, updateRoomSettings, setCustomStatus, setManualStatus, updateProfile, kickMember, loadMyPermissions, banMember, unbanMember, setMemberRole, setNameColors, selectChannel, createChannel, updateChannel, deleteChannel, loadRoles, createRole, updateRole, deleteRole, assignMemberRoles, loadRoomGroups, createRoomGroup, deleteRoomGroup, renameRoomGroup, setGroupRooms, toggleGroupCollapsed, setSidebarOrder, loadFriends, loadFriendPresence, embedInteraction, loadUnreads, markChannelRead, loadNotificationSettings, loadContinuity, loadActiveThreads, saveDraft, saveResumePoint, setNotificationLevel, moderateVoice, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, removeFriend, blockUser, unblockUser],
   );
 
   return (

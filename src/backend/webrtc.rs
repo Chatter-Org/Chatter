@@ -14,6 +14,7 @@ use webrtc::{
         setting_engine::SettingEngine, APIBuilder, API,
     },
     ice::{
+        network_type::NetworkType,
         udp_mux::{UDPMuxDefault, UDPMuxParams},
         udp_network::UDPNetwork,
     },
@@ -134,6 +135,26 @@ pub(crate) async fn build_webrtc_api() -> Arc<API> {
         )
         .expect("register audio level header extension failed");
 
+    // A simulcast camera sends each of its encodings as its own stream, told
+    // apart only by these: which m-line (`mid`) and which encoding (`rid`).
+    // Without them negotiated, webrtc-rs cannot tell the layers apart and
+    // refuses every stream after the first.
+    for uri in [
+        webrtc::sdp::extmap::SDES_MID_URI,
+        webrtc::sdp::extmap::SDES_RTP_STREAM_ID_URI,
+        webrtc::sdp::extmap::SDES_REPAIR_RTP_STREAM_ID_URI,
+    ] {
+        media_engine
+            .register_header_extension(
+                RTCRtpHeaderExtensionCapability {
+                    uri: uri.to_string(),
+                },
+                RTPCodecType::Video,
+                None,
+            )
+            .expect("register simulcast header extension failed");
+    }
+
     let mut registry = Registry::new();
     registry = register_default_interceptors(registry, &mut media_engine)
         .expect("register_default_interceptors failed");
@@ -157,6 +178,17 @@ pub(crate) async fn build_webrtc_api() -> Arc<API> {
             setting_engine.set_udp_network(UDPNetwork::Muxed(UDPMuxDefault::new(
                 UDPMuxParams::new(socket),
             )));
+            // The socket is IPv4, so only IPv4 candidates can be reached on
+            // it. Worse than useless, an IPv6 one cost packets: every local
+            // candidate on the mux reads from the same shared connection, and
+            // whichever reads a packet decides whether its sender is known —
+            // looking it up among the remote candidates of *its own* network
+            // type. An IPv6 candidate reading a browser's IPv4 packet finds
+            // nothing and discards it. On a host with IPv6 (a link-local fe80
+            // address is enough) that lost a large share of every inbound
+            // stream, and the browsers sending them took the loss for
+            // congestion and cut their bitrate to the floor.
+            setting_engine.set_network_types(vec![NetworkType::Udp4]);
         }
         Err(e) => {
             eprintln!(
@@ -382,6 +414,41 @@ pub(crate) async fn create_peer_connection(
         .new_peer_connection(default_webrtc_config())
         .await
         .map(Arc::new)
+}
+
+/// A publisher's packet, rebuilt to be sent on to a subscriber.
+///
+/// Header extension ids are negotiated per connection, so the publisher's
+/// numbering means nothing on the subscriber's leg — and since a video
+/// publisher's packets carry its `mid` (and, simulcast, its `rid`), passing
+/// them through would tell the viewer's browser to route the packet to a
+/// section or an encoding of the *publisher's* connection. Without them the
+/// viewer routes by SSRC, which the server's SDP always declares. `payload` is
+/// `Bytes`, so carrying it over is a refcount bump, not a copy.
+pub(crate) fn relay_packet(
+    packet: &rtp::packet::Packet,
+    sequence_number: u16,
+    timestamp: u32,
+) -> rtp::packet::Packet {
+    rtp::packet::Packet {
+        header: rtp::header::Header {
+            version: packet.header.version,
+            padding: packet.header.padding,
+            extension: false,
+            marker: packet.header.marker,
+            // Both overwritten per binding inside `write_rtp`; carried anyway
+            // so the packet is coherent on its own.
+            payload_type: packet.header.payload_type,
+            ssrc: packet.header.ssrc,
+            sequence_number,
+            timestamp,
+            csrc: packet.header.csrc.clone(),
+            extension_profile: 0,
+            extensions: Vec::new(),
+            extensions_padding: 0,
+        },
+        payload: packet.payload.clone(),
+    }
 }
 
 /// Forward only keyframe requests (PLI/FIR) from subscribers to the publisher.

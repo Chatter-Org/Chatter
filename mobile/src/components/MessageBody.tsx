@@ -1,5 +1,6 @@
 import { Fragment, memo, useMemo } from "react";
 import { useDevicePrefs } from "@/state/devicePrefs";
+import { useChatterActions } from "@/state/ChatterProvider";
 import { Linking, ScrollView, View } from "react-native";
 import { Image } from "expo-image";
 import { parseBody, type FormatOptions, type InlineNode } from "@chatter/core/messageFormat";
@@ -50,6 +51,7 @@ export const MessageBody = memo(function MessageBody({
 function Inline({ nodes }: { nodes: InlineNode[] }) {
   const { autoplayAnimated: autoplay } = useDevicePrefs();
   const { colors } = useTheme();
+  const { selectChannel } = useChatterActions();
   return (
     <>
       {nodes.map((node, i) => {
@@ -103,6 +105,22 @@ function Inline({ nodes }: { nodes: InlineNode[] }) {
                 suppressHighlighting
               >
                 {node.display}
+              </T>
+            );
+          case "channel":
+            // The web's pill; a channel the reader cannot see is "#unknown".
+            return (
+              <T
+                key={i}
+                className={cn(
+                  "rounded text-xs font-semibold",
+                  node.name === null ? "bg-muted text-muted-foreground" : "bg-primary/20 text-primary",
+                )}
+                onPress={node.opens ? () => void selectChannel(node.id) : undefined}
+                accessibilityRole={node.opens ? "link" : undefined}
+                suppressHighlighting
+              >
+                {" "}#{node.name ?? "unknown"}{" "}
               </T>
             );
           case "emoji": {

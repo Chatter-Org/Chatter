@@ -50,6 +50,6 @@ configureHost({
   },
 });
 
-// Warm the derived leave sound now, so the first leave is not silent while it
-// decodes. See lib/sounds.ts. (This used to run when the socket handler loaded.)
+// Decode the built-in effects (and derive the leave sound) now, so the first
+// of each plays the moment its event lands. See lib/sounds.ts.
 prewarmSounds();

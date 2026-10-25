@@ -1,4 +1,6 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
+import { MemberModerationActions } from "@/components/moderation/MemberModerationActions";
+import { BulkDeleteControl } from "@/components/moderation/BulkDeleteControl";
 import { useAppContext } from "@/lib/store";
 import { apiUploadFile, apiListUploads, apiDeleteUpload, apiChangePassword, apiDeleteAccount, apiGetRecoveryCodes, apiSetupTotp, apiVerifyTotp, apiGetAccountStatus, apiGetSteamLinkUrl, apiGetSteamStatus, apiSetSteamHideGame, apiUnlinkSteam, apiGetMutualFriends, apiGetSessions, apiRevokeSession, setAccessToken, setRefreshToken, setIsAdmin, setTotpVerified } from "@/lib/api";
 import type { UploadRecord, SessionInfo } from "@/lib/api";
@@ -1135,6 +1137,8 @@ export function UserProfileDialog({
                     Demote to Member
                   </Button>
                 )}
+                <MemberModerationActions roomId={state.currentRoomId!} userId={userId} displayName={displayName} />
+                <BulkDeleteControl roomId={state.currentRoomId!} userId={userId} displayName={displayName} />
                 <Button
                   variant="outline"
                   className="w-full text-orange-400 border-orange-400/30 hover:bg-orange-400/10"
