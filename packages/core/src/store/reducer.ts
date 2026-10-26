@@ -1027,10 +1027,13 @@ export function reducer(state: AppState, action: Action): AppState {
       const voiceChannelMembers = { ...state.voiceChannelMembers };
       const voiceChannelRooms = { ...state.voiceChannelRooms };
       const voiceChannelOccupiedSince = { ...state.voiceChannelOccupiedSince };
+      const voiceChannelStatus = { ...state.voiceChannelStatus };
       if (members.length === 0) {
         delete voiceChannelMembers[channelId];
         delete voiceChannelRooms[channelId];
         delete voiceChannelOccupiedSince[channelId];
+        // The status belongs to the call, and the call has ended.
+        delete voiceChannelStatus[channelId];
       } else {
         voiceChannelMembers[channelId] = members;
         if (roomId) voiceChannelRooms[channelId] = roomId;
@@ -1041,6 +1044,7 @@ export function reducer(state: AppState, action: Action): AppState {
           voiceChannelMembers,
           voiceChannelRooms,
           voiceChannelOccupiedSince,
+          voiceChannelStatus,
         }),
       );
     }
@@ -1066,6 +1070,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const voiceChannelMembers: Record<string, VoiceChannelMember[]> = {};
       const voiceChannelRooms: Record<string, string> = {};
       const voiceChannelOccupiedSince: Record<string, number> = {};
+      const voiceChannelStatus: Record<string, string> = {};
       if (scope) {
         for (const [channelId, members] of Object.entries(state.voiceChannelMembers)) {
           const room = state.voiceChannelRooms[channelId];
@@ -1074,6 +1079,8 @@ export function reducer(state: AppState, action: Action): AppState {
           if (room) voiceChannelRooms[channelId] = room;
           const since = state.voiceChannelOccupiedSince[channelId];
           if (since !== undefined) voiceChannelOccupiedSince[channelId] = since;
+          const status = state.voiceChannelStatus[channelId];
+          if (status) voiceChannelStatus[channelId] = status;
         }
       }
       for (const [channelId, channel] of Object.entries(channels)) {
@@ -1083,6 +1090,7 @@ export function reducer(state: AppState, action: Action): AppState {
         if (channel.occupiedSince != null) {
           voiceChannelOccupiedSince[channelId] = channel.occupiedSince;
         }
+        if (channel.status) voiceChannelStatus[channelId] = channel.status;
       }
       return withRoomVoiceCounts(
         deriveRoomVoice({
@@ -1090,6 +1098,7 @@ export function reducer(state: AppState, action: Action): AppState {
           voiceChannelMembers,
           voiceChannelRooms,
           voiceChannelOccupiedSince,
+          voiceChannelStatus,
         }),
       );
     }
@@ -1111,6 +1120,13 @@ export function reducer(state: AppState, action: Action): AppState {
           [action.payload.channelId]: action.payload.since,
         },
       };
+    }
+    case "SET_VOICE_CHANNEL_STATUS": {
+      const { channelId, status } = action.payload;
+      const next = { ...state.voiceChannelStatus };
+      if (status) next[channelId] = status;
+      else delete next[channelId];
+      return { ...state, voiceChannelStatus: next };
     }
     case "SET_CHANNEL_MENTION":
       return withRoomUnreads({

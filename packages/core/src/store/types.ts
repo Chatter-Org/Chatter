@@ -137,6 +137,9 @@ export interface AppState {
   activeWebcamStreamers: string[];
   // Voice channel occupied-since timestamps (ms epoch), keyed by channel_id
   voiceChannelOccupiedSince: Record<string, number>;
+  // Voice channel status lines, keyed by channel_id. Set by anyone in the call;
+  // absent when there is none, and gone when the channel empties.
+  voiceChannelStatus: Record<string, string>;
   // Watch-party viewers: room_id -> list of user_ids currently receiving the video
   watchViewers: Record<string, string[]>;
   // UI
@@ -423,11 +426,12 @@ export type Action =
         roomId: string | null;
         channels: Record<
           string,
-          { roomId: string; occupiedSince: number | null; members: VoiceChannelMember[] }
+          { roomId: string; occupiedSince: number | null; status?: string | null; members: VoiceChannelMember[] }
         >;
       };
     }
   | { type: "UPDATE_VOICE_CHANNEL_OCCUPIED_SINCE"; payload: { channelId: string; since: number | null } }
+  | { type: "SET_VOICE_CHANNEL_STATUS"; payload: { channelId: string; status: string } }
   | { type: "SET_WATCH_VIEWERS"; payload: { roomId: string; users: string[] } }
   | { type: "SET_CHANNEL_MENTION"; payload: { roomId: string; channelId: string; hasMention: boolean } }
   | { type: "SET_THREAD_MENTION"; payload: { threadId: string; hasMention: boolean } }
@@ -486,6 +490,7 @@ export const initialState: AppState = {
   isWebcamActive: false,
   activeWebcamStreamers: [],
   voiceChannelOccupiedSince: {},
+  voiceChannelStatus: {},
   watchViewers: {},
   roomMentions: {},
   notificationSettings: {},
@@ -666,6 +671,8 @@ export interface AppContextValue {
     action: "mute" | "unmute" | "move" | "disconnect",
     targetChannelId?: string,
   ) => void;
+  /** Set the status line of the voice channel you are in; empty clears it. */
+  setVoiceChannelStatus: (channelId: string, status: string) => void;
   /** Load stored notification levels for every room/channel the user has set. */
   loadNotificationSettings: () => Promise<void>;
   loadContinuity: () => Promise<void>;

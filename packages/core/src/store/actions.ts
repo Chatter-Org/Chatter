@@ -464,11 +464,12 @@ export function createStoreActions(ctx: StoreContext) {
     if (!roomId) return;
     try {
       const voiceData = await apiGetVoiceMembers(roomId);
-      const channels: Record<string, { roomId: string; occupiedSince: number | null; members: VoiceChannelMember[] }> = {};
+      const channels: Record<string, { roomId: string; occupiedSince: number | null; status: string | null; members: VoiceChannelMember[] }> = {};
       for (const [channelId, members] of Object.entries(voiceData.voice_channels || {})) {
         channels[channelId] = {
           roomId,
           occupiedSince: voiceData.occupied_since?.[channelId] ?? null,
+          status: voiceData.channel_status?.[channelId] ?? null,
           members: (members as any[]).map((m: any) => ({
             userId: m.user_id || m.userId,
             muted: !!m.muted,
@@ -886,6 +887,11 @@ export function createStoreActions(ctx: StoreContext) {
       action,
       ...(targetChannelId ? { target_channel_id: targetChannelId } : {}),
     });
+  };
+
+  /** The server checks you are in the channel; everyone in its room is told. */
+  const setVoiceChannelStatus = (channelId: string, status: string) => {
+    send({ type: "voice_channel_status", channel_id: channelId, status: status.trim() });
   };
 
   const sendTyping = () => {
@@ -1352,6 +1358,7 @@ export function createStoreActions(ctx: StoreContext) {
     recoverMissedMessages,
     sendTyping,
     moderateVoice,
+    setVoiceChannelStatus,
   };
 }
 

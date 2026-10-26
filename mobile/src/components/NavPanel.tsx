@@ -407,6 +407,11 @@ const ChannelRow = memo(function ChannelRow({
         {mentions > 0 ? <CountBadge count={mentions} className="ml-auto h-4 min-w-4" /> : null}
       </Pressable>
       <ThreadPreviews channel={channel} />
+      {occupants.length > 0 && state.voiceChannelStatus[channel.channel_id] ? (
+        <T numberOfLines={1} className="ml-9 mr-2 text-xs text-muted-foreground">
+          {state.voiceChannelStatus[channel.channel_id]}
+        </T>
+      ) : null}
       {occupants.length > 0 ? (
         <View className="ml-7 gap-0.5 pb-1">
           {occupants.map((m) => (

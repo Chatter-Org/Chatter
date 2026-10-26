@@ -103,16 +103,17 @@ function voiceChannelsFromSync(
   channels: Record<string, any> | undefined,
 ): Record<
   string,
-  { roomId: string; occupiedSince: number | null; members: VoiceChannelMember[] }
+  { roomId: string; occupiedSince: number | null; status: string | null; members: VoiceChannelMember[] }
 > {
   const out: Record<
     string,
-    { roomId: string; occupiedSince: number | null; members: VoiceChannelMember[] }
+    { roomId: string; occupiedSince: number | null; status: string | null; members: VoiceChannelMember[] }
   > = {};
   for (const [channelId, channel] of Object.entries(channels || {})) {
     out[channelId] = {
       roomId: channel.room_id,
       occupiedSince: channel.occupied_since ?? null,
+      status: typeof channel.status === "string" ? channel.status : null,
       members: voiceMemberRecords(channel.members),
     };
   }
@@ -810,6 +811,12 @@ export function createWsMessageHandler(
       dispatch({
         type: "SYNC_VOICE_STATE",
         payload: { roomId: null, channels: voiceChannelsFromSync(msg.channels) },
+      });
+    } else if (msg.type === "voice_channel_status") {
+      if (!msg.channel_id) return;
+      dispatch({
+        type: "SET_VOICE_CHANNEL_STATUS",
+        payload: { channelId: msg.channel_id, status: typeof msg.status === "string" ? msg.status : "" },
       });
     } else if (msg.type === "voice_position") {
       dispatch({

@@ -126,6 +126,7 @@ pub async fn build_state_in(database: &str) -> Arc<AppState> {
         voice_channels: RwLock::new(HashMap::new()),
         voice_force_muted: RwLock::new(HashMap::new()),
         voice_channel_occupied_since: RwLock::new(HashMap::new()),
+        voice_channel_status: RwLock::new(HashMap::new()),
         voice_speaking: RwLock::new(HashMap::new()),
         user_presence: RwLock::new(HashMap::new()),
         webrtc_api,

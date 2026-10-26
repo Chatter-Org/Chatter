@@ -69,6 +69,9 @@ pub(crate) const MESSAGE_PREVIEW: Quota = Quota::per(120.0, 60.0);
 /// next position supersedes the last, so a lost one heals itself, and an error
 /// per frame would be worse than the flood.
 pub(crate) const VOICE_MOVE: Quota = Quota::per(60.0, 2.0);
+/// Setting a voice channel's status. A person edits it now and then; this
+/// stops a loop rewriting it under everyone's sidebar.
+pub(crate) const VOICE_CHANNEL_STATUS: Quota = Quota::per(10.0, 60.0);
 /// Reporting messages. Generous for someone flagging a raid, and still a
 /// ceiling on flooding the moderators' queue.
 pub(crate) const REPORT: Quota = Quota::per(10.0, 600.0);

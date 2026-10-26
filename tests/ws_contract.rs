@@ -527,3 +527,101 @@ async fn a_moderator_disconnects_only_from_their_own_rooms_voice() {
     assert_eq!(left["user_id"], "@bob:localhost");
     assert_eq!(left["voice_members"].as_array().unwrap().len(), 0);
 }
+
+#[tokio::test]
+async fn a_voice_channel_status_is_set_from_inside_the_call_and_ends_with_it() {
+    let server = spawn_server().await;
+    let client = Client::new();
+
+    let (_alice_user_id, alice_token) =
+        register_user(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
+
+    let room_id = create_room(
+        &client,
+        &server.base_url,
+        &alice_token,
+        "General",
+        Some(vec![bob_user_id]),
+        false,
+    )
+    .await;
+
+    let mut alice_ws = ws_connect_authenticated(&server.ws_url, &alice_token).await;
+    let _ = recv_event_type(&mut alice_ws, "connected").await;
+    let mut bob_ws = ws_connect_authenticated(&server.ws_url, &bob_token).await;
+    let _ = recv_event_type(&mut bob_ws, "connected").await;
+
+    alice_ws
+        .send(Message::Text(
+            json!({"type": "voice_join", "room_id": room_id}).to_string(),
+        ))
+        .await
+        .unwrap();
+    let _ = recv_event_type(&mut bob_ws, "voice_user_joined").await;
+
+    // Bob is in the room but not the call, so his is dropped; the first status
+    // the room hears is Alice's.
+    bob_ws
+        .send(Message::Text(
+            json!({"type": "voice_channel_status", "channel_id": room_id, "status": "bob was here"})
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+    alice_ws
+        .send(Message::Text(
+            json!({"type": "voice_channel_status", "channel_id": room_id, "status": "  raid night  "})
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+    let set = recv_event_type(&mut bob_ws, "voice_channel_status").await;
+    assert_eq!(set["status"], "raid night");
+    assert_eq!(set["room_id"], room_id);
+    assert_eq!(set["channel_id"], room_id);
+
+    // A client that missed it gets it in the snapshot and the REST fallback.
+    bob_ws
+        .send(Message::Text(
+            json!({"type": "voice_state_request"}).to_string(),
+        ))
+        .await
+        .unwrap();
+    let snapshot = recv_event_type(&mut bob_ws, "voice_state_sync").await;
+    assert_eq!(snapshot["channels"][&room_id]["status"], "raid night");
+    let voice: Value = client
+        .get(format!("{}/api/rooms/{room_id}/voice", server.base_url))
+        .header("Authorization", bearer(&bob_token))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(voice["channel_status"][&room_id], "raid night");
+
+    // The call ends; the next one starts without it.
+    alice_ws
+        .send(Message::Text(
+            json!({"type": "voice_leave", "room_id": room_id}).to_string(),
+        ))
+        .await
+        .unwrap();
+    let _ = recv_event_type(&mut bob_ws, "voice_user_left").await;
+    alice_ws
+        .send(Message::Text(
+            json!({"type": "voice_join", "room_id": room_id}).to_string(),
+        ))
+        .await
+        .unwrap();
+    let _ = recv_event_type(&mut bob_ws, "voice_user_joined").await;
+    bob_ws
+        .send(Message::Text(
+            json!({"type": "voice_state_request"}).to_string(),
+        ))
+        .await
+        .unwrap();
+    let snapshot = recv_event_type(&mut bob_ws, "voice_state_sync").await;
+    assert!(snapshot["channels"][&room_id]["status"].is_null());
+}

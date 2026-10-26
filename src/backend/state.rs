@@ -81,6 +81,10 @@ pub struct AppState {
     pub(crate) voice_force_muted: RwLock<HashMap<String, Vec<String>>>,
     // Timestamp (ms since epoch) when each voice channel went from empty to occupied
     pub(crate) voice_channel_occupied_since: RwLock<HashMap<String, u64>>,
+    // A short line of text anyone in a voice channel can set, shown under the
+    // channel's name. It belongs to the call, not the channel: the first
+    // arrival in an empty channel clears it, so it never outlives the call.
+    pub(crate) voice_channel_status: RwLock<HashMap<String, String>>,
     // Last speaking set broadcast per voice channel, so the periodic sweep only
     // sends an update when it actually changes.
     pub(crate) voice_speaking: RwLock<HashMap<String, Vec<String>>>,

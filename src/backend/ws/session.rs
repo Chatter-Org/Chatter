@@ -42,6 +42,10 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+/// The longest voice channel status kept, in characters. Longer is cut, not
+/// refused: it is one line under a channel name in a sidebar.
+const VOICE_CHANNEL_STATUS_MAX_CHARS: usize = 100;
+
 pub(crate) async fn ws_upgrade(
     State(state): State<Arc<AppState>>,
     ws: WebSocketUpgrade,
@@ -146,6 +150,7 @@ pub(crate) async fn voice_state_snapshot(state: &AppState, user_id: &str) -> Val
 
     let vc = state.voice_channels.read().await;
     let occupied = state.voice_channel_occupied_since.read().await;
+    let statuses = state.voice_channel_status.read().await;
 
     let mut channels = serde_json::Map::new();
     for (channel_id, members) in vc.iter() {
@@ -168,6 +173,7 @@ pub(crate) async fn voice_state_snapshot(state: &AppState, user_id: &str) -> Val
             json!({
                 "room_id": room_id,
                 "occupied_since": occupied.get(channel_id).copied(),
+                "status": statuses.get(channel_id),
                 "members": voice_member_states(members),
             }),
         );
@@ -791,6 +797,14 @@ pub(crate) async fn handle_ws_text(state: Arc<AppState>, user_id: &str, conn_id:
                 (old_channels, voice_members, voice_states, channel_was_empty)
             };
 
+            // A new call starts without the last one's status. Cleared here
+            // rather than on every path that can empty a channel, of which
+            // there are many; an empty channel is never shown, so a status
+            // left behind until then is invisible.
+            if channel_was_empty {
+                state.voice_channel_status.write().await.remove(channel_id);
+            }
+
             // Record when this channel became occupied (0 -> 1 members)
             let occupied_since_ms = if channel_was_empty {
                 let now_ms = std::time::SystemTime::now()
@@ -1012,6 +1026,76 @@ pub(crate) async fn handle_ws_text(state: Arc<AppState>, user_id: &str, conn_id:
                 "y": y,
             });
             broadcast_to_room(&state, room_id, &event).await;
+        }
+        "voice_channel_status" => {
+            // Anyone in the call may set it, and only for the channel they are
+            // in. An empty string clears it.
+            let channel_id = msg
+                .get("channel_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(room_id);
+            let status: String = msg
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(VOICE_CHANNEL_STATUS_MAX_CHARS)
+                .collect();
+            if crate::backend::ratelimit::check(
+                &state,
+                &format!("voicestatus:{user_id}"),
+                crate::backend::ratelimit::VOICE_CHANNEL_STATUS,
+            )
+            .await
+            .is_err()
+            {
+                send_to_conn(
+                    &state,
+                    user_id,
+                    conn_id,
+                    &json!({
+                        "type": "error",
+                        "error": "rate_limited",
+                        "message": "You're changing the channel status too quickly"
+                    }),
+                )
+                .await;
+                return;
+            }
+
+            let member_room = {
+                let vc = state.voice_channels.read().await;
+                vc.get(channel_id)
+                    .and_then(|chan| chan.get(user_id))
+                    .map(|m| m.room_id.clone())
+            };
+            let Some(member_room) = member_room else {
+                return;
+            };
+            let room_id = voice_room_of(Some(member_room.as_str()), room_id);
+
+            {
+                let mut statuses = state.voice_channel_status.write().await;
+                if status.is_empty() {
+                    statuses.remove(channel_id);
+                } else {
+                    statuses.insert(channel_id.to_string(), status.clone());
+                }
+            }
+            broadcast_to_room(
+                &state,
+                room_id,
+                &json!({
+                    "type": "voice_channel_status",
+                    "room_id": room_id,
+                    "channel_id": channel_id,
+                    "user_id": user_id,
+                    "status": status,
+                }),
+            )
+            .await;
         }
         "voice_leave" => {
             let channel_id = msg

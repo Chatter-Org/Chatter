@@ -40,6 +40,7 @@ import { RoleManagementDialog } from "./RoleManagementDialog";
 import { NotificationSettingsPopover, NotificationBell } from "./NotificationSettingsPopover";
 import { resolveNotificationLevel } from "@/lib/notifications";
 import { VoiceConnectedPanel } from "./voice/VoiceConnectedPanel";
+import { VoiceChannelStatus } from "./voice/VoiceChannelStatus";
 import { LivePill } from "./voice/LivePill";
 import { ScreenPeek } from "./voice/ScreenPeek";
 import { clickable } from "@/lib/a11y";
@@ -158,7 +159,7 @@ function VoiceTimer({ since }: { since: number }) {
 
 export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceChannel, onLeaveVoice, onToggleMute, onToggleDeafen, onToggleScreenShare, isScreenSharing, onToggleWebcam, isWebcamActive, connQualityRef, setUserVolumeRef, speakingUsersRef, onCollapsedChange }: ChannelListProps) {
   const confirm = useConfirm();
-  const { state, dispatch, selectRoom, selectChannel, createChannel, updateChannel, deleteChannel, moderateVoice, openThread } = useAppContext();
+  const { state, dispatch, selectRoom, selectChannel, createChannel, updateChannel, deleteChannel, moderateVoice, setVoiceChannelStatus, openThread } = useAppContext();
   const channelLinkText = useChannelLinkText();
   const readable = useReadableColor();
   const [createOpen, setCreateOpen] = useState(false);
@@ -518,9 +519,12 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
     const holdsCall = isVoice || isSpatial;
     const members = holdsCall ? (state.voiceChannelMembers[ch.channel_id] || []) : [];
     const occupiedSince = holdsCall && members.length > 0 ? state.voiceChannelOccupiedSince[ch.channel_id] : undefined;
+    // The status line belongs to the call, so it only shows while there is one.
+    const callStatus = members.length > 0 ? state.voiceChannelStatus[ch.channel_id] : undefined;
+    const inThisCall = holdsCall && state.inVoiceChannel && state.voiceChannelId === ch.channel_id;
 
     return (
-      <div key={ch.channel_id} onDragEnd={handleDragEnd} className="mt-1">
+      <div key={ch.channel_id} onDragEnd={handleDragEnd} className="group/voice mt-1">
         <div
           draggable={canManage}
           onDragStart={(e) => handleDragStart(e, ch.channel_id)}
@@ -575,6 +579,16 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
             badge={occupiedSince ? <VoiceTimer since={occupiedSince} /> : undefined}
           />
         </div>
+        {holdsCall && (callStatus || inThisCall) && (
+          <div className="ml-7 pr-1 pb-0.5">
+            <VoiceChannelStatus
+              key={callStatus ?? ""}
+              status={callStatus}
+              canEdit={inThisCall}
+              onSave={(status) => setVoiceChannelStatus(ch.channel_id, status)}
+            />
+          </div>
+        )}
         {!isVoice && ch.channel_type === "text" && (state.channelThreads[ch.channel_id]?.length ?? 0) > 0 && (
           // Tree lines, as forum replies have them: a trunk down from under
           // the channel's icon and an elbow into each thread, stopping at the

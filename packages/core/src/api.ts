@@ -980,6 +980,7 @@ export async function apiGetVoiceMembers(roomId: string) {
       channel_id?: string;
     }[]>;
     occupied_since?: Record<string, number>;
+    channel_status?: Record<string, string>;
   }>;
 }
 
