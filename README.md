@@ -156,6 +156,10 @@ TURN_PASSWORD: ${TURN_PASSWORD:-changeme}
 
 `TURN_URL` is used internally by the Chatter container to reach coturn. `TURN_PUBLIC_URL` is what gets sent to browser clients — it must be reachable from the internet.
 
+### Relay restrictions
+
+`turnserver.conf` refuses TCP relays and relaying to private address ranges (except `172.16.0.0/12`, where Docker puts the Chatter container). Every signed-in user receives the TURN credentials, so without these limits the relay could be used to reach services on your server's networks. If you run Chatter outside Docker on a LAN address such as `192.168.x.x`, remove that range's `denied-peer-ip` line or relayed calls cannot reach it.
+
 ### Firewall / port forwarding rules
 
 In both scenarios, ensure the following are open and forwarded to your server:
