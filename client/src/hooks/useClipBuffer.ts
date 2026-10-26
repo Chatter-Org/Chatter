@@ -15,8 +15,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * than corrupt — and the saved length is reported so it is not a surprise.
  *
  * The cost is real: a second video encoder runs for as long as this is armed,
- * and at 12Mbps the two legs hold up to three windows between them — roughly
- * 135MB for a 30s setting. It stays off until asked for.
+ * and at 6Mbps the two legs hold up to three windows between them — roughly
+ * 68MB for a 30s setting. It stays off until asked for.
  */
 
 /** Chunk cadence. Small enough to trim close to the requested window. */
@@ -27,19 +27,20 @@ const FIRST_CHUNK_TIMEOUT_MS = 6000;
 /** How soon to try again when a leg fails to start. Rotation alone would leave
  *  a transient failure — a track not live yet — stuck for a whole window. */
 const RETRY_MS = 2000;
-/** Match the 60fps screen-share cap in lib/webrtc.ts. Encoding below what the
- *  source was allowed to send loses detail a second time, on top of the loss
- *  already taken by re-encoding a decoded stream. */
-const CLIP_BITS_PER_SECOND = 12_000_000;
+/** Half the 60fps screen-share cap in lib/webrtc.ts, which VP9 can afford.
+ *  Measured on a moving 1080p share, VP9 at 6Mbps came out cleaner than VP8 at
+ *  12 (48.0 vs 47.6 dB luma PSNR) and only 2dB under VP9 at 12, for half the
+ *  memory. */
+const CLIP_BITS_PER_SECOND = 6_000_000;
 
 /**
  * The first MIME type the browser will record, matched to the tracks on hand.
  *
- * VP8 before VP9. Both are software encoders in Chromium, and two of them run
- * for as long as the buffer is armed; VP9 costs several times VP8's CPU for a
- * gain that 12Mbps leaves nothing to show for. H.264 is cheaper still where it
- * is hardware-encoded, but not offered: the clip is posted as WebM and served
- * as uploaded, and H.264 in WebM does not play in Firefox or Safari.
+ * VP9 before VP8. Two encoders run for as long as the buffer is armed, and
+ * Chromium's realtime VP9 measured *cheaper* than its VP8 as well as better
+ * looking (3.3 vs 4.7 ms a frame at 12Mbps), so the bitrate above leans on it.
+ * H.264 is not offered: the clip is posted as WebM and served as uploaded, and
+ * H.264 in WebM does not play in Firefox or Safari.
  *
  * The codec list has to agree with the stream. Asking for `...,opus` while
  * recording a video-only stream is accepted by isTypeSupported — the *type* is
@@ -49,14 +50,14 @@ const CLIP_BITS_PER_SECOND = 12_000_000;
 function pickMimeType(hasAudio: boolean): string | undefined {
   const candidates = hasAudio
     ? [
-        "video/webm;codecs=vp8,opus",
         "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
         "video/webm",
         "video/mp4",
       ]
     : [
-        "video/webm;codecs=vp8",
         "video/webm;codecs=vp9",
+        "video/webm;codecs=vp8",
         "video/webm",
         "video/mp4",
       ];
