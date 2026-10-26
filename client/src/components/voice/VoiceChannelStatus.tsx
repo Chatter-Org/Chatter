@@ -43,7 +43,7 @@ export function VoiceChannelStatus({ status, canEdit, onSave }: VoiceChannelStat
             setDraft(null);
           }
         }}
-        className="block w-full rounded border bg-background px-1.5 py-0.5 text-xs text-foreground outline-none focus:border-ring"
+        className="block w-full rounded border bg-background px-1.5 py-0.5 text-[0.5625rem] leading-3 text-foreground outline-none focus:border-ring"
       />
     );
   }
@@ -52,7 +52,7 @@ export function VoiceChannelStatus({ status, canEdit, onSave }: VoiceChannelStat
 
   if (!canEdit) {
     return (
-      <div className="truncate px-1 text-xs text-muted-foreground" title={status}>
+      <div className="truncate px-1 text-[0.5625rem] leading-3 text-muted-foreground" title={status}>
         {status}
       </div>
     );
@@ -63,12 +63,12 @@ export function VoiceChannelStatus({ status, canEdit, onSave }: VoiceChannelStat
       type="button"
       onClick={() => setDraft(status ?? "")}
       title={status ? `${status} (click to change)` : "Set a channel status"}
-      className={`flex w-full min-w-0 items-center gap-1 rounded px-1 text-left text-xs text-muted-foreground transition-opacity hover:text-foreground cursor-pointer ${
+      className={`flex w-full min-w-0 items-center gap-1 rounded px-1 text-left text-[0.5625rem] leading-3 text-muted-foreground transition-opacity hover:text-foreground cursor-pointer ${
         status ? "" : "opacity-0 group-hover/voice:opacity-100 focus-visible:opacity-100 max-md:opacity-100"
       }`}
     >
       <span className="truncate">{status || "Set a channel status"}</span>
-      <Pencil className="h-3 w-3 shrink-0 opacity-0 group-hover/voice:opacity-70 max-md:opacity-70" />
+      <Pencil className="h-[9px] w-[9px] shrink-0 opacity-0 group-hover/voice:opacity-70 max-md:opacity-70" />
     </button>
   );
 }
