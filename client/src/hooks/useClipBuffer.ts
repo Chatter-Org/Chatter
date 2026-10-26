@@ -35,6 +35,12 @@ const CLIP_BITS_PER_SECOND = 12_000_000;
 /**
  * The first MIME type the browser will record, matched to the tracks on hand.
  *
+ * VP8 before VP9. Both are software encoders in Chromium, and two of them run
+ * for as long as the buffer is armed; VP9 costs several times VP8's CPU for a
+ * gain that 12Mbps leaves nothing to show for. H.264 is cheaper still where it
+ * is hardware-encoded, but not offered: the clip is posted as WebM and served
+ * as uploaded, and H.264 in WebM does not play in Firefox or Safari.
+ *
  * The codec list has to agree with the stream. Asking for `...,opus` while
  * recording a video-only stream is accepted by isTypeSupported — the *type* is
  * supported — and the recorder then starts and emits nothing at all, having
@@ -43,14 +49,14 @@ const CLIP_BITS_PER_SECOND = 12_000_000;
 function pickMimeType(hasAudio: boolean): string | undefined {
   const candidates = hasAudio
     ? [
-        "video/webm;codecs=vp9,opus",
         "video/webm;codecs=vp8,opus",
+        "video/webm;codecs=vp9,opus",
         "video/webm",
         "video/mp4",
       ]
     : [
-        "video/webm;codecs=vp9",
         "video/webm;codecs=vp8",
+        "video/webm;codecs=vp9",
         "video/webm",
         "video/mp4",
       ];
