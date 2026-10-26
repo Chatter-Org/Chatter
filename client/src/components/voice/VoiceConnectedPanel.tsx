@@ -90,7 +90,15 @@ export function VoiceConnectedPanel({
   const showScreen = !!onToggleScreenShare && canShareScreen();
 
   return (
-    <div className="shrink-0 border-t px-2 py-2 space-y-2">
+    // Once the call is up the panel takes a faint green outline and glow, so
+    // being in voice reads at a glance.
+    <div
+      className={`shrink-0 mx-1.5 mb-1.5 rounded-lg border px-2 py-2 space-y-2 transition-[border-color,box-shadow] duration-300 ${
+        isOk
+          ? "border-success/40 shadow-[0_0_8px_-1px_color-mix(in_oklch,var(--success)_45%,transparent),inset_0_0_6px_color-mix(in_oklch,var(--success)_12%,transparent)]"
+          : ""
+      }`}
+    >
       <div className="flex items-center gap-2 pl-1">
         <span
           className={`shrink-0 ${statusColor}`}
