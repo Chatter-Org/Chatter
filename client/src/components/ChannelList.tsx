@@ -539,7 +539,10 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
         >
           <ChannelItem
             channel={ch}
-            isSelected={isVoice ? state.voiceChannelId === ch.channel_id : state.currentChannelId === ch.channel_id}
+            // Being in a call is not having the channel open: highlighting
+            // the call's channel too left two channels looking selected. The
+            // occupant list under it and the voice panel already show the call.
+            isSelected={!isVoice && state.currentChannelId === ch.channel_id}
             canManage={canManage}
             notifyRoomId={!holdsCall && roomId ? roomId : undefined}
             notifyLevel={roomId ? resolveNotificationLevel(state.notificationSettings, roomId, ch.channel_id) : undefined}
