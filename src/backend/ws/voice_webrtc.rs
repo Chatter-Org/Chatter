@@ -6,7 +6,7 @@ use crate::backend::{
     metrics::{MediaKind, METRICS},
     state::{AppState, VoiceListenerState, VoicePublisherState, VoiceSlot},
     webrtc::{
-        create_peer_connection, ice_candidate_to_json, parse_ice_candidate,
+        advertised_candidates, create_peer_connection, ice_candidate_to_json, parse_ice_candidate,
         AUDIO_LEVEL_EXTENSION_URI,
     },
 };
@@ -272,12 +272,14 @@ pub(crate) async fn handle_voice_webrtc_publish_offer(
                 let Ok(candidate_init) = candidate.to_json() else {
                     return;
                 };
-                let response = json!({
-                    "type": "voice_webrtc_publish_candidate",
-                    "room_id": room_id,
-                    "candidate": ice_candidate_to_json(&candidate_init)
-                });
-                send_to_user(&state, &user_id, &response).await;
+                for candidate_init in advertised_candidates(candidate_init) {
+                    let response = json!({
+                        "type": "voice_webrtc_publish_candidate",
+                        "room_id": room_id,
+                        "candidate": ice_candidate_to_json(&candidate_init)
+                    });
+                    send_to_user(&state, &user_id, &response).await;
+                }
             })
         }));
     }
@@ -583,12 +585,14 @@ pub(crate) async fn handle_voice_webrtc_subscribe_offer(
                 let Ok(candidate_init) = candidate.to_json() else {
                     return;
                 };
-                let response = json!({
-                    "type": "voice_webrtc_subscribe_candidate",
-                    "room_id": room_id,
-                    "candidate": ice_candidate_to_json(&candidate_init)
-                });
-                send_to_user(&state, &listener_user_id, &response).await;
+                for candidate_init in advertised_candidates(candidate_init) {
+                    let response = json!({
+                        "type": "voice_webrtc_subscribe_candidate",
+                        "room_id": room_id,
+                        "candidate": ice_candidate_to_json(&candidate_init)
+                    });
+                    send_to_user(&state, &listener_user_id, &response).await;
+                }
             })
         }));
     }

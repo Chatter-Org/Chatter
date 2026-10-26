@@ -7,7 +7,8 @@ use rtcp::{
     },
 };
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::net::{IpAddr, Ipv4Addr};
+use std::sync::{Arc, OnceLock};
 use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine,
@@ -160,6 +161,7 @@ pub(crate) async fn build_webrtc_api() -> Arc<API> {
         .expect("register_default_interceptors failed");
 
     let mut setting_engine = SettingEngine::default();
+    let mut muxed = false;
 
     // Carry every peer connection over one UDP socket. The default is an
     // ephemeral port per connection, which a large call exhausts long before
@@ -189,6 +191,7 @@ pub(crate) async fn build_webrtc_api() -> Arc<API> {
             // stream, and the browsers sending them took the loss for
             // congestion and cut their bitrate to the floor.
             setting_engine.set_network_types(vec![NetworkType::Udp4]);
+            muxed = true;
         }
         Err(e) => {
             eprintln!(
@@ -200,7 +203,9 @@ pub(crate) async fn build_webrtc_api() -> Arc<API> {
 
     // If WEBRTC_IP is set (e.g. the server's public IP), advertise it as a
     // server-reflexive candidate so remote peers can connect through NAT while
-    // LAN peers can still connect via the local host candidate.
+    // LAN peers can still connect via the local host candidate. webrtc-ice
+    // ignores this on the mux, which gathers no srflx candidates; there the
+    // address goes out as a twin of the host candidate instead (`PUBLIC_HOST`).
     if let Ok(ip) = std::env::var("WEBRTC_IP") {
         let ips: Vec<String> = ip
             .split(',')
@@ -208,6 +213,18 @@ pub(crate) async fn build_webrtc_api() -> Arc<API> {
             .filter(|s| !s.is_empty())
             .collect();
         if !ips.is_empty() {
+            if muxed {
+                match webrtc_ip_pair(&ips, outbound_ipv4()) {
+                    Some((local, public)) => {
+                        println!("WebRTC: advertising {public} for the host candidate on {local}");
+                        let _ = PUBLIC_HOST.set((local, public));
+                    }
+                    None => eprintln!(
+                        "WebRTC: WEBRTC_IP {ips:?} is not an IPv4 address this host can \
+                         pair with a local one; remote clients will connect through TURN only"
+                    ),
+                }
+            }
             println!(
                 "WebRTC: advertising NAT 1:1 IPs as srflx candidates: {:?}",
                 ips
@@ -223,6 +240,89 @@ pub(crate) async fn build_webrtc_api() -> Arc<API> {
             .with_setting_engine(setting_engine)
             .build(),
     )
+}
+
+/// `WEBRTC_IP` on the mux, as (the local interface it forwards to, itself).
+///
+/// The mux gathers only host candidates, and those carry the container's or
+/// LAN's own address, so without this a remote client had no direct path and
+/// connected through TURN — the lowest-priority pair, tried only after every
+/// direct one timed out. webrtc-ice's own 1:1 host mapping is no answer: it
+/// *replaces* the local address, which is the one coturn relays to, so a
+/// server behind a router without hairpin NAT would lose its TURN path. Each
+/// host candidate on this interface is therefore sent twice, once as gathered
+/// and once at the public address (`advertised_candidates`). Packets sent to
+/// the twin arrive on the same socket and are matched by ICE ufrag, and the
+/// agent learns the sender as peer-reflexive, as ICE allows.
+static PUBLIC_HOST: OnceLock<(Ipv4Addr, Ipv4Addr)> = OnceLock::new();
+
+/// Which local address `WEBRTC_IP`'s first entry stands in for: the one given
+/// as `PUBLIC/LOCAL`, else the interface outbound traffic leaves from. IPv4
+/// only, like the mux. `None` when the public address is already local.
+fn webrtc_ip_pair(ips: &[String], outbound: Option<Ipv4Addr>) -> Option<(Ipv4Addr, Ipv4Addr)> {
+    let first = ips.first()?;
+    let (public, local) = match first.split_once('/') {
+        Some((public, local)) => (public.trim(), local.trim().parse::<Ipv4Addr>().ok()?),
+        None => (first.as_str(), outbound?),
+    };
+    let public: Ipv4Addr = public.parse().ok()?;
+    (public != local).then_some((local, public))
+}
+
+/// A candidate the server gathered, followed by its public twin when it is
+/// the UDP host candidate `WEBRTC_IP` stands in for. Send every one.
+pub(crate) fn advertised_candidates(candidate: RTCIceCandidateInit) -> Vec<RTCIceCandidateInit> {
+    let twin = PUBLIC_HOST
+        .get()
+        .and_then(|&(local, public)| public_twin(&candidate, local, public));
+    std::iter::once(candidate).chain(twin).collect()
+}
+
+/// The same candidate at `public`. Its foundation differs, because a browser
+/// keeps pairs that share one frozen until the first finishes — the twin would
+/// wait out the unreachable private address it copies. Its priority is one
+/// lower so the two never tie.
+fn public_twin(
+    candidate: &RTCIceCandidateInit,
+    local: Ipv4Addr,
+    public: Ipv4Addr,
+) -> Option<RTCIceCandidateInit> {
+    // foundation component transport priority address port typ <type> ...
+    let mut fields: Vec<String> = candidate
+        .candidate
+        .strip_prefix("candidate:")?
+        .split(' ')
+        .map(str::to_string)
+        .collect();
+    if fields.len() < 8
+        || !fields[2].eq_ignore_ascii_case("udp")
+        || fields[6] != "typ"
+        || fields[7] != "host"
+        || fields[4].parse::<Ipv4Addr>().ok()? != local
+    {
+        return None;
+    }
+    let priority: u32 = fields[3].parse().ok()?;
+    fields[0].push('p');
+    fields[3] = priority.saturating_sub(1).to_string();
+    fields[4] = public.to_string();
+    Some(RTCIceCandidateInit {
+        candidate: format!("candidate:{}", fields.join(" ")),
+        ..candidate.clone()
+    })
+}
+
+/// The local IPv4 address outbound traffic leaves from — the interface a
+/// published port forwards to. `connect` on a UDP socket only picks a route;
+/// nothing is sent.
+fn outbound_ipv4() -> Option<Ipv4Addr> {
+    let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    // TEST-NET-1: routed like any public address, owned by nobody.
+    socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9)).ok()?;
+    match socket.local_addr().ok()?.ip() {
+        IpAddr::V4(ip) if !ip.is_unspecified() && !ip.is_loopback() => Some(ip),
+        _ => None,
+    }
 }
 
 /// Windows reports an ICMP "port unreachable" from an earlier send as
@@ -495,11 +595,13 @@ pub(crate) fn rewrite_rtcp_feedback_for_publisher(
 #[cfg(test)]
 mod tests {
     use super::{
-        client_turn_urls, ice_candidate_to_json, parse_ice_candidate,
-        rewrite_rtcp_feedback_for_publisher, CandidateGate,
+        client_turn_urls, ice_candidate_to_json, parse_ice_candidate, public_twin,
+        rewrite_rtcp_feedback_for_publisher, webrtc_ip_pair, CandidateGate,
     };
     use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
     use serde_json::json;
+    use std::net::Ipv4Addr;
+    use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 
     #[test]
     fn candidate_gate_holds_until_the_answer_then_passes_through() {
@@ -544,6 +646,67 @@ mod tests {
 
         assert_eq!(rewritten_pli.sender_ssrc, 0);
         assert_eq!(rewritten_pli.media_ssrc, 100);
+    }
+
+    #[test]
+    fn webrtc_ip_pairs_with_one_local_address() {
+        let local = Some(Ipv4Addr::new(172, 18, 0, 3));
+        let ips = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let pair = Some((Ipv4Addr::new(172, 18, 0, 3), Ipv4Addr::new(203, 0, 113, 5)));
+        assert_eq!(webrtc_ip_pair(&ips(&["203.0.113.5"]), local), pair);
+        assert_eq!(
+            webrtc_ip_pair(&ips(&["203.0.113.5", "198.51.100.7"]), local),
+            pair
+        );
+        assert_eq!(
+            webrtc_ip_pair(&ips(&["203.0.113.5/10.0.0.2"]), None),
+            Some((Ipv4Addr::new(10, 0, 0, 2), Ipv4Addr::new(203, 0, 113, 5))),
+            "an explicit pair is taken as given"
+        );
+        assert_eq!(
+            webrtc_ip_pair(&ips(&["172.18.0.3"]), local),
+            None,
+            "already local"
+        );
+        assert_eq!(webrtc_ip_pair(&ips(&["203.0.113.5"]), None), None);
+        assert_eq!(webrtc_ip_pair(&ips(&["2001:db8::1"]), local), None);
+        assert_eq!(webrtc_ip_pair(&ips(&["chat.example.com"]), local), None);
+    }
+
+    #[test]
+    fn only_the_mapped_udp_host_candidate_gets_a_public_twin() {
+        let local = Ipv4Addr::new(172, 18, 0, 3);
+        let public = Ipv4Addr::new(203, 0, 113, 5);
+        let candidate = |c: &str| RTCIceCandidateInit {
+            candidate: c.to_string(),
+            sdp_mid: Some(String::new()),
+            sdp_mline_index: Some(0),
+            username_fragment: None,
+        };
+
+        let twin = public_twin(
+            &candidate("candidate:1234 1 udp 2130706431 172.18.0.3 8000 typ host"),
+            local,
+            public,
+        )
+        .expect("host candidate on the mapped interface");
+        assert_eq!(
+            twin.candidate,
+            "candidate:1234p 1 udp 2130706430 203.0.113.5 8000 typ host"
+        );
+        assert_eq!(twin.sdp_mid, Some(String::new()));
+
+        for other in [
+            "candidate:1 1 udp 2130706431 10.0.0.9 8000 typ host",
+            "candidate:2 1 udp 16777215 172.18.0.3 50000 typ relay raddr 0.0.0.0 rport 0",
+            "candidate:3 1 tcp 2130706431 172.18.0.3 8000 typ host tcptype passive",
+            "garbage",
+        ] {
+            assert!(
+                public_twin(&candidate(other), local, public).is_none(),
+                "{other}"
+            );
+        }
     }
 
     #[test]

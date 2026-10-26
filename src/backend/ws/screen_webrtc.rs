@@ -4,8 +4,8 @@ use crate::backend::{
     metrics::{MediaKind, METRICS},
     state::{AppState, ScreenPublisherState, ScreenSubscriberState},
     webrtc::{
-        create_peer_connection, ice_candidate_to_json, parse_ice_candidate, relay_packet,
-        rewrite_rtcp_feedback_for_publisher, CandidateGate,
+        advertised_candidates, create_peer_connection, ice_candidate_to_json, parse_ice_candidate,
+        relay_packet, rewrite_rtcp_feedback_for_publisher, CandidateGate,
     },
 };
 use rtcp::{
@@ -332,13 +332,15 @@ pub(crate) async fn handle_screen_webrtc_publish_offer(
                 let Ok(candidate_init) = candidate.to_json() else {
                     return;
                 };
-                let response = json!({
-                    "type": "screen_webrtc_publish_candidate",
-                    "room_id": room_id,
-                    "candidate": ice_candidate_to_json(&candidate_init)
-                });
-                if let Some(response) = gate.pass(response) {
-                    send_to_user(&state, &user_id, &response).await;
+                for candidate_init in advertised_candidates(candidate_init) {
+                    let response = json!({
+                        "type": "screen_webrtc_publish_candidate",
+                        "room_id": room_id,
+                        "candidate": ice_candidate_to_json(&candidate_init)
+                    });
+                    if let Some(response) = gate.pass(response) {
+                        send_to_user(&state, &user_id, &response).await;
+                    }
                 }
             })
         }));
@@ -714,14 +716,16 @@ pub(crate) async fn handle_screen_webrtc_subscribe_offer(
                 let Ok(candidate_init) = candidate.to_json() else {
                     return;
                 };
-                let response = json!({
-                    "type": "screen_webrtc_subscribe_candidate",
-                    "room_id": room_id,
-                    "sharer_user_id": sharer_user_id,
-                    "candidate": ice_candidate_to_json(&candidate_init)
-                });
-                if let Some(response) = gate.pass(response) {
-                    send_to_user(&state, &viewer_user_id, &response).await;
+                for candidate_init in advertised_candidates(candidate_init) {
+                    let response = json!({
+                        "type": "screen_webrtc_subscribe_candidate",
+                        "room_id": room_id,
+                        "sharer_user_id": sharer_user_id,
+                        "candidate": ice_candidate_to_json(&candidate_init)
+                    });
+                    if let Some(response) = gate.pass(response) {
+                        send_to_user(&state, &viewer_user_id, &response).await;
+                    }
                 }
             })
         }));

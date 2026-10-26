@@ -50,7 +50,7 @@ Chatter is deployed via Docker Compose. The stack includes three services: the C
 
 - Docker and Docker Compose
 - A domain with HTTPS (required for WebRTC features)
-- Ports open on your firewall: `3478/tcp`, `3478/udp`, `49152-49252/udp` (TURN relay range)
+- Ports open on your firewall: `8000/udp` (voice and video media), `3478/tcp`, `3478/udp`, `49152-49252/udp` (TURN relay range)
 
 ### 1. Clone the repository
 
@@ -89,6 +89,7 @@ Open `docker-compose.yml` and adjust the settings for your environment. At minim
 
 - Set the exposed port for the `chatter` service (default is `127.0.0.1:8067`)
 - If using a reverse proxy (e.g. Traefik, Nginx), uncomment and fill in the labels or upstream config
+- Uncomment and set `WEBRTC_IP` to your server's public IPv4 address. It is what lets clients send media straight to the server; without it every call is relayed through TURN and takes several seconds longer to connect
 - Uncomment and set `TURN_PUBLIC_URL` if your domain name differs from the internal TURN address
 
 ### 5. Start the stack
@@ -161,6 +162,7 @@ In both scenarios, ensure the following are open and forwarded to your server:
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
+| 8000 | UDP | Voice and video media, direct to the server |
 | 3478 | TCP + UDP | TURN signaling |
 | 49152–49252 | UDP | TURN relay media |
 

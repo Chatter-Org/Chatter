@@ -11,7 +11,10 @@ services:
     build: .
     ports:
       - 127.0.0.1:8067:8000/tcp
-      - 127.0.0.1:8067:8000/udp
+      # Voice and video media, straight to the SFU. Public on purpose: it only
+      # answers ICE checks carrying a call's credentials, and media is DTLS-SRTP.
+      # The host port must equal WEBRTC_UDP_PORT — it is the port advertised.
+      - 8000:8000/udp
     environment:
       MONGODB_URI: mongodb://mongodb:27017
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
@@ -47,7 +50,9 @@ services:
       #Set spotify redirect URI to https://yourdomain.com/api/auth/spotify/callback
 
       ################  WEBRTC  ################
-      #WEBRTC_IP: your-public-ip (required if behind NAT; LAN clients connect via local IP automatically)
+      # The public IPv4 clients reach this host's 8000/udp on. Without it every
+      # call goes through TURN, which is the slowest path to connect.
+      #WEBRTC_IP: your-public-ip
       #WEBRTC_UDP_PORT: 8000 (all media is multiplexed onto this one UDP port; must match the udp mapping above)
       TURN_URL: "turn:host.docker.internal:3478"
       #TURN_PUBLIC_URL: "turn:yourdomain.com:3478" (client-facing TURN address, falls back to TURN_URL)
