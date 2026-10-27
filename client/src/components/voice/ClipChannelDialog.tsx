@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Hash, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -17,6 +18,9 @@ import {
   apiUploadFile,
   type PostableChannel,
 } from "@/lib/api";
+
+/** Long enough for a sentence, short enough to stay a caption. */
+const MAX_CLIP_TITLE_LENGTH = 200;
 
 export interface TakenClip {
   file: File;
@@ -78,6 +82,7 @@ function ClipChannelForm({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
+  const [title, setTitle] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -110,7 +115,11 @@ function ClipChannelForm({
     setPosting(true);
     try {
       const { url } = await apiUploadFile(clip.file);
-      await apiSendMessage(roomId, url, undefined, false, isDm ? undefined : selected ?? undefined);
+      // The title goes on the line above the file, the way the composer sends
+      // text with an attachment, so every client already renders it.
+      const caption = title.trim();
+      const body = caption ? `${caption}\n${url}` : url;
+      await apiSendMessage(roomId, body, undefined, false, isDm ? undefined : selected ?? undefined);
       const where = isDm ? "" : ` to #${channels?.find((c) => c.channel_id === selected)?.name ?? "channel"}`;
       // Say the real length: before the buffer has filled it is shorter than
       // the setting, and silently posting a stub would look like a bug.
@@ -187,7 +196,7 @@ function ClipChannelForm({
       <DialogHeader>
         <DialogTitle>Post clip</DialogTitle>
         <DialogDescription>
-          {Math.round(clip.seconds)}s captured. Choose where to post it.
+          {Math.round(clip.seconds)}s captured. Give it a title and choose where to post it.
         </DialogDescription>
       </DialogHeader>
       <video
@@ -196,6 +205,21 @@ function ClipChannelForm({
         muted
         playsInline
         className="w-full max-h-48 rounded-md bg-black"
+      />
+      <Input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void post();
+          }
+        }}
+        placeholder="Title (optional)"
+        aria-label="Clip title"
+        maxLength={MAX_CLIP_TITLE_LENGTH}
+        disabled={posting}
+        autoFocus
       />
       {body}
       <DialogFooter>
