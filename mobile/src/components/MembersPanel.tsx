@@ -3,6 +3,7 @@ import { Pressable, SectionList, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Crown, Shield, Smartphone } from "lucide-react-native";
 import { senderNameColor } from "@chatter/core/messageFormat";
+import { groupMembers } from "@chatter/core/memberGroups";
 import { useChatter } from "@/state/ChatterProvider";
 import { Avatar } from "./Avatar";
 import { useShowProfile } from "./ProfileSheet";
@@ -13,8 +14,8 @@ import { NameText } from "./NameText";
 
 /**
  * The room's members — the web's MembersPanel: a "MEMBERS n" heading, then
- * owners, moderators, members and the offline, each a section; a card on the
- * chat's background, as the drawer on the left.
+ * owners, moderators, each role shown separately, members and the offline,
+ * each a section; a card on the chat's background, as the drawer on the left.
  */
 export function MembersPanel() {
   const state = useChatter();
@@ -29,15 +30,13 @@ export function MembersPanel() {
     };
     const byName = (a: { displayName: string }, b: { displayName: string }) => a.displayName.localeCompare(b.displayName);
     const members = [...state.roomMembers].sort(byName);
-    const groups = [
-      { title: "Owner", data: members.filter((m) => m.role === "owner" && online(m.userId)) },
-      { title: "Moderators", data: members.filter((m) => m.role === "moderator" && online(m.userId)) },
-      { title: "Members", data: members.filter((m) => m.role !== "owner" && m.role !== "moderator" && online(m.userId)) },
-      // Anyone offline goes here, whatever their role.
-      { title: "Offline", data: members.filter((m) => !online(m.userId)) },
-    ];
-    return groups.filter((g) => g.data.length > 0).map((g) => ({ ...g, offline: g.title === "Offline", title: `${g.title} — ${g.data.length}` }));
-  }, [state.roomMembers, state.userPresence]);
+    return groupMembers(members, online, state.customRoles, state.memberCustomRoles).map((g) => ({
+      key: g.key,
+      data: g.members,
+      offline: g.key === "offline",
+      title: `${g.label} — ${g.members.length}`,
+    }));
+  }, [state.roomMembers, state.userPresence, state.customRoles, state.memberCustomRoles]);
 
   return (
     <View className="flex-1 bg-background px-2" style={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 8 }}>

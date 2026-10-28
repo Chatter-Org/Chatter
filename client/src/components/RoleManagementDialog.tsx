@@ -33,14 +33,14 @@ interface RoleManagementDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-/** One permission row: a switch, its name, and what it actually does. */
+/** One setting row: a switch, its name, and what it actually does. */
 function PermissionRow({
   meta,
   value,
   onChange,
   grantable,
 }: {
-  meta: PermissionMeta;
+  meta: Pick<PermissionMeta, "label" | "description">;
   value: boolean;
   onChange: (next: boolean) => void;
   grantable: boolean;
@@ -88,6 +88,7 @@ export function RoleManagementDialog({ open, onOpenChange }: RoleManagementDialo
   const [draftName, setDraftName] = useState("");
   const [draftColor, setDraftColor] = useState(DEFAULT_ROLE_COLOR);
   const [draftPerms, setDraftPerms] = useState<RolePermissions>({ ...DEFAULT_PERMISSIONS });
+  const [draftHoist, setDraftHoist] = useState(false);
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -113,6 +114,7 @@ export function RoleManagementDialog({ open, onOpenChange }: RoleManagementDialo
     setDraftName(role.name);
     setDraftColor(role.color || DEFAULT_ROLE_COLOR);
     setDraftPerms({ ...DEFAULT_PERMISSIONS, ...role.permissions });
+    setDraftHoist(!!role.hoist);
   };
 
   // Select something sensible whenever the dialog opens or the list changes.
@@ -134,6 +136,7 @@ export function RoleManagementDialog({ open, onOpenChange }: RoleManagementDialo
     setDraftColor(DEFAULT_ROLE_COLOR);
     // New roles start from nothing granted, so a role only ever adds.
     setDraftPerms({ ...DEFAULT_PERMISSIONS });
+    setDraftHoist(false);
   };
 
   const handleSave = async () => {
@@ -142,13 +145,14 @@ export function RoleManagementDialog({ open, onOpenChange }: RoleManagementDialo
     setSaving(true);
     try {
       if (creating) {
-        await createRole(roomId, name, draftColor, draftPerms);
+        await createRole(roomId, name, draftColor, draftPerms, draftHoist);
         setCreating(false);
       } else if (selectedId) {
         await updateRole(roomId, selectedId, {
           name,
           color: draftColor,
           permissions: draftPerms,
+          hoist: draftHoist,
         });
       }
     } catch (err) {
@@ -327,6 +331,19 @@ export function RoleManagementDialog({ open, onOpenChange }: RoleManagementDialo
 
               <ScrollArea className="flex-1 min-h-0 -mr-2 pr-2">
                 <div className="space-y-3">
+                  <div>
+                    <p className="ui-heading mb-0.5 px-2">Display</p>
+                    <PermissionRow
+                      meta={{
+                        label: "Show members separately",
+                        description:
+                          "List online members with this role under its own heading in the members list. Someone with several such roles appears under the highest.",
+                      }}
+                      value={draftHoist}
+                      grantable
+                      onChange={setDraftHoist}
+                    />
+                  </div>
                   {PERMISSION_SECTIONS.map((section) => (
                     <div key={section.title}>
                       <p className="ui-heading mb-0.5 px-2">

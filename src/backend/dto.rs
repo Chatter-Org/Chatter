@@ -401,6 +401,7 @@ pub(crate) struct CreateCustomRoleRequest {
     pub(crate) name: String,
     pub(crate) color: Option<String>,
     pub(crate) permissions: Option<super::state::RolePermissions>,
+    pub(crate) hoist: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -409,6 +410,7 @@ pub(crate) struct UpdateCustomRoleRequest {
     pub(crate) color: Option<String>,
     pub(crate) position: Option<i32>,
     pub(crate) permissions: Option<super::state::RolePermissions>,
+    pub(crate) hoist: Option<bool>,
 }
 
 #[derive(Deserialize)]

@@ -1292,6 +1292,84 @@ async fn channel_overwrite_contract_denies_allows_and_precedence() {
 }
 
 #[tokio::test]
+async fn role_contract_hoist_round_trips() {
+    let server = spawn_server().await;
+    let client = Client::new();
+
+    let (_owner_id, owner_token) =
+        register_user(&client, &server.base_url, "owner", PASSWORD).await;
+    let room_id = create_room(
+        &client,
+        &server.base_url,
+        &owner_token,
+        "Hoist",
+        None,
+        false,
+    )
+    .await;
+
+    let roles_url = format!("{}/api/rooms/{}/roles", server.base_url, room_id);
+    let hoist_of = |roles: &Value, id: &str| {
+        roles["roles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["role_id"] == id)
+            .unwrap()["hoist"]
+            .clone()
+    };
+    let list = || async {
+        client
+            .get(&roles_url)
+            .header("authorization", bearer(&owner_token))
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()
+    };
+
+    // Roles are not shown separately unless asked.
+    let plain: Value = client
+        .post(&roles_url)
+        .header("authorization", bearer(&owner_token))
+        .json(&json!({ "name": "Plain" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let plain_id = plain["role_id"].as_str().unwrap().to_string();
+    let staff: Value = client
+        .post(&roles_url)
+        .header("authorization", bearer(&owner_token))
+        .json(&json!({ "name": "Staff", "hoist": true }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let staff_id = staff["role_id"].as_str().unwrap().to_string();
+
+    let roles = list().await;
+    assert_eq!(hoist_of(&roles, &plain_id), false);
+    assert_eq!(hoist_of(&roles, &staff_id), true);
+
+    let update = client
+        .put(format!("{roles_url}/{staff_id}"))
+        .header("authorization", bearer(&owner_token))
+        .json(&json!({ "hoist": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(update.status(), StatusCode::OK);
+    assert_eq!(hoist_of(&list().await, &staff_id), false);
+}
+
+#[tokio::test]
 async fn role_hierarchy_contract_blocks_self_escalation() {
     let server = spawn_server().await;
     let client = Client::new();

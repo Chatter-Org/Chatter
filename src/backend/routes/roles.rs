@@ -35,6 +35,7 @@ fn role_to_json(r: &CustomRoleRecord) -> Value {
         // Serialized from the struct so a new permission can never be silently
         // dropped from the API by a hand-maintained field list.
         "permissions": serde_json::to_value(r.permissions).unwrap_or_default(),
+        "hoist": r.hoist,
         "created_by": r.created_by,
         "created_at": r.created_at,
     })
@@ -151,6 +152,7 @@ pub(crate) async fn create_role(
         color: req.color.unwrap_or_default(),
         position: max_pos,
         permissions: req.permissions.unwrap_or_default(),
+        hoist: req.hoist.unwrap_or(false),
         created_by: user_id.clone(),
         created_at: now_millis(),
     };
@@ -255,6 +257,10 @@ pub(crate) async fn update_role(
     if let Some(position) = req.position {
         set_doc.insert("position", position);
         content.insert("position".to_string(), json!(position));
+    }
+    if let Some(hoist) = req.hoist {
+        set_doc.insert("hoist", hoist);
+        content.insert("hoist".to_string(), json!(hoist));
     }
     if let Some(ref perms) = req.permissions {
         let perms_doc = mongodb::bson::to_bson(perms)

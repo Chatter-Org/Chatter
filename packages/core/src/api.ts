@@ -1447,6 +1447,9 @@ export interface CustomRole {
   color: string;
   position: number;
   permissions: RolePermissions;
+  /** Members holding it get their own heading in the members list. Missing
+   *  from servers older than the setting. */
+  hoist?: boolean;
   created_by?: string;
   created_at?: number;
 }
@@ -1457,7 +1460,7 @@ export async function apiGetRoles(roomId: string) {
   return res.json() as Promise<{ roles: CustomRole[] }>;
 }
 
-export async function apiCreateRole(roomId: string, data: { name: string; color?: string; permissions?: Partial<RolePermissions> }) {
+export async function apiCreateRole(roomId: string, data: { name: string; color?: string; permissions?: Partial<RolePermissions>; hoist?: boolean }) {
   const res = await authenticatedFetch(`/api/rooms/${encodeURIComponent(roomId)}/roles`, {
     method: "POST",
     body: JSON.stringify(data),
@@ -1469,7 +1472,7 @@ export async function apiCreateRole(roomId: string, data: { name: string; color?
   return res.json() as Promise<{ role_id: string }>;
 }
 
-export async function apiUpdateRole(roomId: string, roleId: string, data: { name?: string; color?: string; position?: number; permissions?: Partial<RolePermissions> }) {
+export async function apiUpdateRole(roomId: string, roleId: string, data: { name?: string; color?: string; position?: number; permissions?: Partial<RolePermissions>; hoist?: boolean }) {
   const res = await authenticatedFetch(`/api/rooms/${encodeURIComponent(roomId)}/roles/${encodeURIComponent(roleId)}`, {
     method: "PUT",
     body: JSON.stringify(data),

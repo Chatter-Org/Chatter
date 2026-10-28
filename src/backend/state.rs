@@ -1211,6 +1211,10 @@ pub(crate) struct CustomRoleRecord {
     pub(crate) position: i32,
     #[serde(default)]
     pub(crate) permissions: RolePermissions,
+    /// List members holding this role under its own heading in the members
+    /// list, as owners and moderators are.
+    #[serde(default)]
+    pub(crate) hoist: bool,
     pub(crate) created_by: String,
     pub(crate) created_at: i64,
 }

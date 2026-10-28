@@ -9,6 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { profileWashStyle, readProfileTheme } from "@/lib/profileTheme";
 import { memberCanViewChannel } from "@/lib/permissions";
+import { groupMembers } from "@chatter/core/memberGroups";
 import { ensureFontFace } from "@/lib/fontFace";
 import { UserProfileDialog } from "./UserProfileDialog";
 import { ScreenPeek } from "./voice/ScreenPeek";
@@ -42,28 +43,17 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
     return new Set<string>([state.threadRootMessage.sender, ...state.threadPosters]);
   }, [state.activeThreadEventId, state.threadRootMessage, state.threadPosters]);
 
-  const grouped = useMemo(() => {
+  const groups = useMemo(() => {
     const currentChannel = state.channels.find((c) => c.channel_id === state.currentChannelId);
     const roles = { customRoles, memberCustomRoles };
-
-    const owners: typeof state.roomMembers = [];
-    const moderators: typeof state.roomMembers = [];
-    const members: typeof state.roomMembers = [];
-    const offline: typeof state.roomMembers = [];
-
-    for (const m of state.roomMembers) {
-      if (threadPosters && !threadPosters.has(m.userId)) continue;
-      // Hide members who cannot see this channel under its overwrites.
-      if (!memberCanViewChannel(roles, currentChannel, m)) continue;
-
-      const status = state.userPresence[m.userId]?.status || "offline";
-      if (status === "offline") {
-        offline.push(m);
-      } else if (m.role === "owner") owners.push(m);
-      else if (m.role === "moderator") moderators.push(m);
-      else members.push(m);
-    }
-    return { owners, moderators, members, offline };
+    const visible = state.roomMembers.filter(
+      (m) =>
+        (!threadPosters || threadPosters.has(m.userId)) &&
+        // Hide members who cannot see this channel under its overwrites.
+        memberCanViewChannel(roles, currentChannel, m),
+    );
+    const online = (id: string) => (state.userPresence[id]?.status || "offline") !== "offline";
+    return groupMembers(visible, online, customRoles, memberCustomRoles);
   }, [state.roomMembers, state.channels, state.currentChannelId, state.userPresence, customRoles, memberCustomRoles, threadPosters]);
 
   if (!state.currentRoomId) return null;
@@ -199,21 +189,14 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
     );
   };
 
-  const renderSection = (
-    label: string,
-    items: typeof state.roomMembers,
-    count?: number
-  ) => {
-    if (items.length === 0) return null;
-    return (
-      <div>
-        <p className="text-[0.625rem] ui-heading px-2 pt-3 pb-1">
-          {label} — {count ?? items.length}
-        </p>
-        {items.map(renderMember)}
-      </div>
-    );
-  };
+  const renderSection = (key: string, label: string, items: typeof state.roomMembers) => (
+    <div key={key}>
+      <p className="text-[0.625rem] ui-heading px-2 pt-3 pb-1">
+        {label} — {items.length}
+      </p>
+      {items.map(renderMember)}
+    </div>
+  );
 
   return (
     <div className="w-full md:w-56 md:border-l flex flex-col shrink-0 h-full rounded-lg">
@@ -222,7 +205,7 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
           {threadPosters ? "In this thread" : "Members"}
         </h3>
         <span className="inline-flex items-center rounded-full bg-secondary px-2 py-0.5 text-xs font-medium">
-          {grouped.owners.length + grouped.moderators.length + grouped.members.length + grouped.offline.length}
+          {groups.reduce((n, g) => n + g.members.length, 0)}
         </span>
         <button
           onClick={onToggle}
@@ -235,10 +218,7 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
 
       <ScrollArea className="flex-1 min-h-0 p-2">
         <div className="space-y-0.5">
-          {renderSection("Owner", grouped.owners)}
-          {renderSection("Moderators", grouped.moderators)}
-          {renderSection("Members", grouped.members)}
-          {renderSection("Offline", grouped.offline)}
+          {groups.map((g) => renderSection(g.key, g.label, g.members))}
         </div>
       </ScrollArea>
 

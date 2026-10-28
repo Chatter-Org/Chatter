@@ -767,11 +767,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, [dispatch]);
 
-  const createRole = useCallback(async (roomId: string, name: string, color?: string, permissions?: Partial<import("../api").RolePermissions>) => {
-    await apiCreateRole(roomId, { name, color, permissions });
+  const createRole = useCallback(async (roomId: string, name: string, color?: string, permissions?: Partial<import("../api").RolePermissions>, hoist?: boolean) => {
+    await apiCreateRole(roomId, { name, color, permissions, hoist });
   }, []);
 
-  const updateRole = useCallback(async (roomId: string, roleId: string, data: { name?: string; color?: string; position?: number; permissions?: Partial<import("../api").RolePermissions> }) => {
+  const updateRole = useCallback(async (roomId: string, roleId: string, data: { name?: string; color?: string; position?: number; permissions?: Partial<import("../api").RolePermissions>; hoist?: boolean }) => {
     await apiUpdateRole(roomId, roleId, data);
     dispatch({ type: "UPDATE_CUSTOM_ROLE", payload: { role_id: roleId, ...data } as any });
   }, [dispatch]);

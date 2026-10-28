@@ -640,8 +640,8 @@ export interface AppContextValue {
   deleteChannel: (roomId: string, channelId: string) => Promise<void>;
   // Custom Roles
   loadRoles: () => Promise<void>;
-  createRole: (roomId: string, name: string, color?: string, permissions?: Partial<import("../api").RolePermissions>) => Promise<void>;
-  updateRole: (roomId: string, roleId: string, data: { name?: string; color?: string; position?: number; permissions?: Partial<import("../api").RolePermissions> }) => Promise<void>;
+  createRole: (roomId: string, name: string, color?: string, permissions?: Partial<import("../api").RolePermissions>, hoist?: boolean) => Promise<void>;
+  updateRole: (roomId: string, roleId: string, data: { name?: string; color?: string; position?: number; permissions?: Partial<import("../api").RolePermissions>; hoist?: boolean }) => Promise<void>;
   deleteRole: (roomId: string, roleId: string) => Promise<void>;
   assignMemberRoles: (roomId: string, userId: string, roleIds: string[]) => Promise<void>;
   // Room Groups
