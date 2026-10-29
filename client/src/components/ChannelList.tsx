@@ -933,7 +933,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
       className={
         asDrawer
           ? "w-full h-full overflow-hidden bg-sidebar relative flex flex-col"
-          : "rounded-lg overflow-hidden border border-border bg-sidebar relative transition-[width] duration-200 mr-2 flex flex-col h-full shrink-0"
+          : "overflow-hidden border-r border-border bg-sidebar relative transition-[width] duration-200 flex flex-col h-full shrink-0"
       }
       style={asDrawer ? undefined : { width: panelCollapsed ? 40 : width }}
     >

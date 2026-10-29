@@ -199,7 +199,7 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
   );
 
   return (
-    <div className="w-full md:w-60 md:border-l flex flex-col shrink-0 h-full rounded-lg">
+    <div className="w-full md:w-60 md:border-l flex flex-col shrink-0 h-full">
       <div className="flex h-14 shrink-0 items-center gap-2 border-b px-3">
         <h3 className="ui-heading">
           {threadPosters ? "In this thread" : "Members"}
