@@ -173,7 +173,7 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
       <div className="relative flex min-h-screen items-center justify-center p-4">
         <HalftoneBackground />
         <Card
-          className="relative z-10 w-full max-w-md p-0 rounded-md border-[1px] shadow-none overflow-hidden"
+          className="relative z-10 w-full max-w-md p-0 rounded-xl border-[1px] shadow-none overflow-hidden"
           style={{
             borderColor: "rgba(255, 120, 100, 0.25)",
             background: "rgba(10, 10, 10, 0.92)",
@@ -182,7 +182,7 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
         >
           <CardContent className="px-6 py-8 text-center">
             <div
-              className="text-lg font-bold tracking-[0.08em] mb-3"
+              className="text-lg font-bold tracking-tight mb-3"
               style={{ color: "rgba(255, 120, 100, 0.8)" }}
             >
               Invalid Invite
@@ -195,7 +195,7 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
             </p>
             <Button
               variant="outline"
-              className="rounded-md border-[1px] text-xs uppercase tracking-[0.2em]"
+              className="rounded-md border-[1px] text-sm font-medium"
               style={{
                 borderColor: "rgba(180, 210, 255, 0.2)",
                 color: "rgba(220, 230, 255, 0.8)",
@@ -235,7 +235,7 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
       <div className="relative flex min-h-screen items-center justify-center p-4">
         <HalftoneBackground />
         <Card
-          className="relative z-10 w-full max-w-md p-0 rounded-md border-[1px] shadow-none overflow-hidden"
+          className="relative z-10 w-full max-w-md p-0 rounded-xl border-[1px] shadow-none overflow-hidden"
           style={{
             borderColor: hovered
               ? "rgba(180, 210, 255, 0.3)"
@@ -258,7 +258,7 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
               Sign in to accept invite
             </div>
             <CardTitle
-              className="text-2xl font-bold tracking-[0.08em]"
+              className="text-2xl font-bold tracking-tight"
               style={{ color: "rgba(220, 230, 255, 0.95)" }}
             >
               Join {inviteInfo.room_name}
@@ -339,8 +339,8 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
                 <div className="space-y-1.5">
                   <Label
                     htmlFor="nickname"
-                    className="text-3xs uppercase tracking-[0.2em]"
-                    style={{ color: "rgba(180, 210, 255, 0.4)" }}
+                    className="text-xs font-medium capitalize"
+                    style={{ color: "rgba(200, 220, 255, 0.6)" }}
                   >
                     username
                   </Label>
@@ -393,8 +393,8 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
                 <div className="space-y-1.5">
                   <Label
                     htmlFor="password"
-                    className="text-3xs uppercase tracking-[0.2em]"
-                    style={{ color: "rgba(180, 210, 255, 0.4)" }}
+                    className="text-xs font-medium capitalize"
+                    style={{ color: "rgba(200, 220, 255, 0.6)" }}
                   >
                     password
                   </Label>
@@ -420,7 +420,7 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
                   <div className="space-y-1.5">
                     <Label
                       htmlFor="totp"
-                      className="text-3xs uppercase tracking-[0.2em]"
+                      className="text-xs font-medium capitalize"
                       style={{ color: "rgba(180, 210, 255, 0.4)" }}
                     >
                       {useRecoveryCode ? "recovery code" : "authenticator code"}
@@ -474,7 +474,7 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
                           setTotpCode("");
                           setError(null);
                         }}
-                        className="text-3xs uppercase tracking-[0.15em] cursor-pointer bg-transparent border-0 p-0"
+                        className="text-xs font-medium capitalize cursor-pointer bg-transparent border-0 p-0"
                         style={{ color: "rgba(180, 210, 255, 0.5)", transition: "color 0.2s" }}
                         onMouseEnter={(e) => (e.currentTarget.style.color = "rgba(180, 210, 255, 0.85)")}
                         onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(180, 210, 255, 0.5)")}
@@ -486,7 +486,7 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
                 )}
                 {error && (
                   <div
-                    className="p-3 text-2xs uppercase tracking-[0.08em] border-[1px]"
+                    className="p-3 text-xs border-[1px]"
                     style={{
                       borderColor: "rgba(255, 120, 100, 0.25)",
                       background: "rgba(255, 120, 100, 0.05)",
@@ -499,13 +499,13 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full rounded-md h-10 text-xs uppercase tracking-[0.2em] font-normal border-[1px]"
+                  className="w-full rounded-md h-10 text-sm font-semibold capitalize border-[1px]"
                   variant="outline"
                   style={{
-                    borderColor: btnHovered ? "rgba(180, 210, 255, 0.4)" : "rgba(180, 210, 255, 0.2)",
-                    color: btnHovered ? "rgba(220, 230, 255, 1)" : "rgba(220, 230, 255, 0.8)",
-                    background: btnHovered ? "rgba(180, 210, 255, 0.1)" : "rgba(180, 210, 255, 0.04)",
-                    boxShadow: btnHovered ? "0 0 20px rgba(180, 210, 255, 0.06)" : "none",
+                    borderColor: "transparent",
+                    color: "rgb(10, 12, 18)",
+                    background: btnHovered ? "rgba(225, 235, 255, 1)" : "rgba(210, 222, 245, 0.92)",
+                    boxShadow: btnHovered ? "0 0 24px rgba(180, 210, 255, 0.18)" : "none",
                     transition: "border-color 0.25s, color 0.25s, background 0.25s, box-shadow 0.25s",
                   }}
                   onMouseEnter={() => setBtnHovered(true)}
@@ -520,7 +520,7 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
                       window.history.replaceState({}, "", "/?action=register");
                       window.location.reload();
                     }}
-                    className="text-3xs uppercase tracking-[0.15em] cursor-pointer bg-transparent border-0 p-0"
+                    className="text-xs font-medium capitalize cursor-pointer bg-transparent border-0 p-0"
                     style={{ color: "rgba(180, 210, 255, 0.5)", transition: "color 0.2s" }}
                     onMouseEnter={(e) => (e.currentTarget.style.color = "rgba(180, 210, 255, 0.85)")}
                     onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(180, 210, 255, 0.5)")}
@@ -562,7 +562,7 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
     <div className="relative flex min-h-screen items-center justify-center p-4">
       <HalftoneBackground />
       <Card
-        className="relative z-10 w-full max-w-md p-0 rounded-md border-[1px] shadow-none overflow-hidden"
+        className="relative z-10 w-full max-w-md p-0 rounded-xl border-[1px] shadow-none overflow-hidden"
         style={{
           borderColor: hovered
             ? "rgba(180, 210, 255, 0.3)"
@@ -627,7 +627,7 @@ export function InvitePage({ inviteCode }: InvitePageProps) {
           <Button
             onClick={handleAccept}
             disabled={accepting}
-            className="w-full rounded-md h-10 text-xs uppercase tracking-[0.2em] font-normal border-[1px]"
+            className="w-full rounded-md h-10 text-sm font-medium capitalize border-[1px]"
             variant="outline"
             style={{
               borderColor: btnHovered ? "rgba(120, 230, 160, 0.5)" : "rgba(120, 230, 160, 0.25)",

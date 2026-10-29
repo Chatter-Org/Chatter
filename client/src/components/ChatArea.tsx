@@ -1517,12 +1517,11 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
       onDrop={handleDrop}
     >
       {/* Header — compact on mobile since MobileHeader shows room name */}
-      <div className={`flex items-center justify-between border-b ${isMobile ? "px-1 py-0.5" : "px-4 py-3"}`}>
-        <div className={isMobile ? "w-0" : "w-8"} />
-        <div className={`flex-1 min-w-0 text-center ${isMobile ? "hidden" : ""}`}>
+      <div className={`flex items-center justify-between gap-3 border-b ${isMobile ? "px-1 py-0.5" : "min-h-14 px-4 py-2"}`}>
+        <div className={`flex-1 min-w-0 ${isMobile ? "hidden" : ""}`}>
           {roomInfo?.is_direct && editingDMName ? (
             <input
-              className="text-sm font-semibold text-center bg-transparent border-b border-primary outline-none w-full max-w-xs mx-auto block"
+              className="text-[0.9375rem] font-semibold bg-transparent border-b border-primary outline-none w-full max-w-xs block"
               value={dmNameDraft}
               onChange={(e) => setDmNameDraft(e.target.value)}
               onKeyDown={(e) => {
@@ -1541,7 +1540,7 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
             />
           ) : (
             <h2
-              className={`text-sm font-semibold ${roomInfo?.is_direct ? "group inline-flex items-center gap-1 cursor-pointer" : ""}`}
+              className={`truncate text-[0.9375rem] font-semibold leading-snug ${roomInfo?.is_direct ? "group inline-flex max-w-full items-center gap-1 cursor-pointer" : ""}`}
               onClick={() => {
                 if (roomInfo?.is_direct) {
                   setDmNameDraft(roomInfo.name || "");
@@ -1564,7 +1563,7 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
             return editingTopic ? (
               <input
                 ref={topicInputRef}
-                className="w-full max-w-xs mx-auto block text-xs text-center bg-transparent border-b border-primary outline-none text-muted-foreground"
+                className="w-full max-w-md block text-xs bg-transparent border-b border-primary outline-none text-muted-foreground"
                 value={topicDraft}
                 onChange={(e) => setTopicDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -1591,16 +1590,16 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
               />
             ) : (
               <div
-                className={`overflow-hidden max-w-xs mx-auto ${canEditTopic ? "cursor-pointer" : ""}`}
+                className={`overflow-hidden max-w-xl ${canEditTopic ? "cursor-pointer" : ""}`}
                 onClick={() => {
                   if (!canEditTopic) return;
                   setTopicDraft(channelTopic);
                   setEditingTopic(true);
                 }}
-                title={canEditTopic ? "Click to edit channel topic" : undefined}
+                title={canEditTopic ? "Click to edit channel topic" : channelTopic || undefined}
               >
                 {channelTopic ? (
-                  <p className="text-xs text-muted-foreground whitespace-nowrap animate-marquee">
+                  <p className="truncate text-xs text-muted-foreground">
                     {channelTopic}
                   </p>
                 ) : canEditTopic ? (
@@ -1850,9 +1849,9 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
                     </div>
                   )}
                   {showDateDivider && (
-                    <div className="flex items-center justify-center gap-2 py-1.5 px-2">
+                    <div className="flex items-center justify-center gap-3 pt-4 pb-1 px-2" role="separator" aria-label={dateLabel}>
                       <div className="h-px flex-1 bg-border" />
-                      <span className="text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap text-muted-foreground/70 bg-muted/40">
+                      <span className="text-xs font-semibold whitespace-nowrap text-muted-foreground">
                         {dateLabel}
                       </span>
                       <div className="h-px flex-1 bg-border" />
@@ -1985,11 +1984,18 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
             </div>
           );
         }
+        const composerPlaceholder = currentChannel
+          ? `Message #${currentChannel.name}`
+          : currentRoomInfo?.name
+            ? `Message ${currentRoomInfo.name}`
+            : "Write a message…";
         return (
         <div
           className={cn(
-            "border-t transition-colors",
-            isMobile ? "p-2" : "p-3",
+            "transition-colors",
+            // On desktop the composer floats on the chat surface as one box;
+            // a phone keeps the rule above it and every pixel of width.
+            isMobile ? "border-t p-2" : "px-4 pb-4 pt-0.5",
             // A dashed outline rather than a ring: rings are solid only, and
             // dashes are what a drop target has always looked like.
             dragging && "outline-2 outline-dashed outline-primary -outline-offset-2 bg-primary/5",
@@ -2075,7 +2081,12 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
               </span>
             </div>
           )}
-          <div className={cn("relative flex items-end", isMobile ? "gap-1" : "gap-2")}>
+          {/* One box holding the input and everything beside it, so the
+              buttons read as part of the composer rather than loose icons. */}
+          <div className={cn(
+            "relative flex items-end rounded-xl border border-input bg-secondary/40 transition-colors focus-within:border-ring/70",
+            isMobile ? "gap-0.5 p-0.5" : "gap-1 p-1",
+          )}>
             {/* Mention autocomplete */}
             {mentionOpen && (
               <MentionMenu matches={mentionMatches} selectedIdx={selectedMentionIdx} onSelect={completeMention} />
@@ -2169,8 +2180,9 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
                       ? `Attach images or files (${attachmentsRemaining} of ${MAX_ATTACHMENTS} left)`
                       : `This message already has ${MAX_ATTACHMENTS} attachments`
                   }
+                  aria-label="Attach files"
                 >
-                  +
+                  <Plus className="h-5 w-5" />
                 </label>
               </Button>
             )}
@@ -2205,8 +2217,8 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
             <div className="relative flex-1 min-w-0">
               {/* Placeholder — shown when the div is empty */}
               {!input && (
-                <span className="absolute top-2 left-3 right-16 truncate text-sm text-muted-foreground pointer-events-none select-none z-10">
-                  Type your message...
+                <span className={cn("absolute left-3 right-16 truncate msg-body text-muted-foreground pointer-events-none select-none z-10", isMobile ? "top-2.5" : "top-2")}>
+                  {composerPlaceholder}
                 </span>
               )}
               <div
@@ -2226,14 +2238,18 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
                 suppressContentEditableWarning
-                className={`w-full rounded-lg border border-input bg-transparent px-3 py-2 pr-16 text-sm md:text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring min-h-[36px] md:min-h-[36px] max-h-40 overflow-y-auto break-words ${isMobile ? "min-h-[44px] text-base" : ""} ${displayLength > MAX_MESSAGE_LENGTH ? "ring-2 ring-destructive focus-visible:ring-destructive" : ""}`}
+                className={`w-full rounded-lg bg-transparent px-3 py-2 pr-16 msg-body focus-visible:outline-none min-h-[36px] md:min-h-[36px] max-h-40 overflow-y-auto break-words ${isMobile ? "min-h-[44px] text-base" : ""} ${displayLength > MAX_MESSAGE_LENGTH ? "ring-2 ring-destructive" : ""}`}
                 style={{ wordBreak: "break-word", whiteSpace: "pre-wrap", lineHeight: isMobile ? "24px" : "20px" }}
               />
 
               {/* GIF picker */}
               <Popover open={gifOpen} onOpenChange={setGifOpen}>
                 <PopoverTrigger asChild>
-                  <button className="absolute right-9 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground hover:text-foreground hover:scale-110 transition-all cursor-pointer">
+                  <button
+                    className="absolute right-9 top-1/2 -translate-y-1/2 rounded border border-current px-1 text-3xs font-bold leading-4 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                    title="GIFs"
+                    aria-label="GIFs"
+                  >
                     GIF
                   </button>
                 </PopoverTrigger>
@@ -2301,12 +2317,13 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
 
             <Button
               onClick={handleSend}
-              size={isMobile ? "icon" : "default"}
+              size="icon"
               disabled={displayLength > MAX_MESSAGE_LENGTH}
-              className={cn("shrink-0", isMobile && "size-11")}
+              className={cn("shrink-0 rounded-lg", isMobile && "size-11")}
               aria-label="Send"
+              title="Send (Enter)"
             >
-              {isMobile ? <SendHorizontal className="h-5 w-5" /> : "Send"}
+              <SendHorizontal className={isMobile ? "h-5 w-5" : "h-4 w-4"} />
             </Button>
           </div>
         </div>

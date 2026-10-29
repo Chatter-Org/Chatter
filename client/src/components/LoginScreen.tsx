@@ -413,8 +413,8 @@ export function LoginScreen() {
     caretColor: "rgba(180, 210, 255, 0.6)",
   };
 
-  const labelClass = "text-3xs uppercase tracking-[0.2em]";
-  const labelStyle = { color: "rgba(180, 210, 255, 0.4)" };
+  const labelClass = "text-xs font-medium capitalize";
+  const labelStyle = { color: "rgba(200, 220, 255, 0.6)" };
 
   const renderUsernameInput = (
     value: string,
@@ -502,7 +502,7 @@ export function LoginScreen() {
   const renderError = () =>
     error ? (
       <div
-        className="p-3 text-2xs uppercase tracking-[0.08em] border-[1px]"
+        className="p-3 text-xs border-[1px]"
         style={{
           borderColor: "rgba(255, 120, 100, 0.25)",
           background: "rgba(255, 120, 100, 0.05)",
@@ -517,13 +517,13 @@ export function LoginScreen() {
     <Button
       type="submit"
       disabled={loading}
-      className="w-full rounded-md h-10 text-xs uppercase tracking-[0.2em] font-normal border-[1px]"
+      className="w-full rounded-md h-10 text-sm font-semibold capitalize border-[1px]"
       variant="outline"
       style={{
-        borderColor: btnHovered ? "rgba(180, 210, 255, 0.4)" : "rgba(180, 210, 255, 0.2)",
-        color: btnHovered ? "rgba(220, 230, 255, 1)" : "rgba(220, 230, 255, 0.8)",
-        background: btnHovered ? "rgba(180, 210, 255, 0.1)" : "rgba(180, 210, 255, 0.04)",
-        boxShadow: btnHovered ? "0 0 20px rgba(180, 210, 255, 0.06)" : "none",
+        borderColor: "transparent",
+        color: "rgb(10, 12, 18)",
+        background: btnHovered ? "rgba(225, 235, 255, 1)" : "rgba(210, 222, 245, 0.92)",
+        boxShadow: btnHovered ? "0 0 24px rgba(180, 210, 255, 0.18)" : "none",
         transition: "border-color 0.25s, color 0.25s, background 0.25s, box-shadow 0.25s",
       }}
       onMouseEnter={() => setBtnHovered(true)}
@@ -537,10 +537,10 @@ export function LoginScreen() {
     <button
       type="button"
       onClick={onClick}
-      className="text-3xs uppercase tracking-[0.15em] cursor-pointer bg-transparent border-0 p-0"
-      style={{ color: "rgba(180, 210, 255, 0.5)", transition: "color 0.2s" }}
-      onMouseEnter={(e) => (e.currentTarget.style.color = "rgba(180, 210, 255, 0.85)")}
-      onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(180, 210, 255, 0.5)")}
+      className="text-xs font-medium capitalize cursor-pointer bg-transparent border-0 p-0"
+      style={{ color: "rgba(180, 210, 255, 0.6)", transition: "color 0.2s" }}
+      onMouseEnter={(e) => (e.currentTarget.style.color = "rgba(200, 220, 255, 0.95)")}
+      onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(180, 210, 255, 0.6)")}
     >
       {text}
     </button>
@@ -649,7 +649,7 @@ export function LoginScreen() {
                       setTotpCode("");
                       setError(null);
                     }}
-                    className="text-3xs uppercase tracking-[0.15em] cursor-pointer bg-transparent border-0 p-0"
+                    className="text-xs font-medium capitalize cursor-pointer bg-transparent border-0 p-0"
                     style={{ color: "rgba(180, 210, 255, 0.5)", transition: "color 0.2s" }}
                     onMouseEnter={(e) => (e.currentTarget.style.color = "rgba(180, 210, 255, 0.85)")}
                     onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(180, 210, 255, 0.5)")}
@@ -952,7 +952,7 @@ export function LoginScreen() {
               onClick={() => {
                 navigator.clipboard.writeText(recoveryCodes.join("\n"));
               }}
-              className="w-full rounded-md h-8 text-3xs uppercase tracking-[0.2em] font-normal border-[1px]"
+              className="w-full rounded-md h-8 text-xs font-medium capitalize border-[1px]"
               variant="outline"
               style={{
                 borderColor: "rgba(180, 210, 255, 0.15)",
@@ -975,7 +975,7 @@ export function LoginScreen() {
                   dispatch({ type: "SET_TOTP_VERIFIED", payload: true });
                 }
               }}
-              className="w-full rounded-md h-10 text-xs uppercase tracking-[0.2em] font-normal border-[1px]"
+              className="w-full rounded-md h-10 text-sm font-medium capitalize border-[1px]"
               variant="outline"
               style={{
                 borderColor: "rgba(120, 230, 160, 0.25)",
@@ -1054,7 +1054,7 @@ export function LoginScreen() {
       </TooltipProvider>
 
       <Card
-        className="relative z-10 w-full max-w-md p-0 rounded-md border-[1px] shadow-none overflow-hidden"
+        className="relative z-10 w-full max-w-md p-0 rounded-xl border-[1px] shadow-none overflow-hidden"
         style={{
           borderColor: loading
             ? `rgba(180, 210, 255, ${0.15 + (visibleSteps / CONNECTION_STEPS.length) * 0.45})`
@@ -1093,14 +1093,14 @@ export function LoginScreen() {
             v0.1.0 - Internal Build
           </div>
           <CardTitle
-            className="text-5xl font-bold tracking-[0.1em] uppercase"
+            className="text-5xl font-bold tracking-tight"
             style={{ color: "rgba(220, 230, 255, 0.95)" }}
           >
             Chatter
           </CardTitle>
           <CardDescription
-            className="text-xs mt-3 tracking-[0.08em]"
-            style={{ color: "rgba(180, 210, 255, 0.4)" }}
+            className="text-sm mt-2"
+            style={{ color: "rgba(180, 210, 255, 0.5)" }}
           >
             {subtitle()}
           </CardDescription>

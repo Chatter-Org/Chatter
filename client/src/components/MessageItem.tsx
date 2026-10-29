@@ -1503,7 +1503,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
               {isExternal && (
                 <span className="text-3xs font-semibold px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-400 leading-none">{external?.badge}</span>
               )}
-              <span className="text-xs text-muted-foreground">{time}</span>
+              <span className="ui-meta">{time}</span>
             </div>
           )}
 
@@ -1587,7 +1587,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
           ) : (
             <div
               className={cn(
-                cn("text-sm break-words [overflow-wrap:anywhere] [word-break:break-word] whitespace-pre-wrap", !grouped && "mt-0.5"),
+                cn("msg-body break-words [overflow-wrap:anywhere] [word-break:break-word] whitespace-pre-wrap", !grouped && "mt-0.5"),
                 isDeleted && "italic text-muted-foreground opacity-60"
               )}
               onMouseOver={(e) => {
@@ -1690,10 +1690,10 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
         <button
           key={emoji}
           className={cn(
-            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-sm transition-colors cursor-pointer hover:bg-accent",
+            "inline-flex h-7 items-center gap-1.5 rounded-lg border px-2 text-sm transition-colors cursor-pointer",
             userIds.includes(state.userId || "")
-              ? "border-primary/50 bg-primary/10"
-              : "border-border"
+              ? "border-ring/60 bg-ring/15 hover:bg-ring/25"
+              : "border-transparent bg-secondary/70 hover:border-border hover:bg-secondary"
           )}
           onClick={() =>
             addReaction(message.event_id, emoji)
@@ -1706,7 +1706,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
               emoji
             )}
           </span>
-          <span className="text-muted-foreground font-medium">
+          <span className="text-xs font-semibold tabular-nums text-muted-foreground">
             {userIds.length}
           </span>
         </button>
@@ -1723,11 +1723,12 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
   )
               )}
               <button
-                className="inline-flex items-center justify-center rounded-full border border-border px-1.5 py-0.5 text-xs text-muted-foreground transition-colors cursor-pointer hover:bg-accent"
+                className="inline-flex h-7 items-center justify-center rounded-lg px-1.5 text-muted-foreground transition-[opacity,color,background-color] cursor-pointer hover:bg-secondary hover:text-foreground can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100"
                 onClick={() => setReactionsDetailOpen(true)}
                 title="View all reactions"
+                aria-label="View all reactions"
               >
-                ···
+                <MoreHorizontal className="h-4 w-4" />
               </button>
             </div>
           )}

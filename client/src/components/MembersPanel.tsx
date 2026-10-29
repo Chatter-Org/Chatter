@@ -114,13 +114,13 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
           setProfileOpen(true);
         }}
         className={cn(
-          "group relative flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors cursor-pointer hover:bg-accent/50",
-          status === "offline" && "opacity-50"
+          "group relative flex items-center gap-2.5 rounded-md px-2 py-1 transition-colors cursor-pointer hover:bg-accent/50",
+          status === "offline" && "opacity-45 hover:opacity-80"
         )}
         style={wash}
       >
         <div className="relative flex-shrink-0">
-          <Avatar className="h-9 w-9">
+          <Avatar className="h-8 w-8">
             <AuthAvatarImage src={presence?.avatarUrl} />
             <AvatarFallback className="text-xs bg-secondary">
               {initial}
@@ -140,7 +140,7 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
           <span className="flex items-center gap-1">
             <span
               className={cn(
-                "truncate text-sm block",
+                "truncate text-sm font-medium block",
                 status === "offline" && "text-muted-foreground"
               )}
               style={{
@@ -166,12 +166,12 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
             )}
           </span>
           {customStatus && (
-            <span className="truncate text-[0.625rem] leading-tight text-muted-foreground block">
+            <span className="truncate text-2xs leading-tight text-muted-foreground block">
               {customStatus}
             </span>
           )}
           {presence?.steamGame && status !== "offline" && (
-            <span className="flex items-center gap-1 text-[0.625rem] leading-tight text-blue-400 overflow-hidden">
+            <span className="flex items-center gap-1 text-2xs leading-tight text-info overflow-hidden">
               <Gamepad2 className="h-3 w-3 shrink-0" />
               <span className="overflow-hidden">
                 <span
@@ -191,7 +191,7 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
 
   const renderSection = (key: string, label: string, items: typeof state.roomMembers) => (
     <div key={key}>
-      <p className="text-[0.625rem] ui-heading px-2 pt-3 pb-1">
+      <p className="ui-heading px-2 pt-4 pb-1">
         {label} — {items.length}
       </p>
       {items.map(renderMember)}
@@ -199,12 +199,12 @@ export function MembersPanel({ collapsed, onToggle }: MembersPanelProps) {
   );
 
   return (
-    <div className="w-full md:w-56 md:border-l flex flex-col shrink-0 h-full rounded-lg">
-      <div className="flex items-center gap-2 border-b px-3 py-3">
+    <div className="w-full md:w-60 md:border-l flex flex-col shrink-0 h-full rounded-lg">
+      <div className="flex h-14 shrink-0 items-center gap-2 border-b px-3">
         <h3 className="ui-heading">
           {threadPosters ? "In this thread" : "Members"}
         </h3>
-        <span className="inline-flex items-center rounded-full bg-secondary px-2 py-0.5 text-xs font-medium">
+        <span className="inline-flex items-center rounded-full bg-secondary px-2 py-0.5 text-3xs font-semibold tabular-nums">
           {groups.reduce((n, g) => n + g.members.length, 0)}
         </span>
         <button

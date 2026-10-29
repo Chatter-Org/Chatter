@@ -58,21 +58,20 @@ import { useReadableColor } from "@/lib/theme";
 
 /** Space each row needs beside its text, in pixels.
  *
- *  Room: 12px padding either side plus roughly 60px of action buttons.
- *  Channel: 4px margin and 8px padding either side, a 16px icon, a 12px drag
+ *  Room: 12px padding either side plus three 28px action buttons.
+ *  Channel: 8px margin and 8px padding either side, a 16px icon, a 12px drag
  *  grip, their gaps, and room for an unread badge and the notification bell.
  *  Category: padding, a 12px chevron and its menu button. */
-const ROOM_ROW_CHROME = 84;
-const CHANNEL_ROW_CHROME = 124;
+const ROOM_ROW_CHROME = 112;
+const CHANNEL_ROW_CHROME = 136;
 const CATEGORY_ROW_CHROME = 72;
 
 /**
  * How wide the channel column has to be to show its longest row unclipped,
  * clamped to the limits above.
  *
- * Measured rather than guessed, because the answer depends on the font: the
- * app is set in JetBrains Mono, appreciably wider than the system sans this
- * used to assume, so every measurement came out short.
+ * Measured rather than guessed, because the answer depends on the font, and
+ * a guess made for one face came out short in another.
  */
 function measurePanelWidth(
   roomName: string,
@@ -83,22 +82,22 @@ function measurePanelWidth(
   if (!ctx) return DEFAULT_PANEL_WIDTH;
 
   const family =
-    getComputedStyle(document.body).fontFamily || "ui-monospace, monospace";
+    getComputedStyle(document.body).fontFamily || "ui-sans-serif, sans-serif";
   const measure = (text: string, weight: number, size: number) => {
     ctx.font = `${weight} ${size}px ${family}`;
     return ctx.measureText(text).width;
   };
 
   // Each row reserves what sits beside its text.
-  let widest = measure(roomName, 600, 14) + ROOM_ROW_CHROME;
+  let widest = measure(roomName, 600, 15) + ROOM_ROW_CHROME;
   for (const name of channelNames) {
-    widest = Math.max(widest, measure(name, 400, 14) + CHANNEL_ROW_CHROME);
+    widest = Math.max(widest, measure(name, 500, 14) + CHANNEL_ROW_CHROME);
   }
   for (const name of categoryNames) {
     // Uppercased at render time, which is wider than what was typed.
     widest = Math.max(
       widest,
-      measure(name.toUpperCase(), 600, 12.1) + CATEGORY_ROW_CHROME,
+      measure(name.toUpperCase(), 600, 11.5) + CATEGORY_ROW_CHROME,
     );
   }
 
@@ -524,7 +523,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
     const inThisCall = holdsCall && state.inVoiceChannel && state.voiceChannelId === ch.channel_id;
 
     return (
-      <div key={ch.channel_id} onDragEnd={handleDragEnd} className="group/voice mt-1">
+      <div key={ch.channel_id} onDragEnd={handleDragEnd} className="group/voice mt-0.5">
         <div
           draggable={canManage}
           onDragStart={(e) => handleDragStart(e, ch.channel_id)}
@@ -809,7 +808,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
         onDrop={(e) => handleDrop(e, cat.category_id)}
         className={isDropping ? "bg-primary/10 rounded-md transition-colors" : "transition-colors"}
       >
-        <div className="group flex items-center gap-1 px-2 py-1 mt-3">
+        <div className="group flex items-center gap-1 px-3 pb-1 pt-4">
           <button
             onClick={() => toggleCategory(cat.category_id)}
             className="flex items-center gap-1 flex-1 min-w-0 text-left hover:text-foreground transition-colors"
@@ -938,50 +937,50 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
       style={asDrawer ? undefined : { width: panelCollapsed ? 40 : width }}
     >
       {/* Room name header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b">
+      <div className="flex h-14 shrink-0 items-center justify-between px-3 border-b">
         {panelCollapsed ? (
           <button
             onClick={() => setPanelCollapsed(false)}
-            className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors mx-auto"
+            className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors mx-auto"
             title="Show channels"
           >
             <PanelLeftOpen className="h-4 w-4" />
           </button>
         ) : (
           <>
-            <span className="text-sm font-semibold truncate">{roomInfo?.name || "Room"}</span>
+            <span className="text-[0.9375rem] font-semibold truncate">{roomInfo?.name || "Room"}</span>
             <div className="flex items-center gap-0.5">
               {canManage && (
                 <>
                   <button
                     onClick={() => setCategoryCreateOpen(true)}
-                    className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                    className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
                     title="Create category"
                   >
-                    <FolderPlus className="h-3.5 w-3.5" />
+                    <FolderPlus className="h-4 w-4" />
                   </button>
                   <button
                     onClick={() => { setChannelType("text"); setCreateCategoryId(""); setCreateOpen(true); }}
-                    className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                    className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
                     title="Create channel"
                   >
-                    <Plus className="h-3.5 w-3.5" />
+                    <Plus className="h-4 w-4" />
                   </button>
                   <button
                     onClick={() => setRolesOpen(true)}
-                    className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                    className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
                     title="Manage roles"
                   >
-                    <Shield className="h-3.5 w-3.5" />
+                    <Shield className="h-4 w-4" />
                   </button>
                 </>
               )}
               <button
                 onClick={() => setPanelCollapsed(true)}
-                className={`p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors md:hidden ${asDrawer ? "hidden" : ""}`}
+                className={`p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors md:hidden ${asDrawer ? "hidden" : ""}`}
                 title="Hide channels"
               >
-                <PanelLeftClose className="h-3.5 w-3.5" />
+                <PanelLeftClose className="h-4 w-4" />
               </button>
             </div>
           </>
@@ -1430,15 +1429,19 @@ function ChannelItem({
   badge?: React.ReactNode;
 }) {
   const unreadHighlight = !isSelected && hasUnread;
+  // The count rides on the right with the mention badge, so every name
+  // starts at the same place whether or not it has anything waiting.
+  const showUnreadCount = unreadHighlight && (unreadCount ?? 0) > 0;
+  const hasRightBadge = showUnreadCount || (mentionCount ?? 0) > 0;
   return (
     <div
-      className={`group flex items-center gap-1 px-2 py-1 mx-1 rounded cursor-pointer transition-colors ${
+      className={`group relative flex items-center gap-1.5 px-2 py-1.5 mx-2 rounded-md cursor-pointer transition-colors ${
         isSelected
           ? "bg-accent text-accent-foreground"
           : unreadHighlight
             // The theme's foreground rather than white: in a light theme
             // white is the background, and an unread channel vanished.
-            ? "text-foreground font-bold hover:bg-accent/50"
+            ? "text-foreground font-semibold hover:bg-accent/50"
             : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
       }`}
       {...clickable(onSelect, `Open ${channel.name}`)}
@@ -1447,20 +1450,29 @@ function ChannelItem({
       {showGrip && (
         <GripVertical className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-50 cursor-grab" />
       )}
-      {unreadHighlight && (unreadCount ?? 0) > 0 && (
-        <span className="text-xs font-bold text-foreground shrink-0">[{unreadCount! > 99 ? "99+" : unreadCount}]</span>
+      {/* A pip on the column's edge marks unread, as well as the weight. */}
+      {unreadHighlight && (
+        <span aria-hidden className="absolute -left-2 top-1/2 h-2 w-1 -translate-y-1/2 rounded-r-full bg-foreground" />
       )}
       {icon}
-      <span className="truncate text-sm">{channel.name}</span>
+      <span className="truncate text-sm font-medium">{channel.name}</span>
       {badge}
+      {showUnreadCount && (
+        <span
+          className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1.5 text-3xs font-semibold tabular-nums leading-none text-foreground shrink-0"
+          title={`${unreadCount} unread`}
+        >
+          {unreadCount! > 99 ? "99+" : unreadCount}
+        </span>
+      )}
       {(mentionCount ?? 0) > 0 && (
-        <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-3xs font-bold leading-none text-white shrink-0">
+        <span className={`${showUnreadCount ? "" : "ml-auto"} flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-3xs font-bold tabular-nums leading-none text-white shrink-0`}>
           {mentionCount! > 99 ? "99+" : mentionCount}
         </span>
       )}
       {notifyRoomId && (
         <span
-          className={`${(mentionCount ?? 0) > 0 || canManage ? "" : "ml-auto"} shrink-0`}
+          className={`${hasRightBadge || canManage ? "" : "ml-auto"} shrink-0`}
           onClick={(e) => e.stopPropagation()}
         >
           <NotificationSettingsPopover roomId={notifyRoomId} channelId={channel.channel_id}>
@@ -1476,7 +1488,7 @@ function ChannelItem({
       {canManage && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-            <button className={`${(mentionCount ?? 0) > 0 || notifyRoomId ? "" : "ml-auto"} p-0.5 rounded can-hover:opacity-0 can-hover:group-hover:opacity-100 hover:bg-accent transition-opacity`}>
+            <button className={`${hasRightBadge || notifyRoomId ? "" : "ml-auto"} p-0.5 rounded can-hover:opacity-0 can-hover:group-hover:opacity-100 hover:bg-accent transition-opacity`}>
               <Pencil className="h-3 w-3" />
             </button>
           </DropdownMenuTrigger>
