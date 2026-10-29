@@ -47,7 +47,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, Paperclip, X, Search, ArrowUpDown, Tags } from "lucide-react";
+import { Plus, Paperclip, X, Search, ArrowUpDown, Tags, LayoutList, SearchX } from "lucide-react";
 import { usePendingFiles, MAX_ATTACHMENTS } from "@/hooks/usePendingFiles";
 import { clipboardFiles } from "@/lib/clipboardFiles";
 import { sortForumAttachments } from "@/lib/mediaTypes";
@@ -298,9 +298,9 @@ export function ForumArea() {
       {/* On a phone the controls drop to a row of their own and lose their
           labels: one row of title, search, sort, tags and "New Post" ran off
           the right of the screen. */}
-      <div className={cn("flex border-b shrink-0", isMobile ? "flex-wrap items-center gap-2 px-3 py-2" : "items-center justify-between px-4 py-3 gap-3")}>
+      <div className={cn("flex border-b shrink-0", isMobile ? "flex-wrap items-center gap-2 px-3 py-2" : "min-h-14 items-center justify-between px-4 py-2 gap-3")}>
         <div className={cn("min-w-0", isMobile ? "flex-1" : "shrink-0")}>
-          <h2 className="font-semibold text-sm truncate">
+          <h2 className="font-semibold text-[0.9375rem] truncate">
             {forumChannel?.name || roomInfo?.name || "Forum"}
           </h2>
           {(forumChannel ? forumChannel.topic : roomInfo?.topic) && (
@@ -405,13 +405,16 @@ export function ForumArea() {
       <div className={cn("flex-1 overflow-y-auto", isMobile ? "p-2" : "p-4")}>
         <div className="space-y-2">
           {posts.length === 0 && !loading && (
-            <div className="text-center py-12 text-muted-foreground">
+            <div className="flex flex-col items-center py-16 text-center text-muted-foreground">
+              <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                {isSearching ? <SearchX className="h-5 w-5" /> : <LayoutList className="h-5 w-5" />}
+              </span>
               {isSearching ? (
-                <p className="text-sm">No posts match your search</p>
+                <p className="text-sm font-medium text-foreground">No posts match your search</p>
               ) : (
                 <>
-                  <p className="text-sm">No posts yet</p>
-                  <p className="text-xs mt-1">Be the first to create a post!</p>
+                  <p className="text-sm font-medium text-foreground">No posts yet</p>
+                  <p className="text-xs mt-1">Be the first to start a discussion.</p>
                 </>
               )}
             </div>

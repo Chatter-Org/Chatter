@@ -44,8 +44,8 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, canPin, onTo
 
   return (
     <div
-      className={`group relative flex gap-2.5 sm:gap-3 rounded-lg border p-2.5 sm:p-3 transition-colors hover:bg-accent/50 cursor-pointer ${
-        pinned ? "border-primary/40 bg-primary/5" : ""
+      className={`group relative flex gap-3 sm:gap-4 rounded-xl border p-3 sm:p-4 transition-colors hover:border-ring/40 hover:bg-accent/30 cursor-pointer ${
+        pinned ? "border-primary/40 bg-primary/5" : "bg-card/40"
       }`}
       {...clickable(onClick, `Open post: ${post.title}`)}
     >
@@ -56,7 +56,7 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, canPin, onTo
           <AuthImage
             src={thumbnail}
             alt=""
-            className="w-16 h-16 sm:w-24 sm:h-24 object-cover rounded-md bg-muted"
+            className="w-16 h-16 sm:w-24 sm:h-24 object-cover rounded-lg bg-muted"
           />
           {images.length === 0 && videos.length > 0 && (
             <span className="absolute inset-0 flex items-center justify-center">
@@ -76,7 +76,7 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, canPin, onTo
       {/* Content */}
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div className="flex items-start justify-between gap-2">
-          <h3 className="flex min-w-0 items-center gap-1.5 font-semibold text-sm leading-tight">
+          <h3 className="flex min-w-0 items-center gap-1.5 font-semibold text-[0.9375rem] leading-snug">
             {pinned && (
               <Pin
                 className="w-3.5 h-3.5 shrink-0 text-primary"
@@ -95,7 +95,7 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, canPin, onTo
               }}
               aria-label={pinned ? "Unpin post" : "Pin post"}
               title={pinned ? "Unpin post" : "Pin post"}
-              className="can-hover:opacity-0 can-hover:group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity shrink-0 cursor-pointer"
+              className="can-hover:opacity-0 can-hover:group-hover:opacity-100 rounded-md p-1 -m-0.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-[opacity,color,background-color] shrink-0 cursor-pointer"
             >
               {pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
             </button>
@@ -106,7 +106,9 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, canPin, onTo
                 e.stopPropagation();
                 onDelete?.();
               }}
-              className="can-hover:opacity-0 can-hover:group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity shrink-0 cursor-pointer"
+              aria-label="Delete post"
+              title="Delete post"
+              className="can-hover:opacity-0 can-hover:group-hover:opacity-100 rounded-md p-1 -m-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-[opacity,color,background-color] shrink-0 cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -127,7 +129,7 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, canPin, onTo
             }}
             aria-label="Copy post link"
             title="Copy post link"
-            className="can-hover:opacity-0 can-hover:group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity shrink-0 cursor-pointer"
+            className="can-hover:opacity-0 can-hover:group-hover:opacity-100 rounded-md p-1 -m-0.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-[opacity,color,background-color] shrink-0 cursor-pointer"
           >
             <Link className="w-3.5 h-3.5" />
           </button>
@@ -135,8 +137,8 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, canPin, onTo
 
         <ForumTagList tagIds={post.tags} tags={tags} size="xs" />
 
-        <p className="text-xs text-muted-foreground">
-          {authorDisplay} · {formatTime(post.created_at)}
+        <p className="ui-meta">
+          <span className="font-medium text-foreground/80">{authorDisplay}</span> · {formatTime(post.created_at)}
           {post.edited && " · (edited)"}
         </p>
 
@@ -153,7 +155,7 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, canPin, onTo
               they are there. */}
           {files.length > 0 && (
             <span
-              className="flex items-center gap-1 text-3xs text-muted-foreground ml-auto"
+              className="flex items-center gap-1 text-xs tabular-nums text-muted-foreground ml-auto"
               title={files.length === 1 ? "1 file" : `${files.length} files`}
             >
               <Paperclip className="w-3 h-3" />
@@ -161,8 +163,11 @@ export function ForumPostCard({ post, onClick, onDelete, canDelete, canPin, onTo
             </span>
           )}
           {/* Comment count */}
-          <span className={`flex items-center gap-1 text-3xs text-muted-foreground ${files.length > 0 ? "" : "ml-auto"}`}>
-            <MessageSquare className="w-3 h-3" />
+          <span
+            className={`flex items-center gap-1 text-xs tabular-nums text-muted-foreground ${files.length > 0 ? "" : "ml-auto"}`}
+            title={post.comment_count === 1 ? "1 comment" : `${post.comment_count} comments`}
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
             {post.comment_count}
           </span>
         </div>

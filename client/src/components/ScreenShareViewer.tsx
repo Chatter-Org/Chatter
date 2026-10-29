@@ -193,7 +193,7 @@ export function ScreenShareHeader({
       ref={headerRef}
       className={cn(
         "absolute inset-x-0 top-0 z-10 flex items-center justify-between px-3 py-1.5",
-        "bg-background/70 backdrop-blur-sm border-b border-info/20",
+        "bg-background/75 backdrop-blur-md border-b border-border/60",
         "transition-opacity duration-200",
         // Faded out it must not swallow clicks meant for the video.
         controlsVisible ? "opacity-100" : "opacity-0 pointer-events-none",
@@ -817,7 +817,7 @@ export function ScreenShareViewer({
                 <button
                   key={key}
                   className={cn(
-                    "relative overflow-hidden rounded-lg border-2 bg-neutral-900 cursor-pointer transition-colors",
+                    "relative overflow-hidden rounded-xl border-2 bg-neutral-900 cursor-pointer transition-colors",
                     isSpeaking ? "border-success" : "border-transparent hover:border-white/30",
                   )}
                   style={{ width: layout.tileWidth, height: layout.tileHeight }}
@@ -849,11 +849,11 @@ export function ScreenShareViewer({
                       Connecting…
                     </div>
                   )}
-                  <div className="absolute bottom-1.5 left-1.5 flex max-w-[85%] items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-xs text-white">
+                  <div className="absolute bottom-2 left-2 flex max-w-[85%] items-center gap-1.5 rounded-md bg-black/60 px-2 py-1 text-xs font-medium text-white backdrop-blur-sm">
                     {kind === "screen" ? (
                       <Monitor className="h-3 w-3 shrink-0 text-info" />
                     ) : (
-                      <Video className="h-3 w-3 shrink-0 text-blue-300" />
+                      <Video className="h-3 w-3 shrink-0 text-info" />
                     )}
                     <span className="truncate">{nameOf(userId)}</span>
                   </div>
@@ -1085,7 +1085,7 @@ export function ScreenShareViewer({
                     />
                     <div className={label}>
                       <Monitor className="h-3 w-3 shrink-0 text-info" />
-                      <p className="text-xs text-info font-semibold truncate">{nameOf(userId)}</p>
+                      <p className="text-xs text-white font-medium truncate">{nameOf(userId)}</p>
                     </div>
                   </button>
                 );
@@ -1094,7 +1094,7 @@ export function ScreenShareViewer({
                 return (
                   <button
                     key={`webcam-${userId}`}
-                    className="relative shrink-0 rounded-lg border-2 border-border/50 overflow-hidden bg-black cursor-pointer transition-all hover:border-blue-500/50 opacity-80 hover:opacity-100"
+                    className="relative shrink-0 rounded-lg border-2 border-border/50 overflow-hidden bg-black cursor-pointer transition-all hover:border-info/50 opacity-80 hover:opacity-100"
                     style={box}
                     onClick={() => dispatch({ type: "SET_SCREEN_VIEWER", payload: { webcamStreamer: userId } })}
                     title={`Watch ${nameOf(userId) === "You" ? "your" : `${nameOf(userId)}'s`} camera`}
@@ -1110,12 +1110,12 @@ export function ScreenShareViewer({
                       />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center">
-                        <Video className="h-6 w-6 text-blue-400/50" />
+                        <Video className="h-6 w-6 text-info/50" />
                       </div>
                     )}
                     <div className={label}>
-                      <Video className="h-3 w-3 shrink-0 text-blue-300" />
-                      <p className="text-xs text-blue-300 font-semibold truncate">{nameOf(userId)}</p>
+                      <Video className="h-3 w-3 shrink-0 text-info" />
+                      <p className="text-xs text-white font-medium truncate">{nameOf(userId)}</p>
                     </div>
                   </button>
                 );

@@ -38,7 +38,7 @@ function SignalBars({ quality }: { quality: ConnectionQuality }) {
 }
 
 const TILE =
-  "flex h-8 items-center justify-center transition-colors min-h-11 md:min-h-0 disabled:opacity-50 disabled:pointer-events-none";
+  "flex h-9 items-center justify-center transition-colors min-h-11 md:min-h-0 disabled:opacity-50 disabled:pointer-events-none";
 const TILE_IDLE = "bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground";
 
 /**
@@ -82,21 +82,19 @@ export function VoiceConnectedPanel({
           : "text-success";
   const status =
     s === "connecting" || s === "new" ? "Connecting…" :
-    s === "failed" ? "Connection Failed" :
+    s === "failed" ? "Connection failed" :
     s === "disconnected" ? "Reconnecting…" :
-    "Voice Connected";
+    "Voice connected";
 
   const silenced = isMuted || isDeafened;
   const showScreen = !!onToggleScreenShare && canShareScreen();
 
   return (
-    // Once the call is up the panel takes a faint green outline and glow, so
+    // Once the call is up the panel takes a faint green outline and tint, so
     // being in voice reads at a glance.
     <div
-      className={`shrink-0 mx-1.5 mb-1.5 rounded-lg border px-2 py-2 space-y-2 transition-[border-color,box-shadow] duration-300 ${
-        isOk
-          ? "border-success/40 shadow-[0_0_8px_-1px_color-mix(in_oklch,var(--success)_45%,transparent),inset_0_0_6px_color-mix(in_oklch,var(--success)_12%,transparent)]"
-          : ""
+      className={`shrink-0 mx-2 mb-2 rounded-lg border bg-background/40 p-2 space-y-2 transition-[border-color,background-color] duration-300 ${
+        isOk ? "border-success/35 bg-success/[0.06]" : ""
       }`}
     >
       <div className="flex items-center gap-2 pl-1">
@@ -107,17 +105,17 @@ export function VoiceConnectedPanel({
           <SignalBars quality={isOk ? quality : 0} />
         </span>
         <div className="min-w-0 flex-1 leading-tight">
-          <div className={`truncate text-xs font-semibold ${statusColor}`}>{status}</div>
+          <div className={`truncate text-sm font-semibold ${statusColor}`}>{status}</div>
           {onNavigate ? (
             <button
               onClick={onNavigate}
-              className="block max-w-full truncate text-left text-3xs text-muted-foreground hover:text-foreground hover:underline cursor-pointer"
+              className="block max-w-full truncate text-left text-xs text-muted-foreground hover:text-foreground hover:underline cursor-pointer"
               title={`Go to ${where}`}
             >
               {where}
             </button>
           ) : (
-            <div className="truncate text-3xs text-muted-foreground" title={where}>
+            <div className="truncate text-xs text-muted-foreground" title={where}>
               {where}
             </div>
           )}

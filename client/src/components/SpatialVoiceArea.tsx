@@ -169,9 +169,9 @@ export function SpatialVoiceArea({ onJoinVoice, onLeaveVoice, speakingUsersRef }
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <div className="flex items-center gap-3 px-4 py-3 border-b shrink-0">
+      <div className="flex min-h-14 items-center gap-3 px-4 py-2 border-b shrink-0">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold truncate">{channel.name}</h2>
+          <h2 className="text-[0.9375rem] font-semibold truncate">{channel.name}</h2>
           <p className="ui-hint truncate">
             {members.length === 0
               ? "Nobody here yet"
@@ -329,7 +329,7 @@ export function SpatialVoiceArea({ onJoinVoice, onLeaveVoice, speakingUsersRef }
                   )}
                 </span>
                 <span
-                  className="max-w-[7rem] truncate rounded bg-background/80 px-1.5 text-3xs leading-tight"
+                  className="max-w-[7rem] truncate rounded-md bg-background/85 px-1.5 py-0.5 text-2xs font-medium leading-tight shadow-sm"
                   style={accent ? { color: accent } : undefined}
                 >
                   {name}{isSelf && " (you)"}

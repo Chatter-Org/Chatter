@@ -4,7 +4,7 @@ import { useAppContext } from "@/lib/store";
 import { useChannelLinkText } from "@/hooks/useChannelLinkText";
 import {
   Hash, Volume2, Volume1, VolumeX, Plus, Pencil, Trash2, ChevronDown, ChevronRight,
-  Mic, MicOff, PhoneOff, HeadphoneOff, Camera, FolderPlus, GripVertical, PanelLeftClose, PanelLeftOpen, Lock, Shield, ImagePlus, X, Scissors,
+  MicOff, PhoneOff, HeadphoneOff, Camera, FolderPlus, GripVertical, PanelLeftClose, PanelLeftOpen, Lock, Shield, ImagePlus, X, Scissors,
   Film, LayoutList, Move3d, PenTool, Sparkles, Bot, ShieldOff, MessagesSquare,
 } from "lucide-react";
 import { displayUserId } from "@/lib/utils";
@@ -638,7 +638,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
           </div>
         )}
         {isVoice && members.length > 0 && (
-          <div className="ml-7 space-y-0.5 pb-1">
+          <div className={`mr-2 space-y-px pb-1 ${canManage ? "ml-9" : "ml-6"}`}>
             {members.map((m) => {
               const isMe = m.userId === state.userId;
               const localVol = userVolumes[m.userId] ?? 1;
@@ -652,23 +652,11 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
                 <div key={m.userId}>
                   <ScreenPeek userId={m.userId} name={state.userPresence[m.userId]?.displayName || displayUserId(m.userId)}>
                   <div
-                    className={`flex items-center gap-1.5 px-1 py-0.5 text-sm rounded transition-colors ${isSpeaking ? (speakingLook ? "" : "text-success bg-success/10 shadow-[0_0_6px_1px_var(--success)]") : "text-muted-foreground"} ${!isMe ? "cursor-pointer hover:bg-accent/50" : ""}`}
+                    className={`flex items-center gap-2 px-1.5 py-1 text-sm rounded-md transition-colors ${isSpeaking ? (speakingLook ? "" : "text-success bg-success/10 shadow-[0_0_6px_1px_var(--success)]") : "text-muted-foreground"} ${!isMe ? "cursor-pointer hover:bg-accent/50" : ""}`}
                     style={speakingLook}
                     onClick={() => !isMe && setExpandedUser(isExpanded ? null : m.userId)}
                   >
-                    {isLocalMuted && !isMe
-                      ? <MicOff className="h-3 w-3 shrink-0 text-warning" />
-                      : m.muted || m.deafened
-                        ? <MicOff className="h-3 w-3 shrink-0 text-destructive" />
-                        : <Mic className="h-3 w-3 shrink-0 text-success" />
-                    }
-                    {m.deafened && (
-                      <HeadphoneOff className="h-3 w-3 shrink-0 text-destructive" aria-label="Deafened" />
-                    )}
-                    {m.force_muted && (
-                      <ShieldOff className="h-3 w-3 shrink-0 text-destructive" aria-label="Muted by a moderator" />
-                    )}
-                    <Avatar className="h-5 w-5 shrink-0">
+                    <Avatar className="h-6 w-6 shrink-0">
                       <AuthAvatarImage src={state.userPresence[m.userId]?.avatarUrl} />
                       <AvatarFallback className="text-2xs bg-secondary">
                         {(state.userPresence[m.userId]?.displayName || displayUserId(m.userId))[0]?.toUpperCase() || "?"}
@@ -676,6 +664,19 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
                     </Avatar>
                     <span className={`truncate ${isLocalMuted && !isMe ? "line-through opacity-50" : ""}`}>{state.userPresence[m.userId]?.displayName || displayUserId(m.userId)}</span>
                     <div className="ml-auto flex items-center gap-1 shrink-0">
+                      {/* Only what is out of the ordinary is marked: an open
+                          mic is every call's default and said nothing. */}
+                      {isLocalMuted && !isMe ? (
+                        <MicOff className="h-3.5 w-3.5 shrink-0 text-warning" aria-label="Muted for you" />
+                      ) : m.muted && !m.deafened ? (
+                        <MicOff className="h-3.5 w-3.5 shrink-0 text-destructive" aria-label="Muted" />
+                      ) : null}
+                      {m.deafened && (
+                        <HeadphoneOff className="h-3.5 w-3.5 shrink-0 text-destructive" aria-label="Deafened" />
+                      )}
+                      {m.force_muted && (
+                        <ShieldOff className="h-3.5 w-3.5 shrink-0 text-destructive" aria-label="Muted by a moderator" />
+                      )}
                       {state.activeWebcamStreamers.includes(m.userId) && (
                         <button
                           type="button"
@@ -683,10 +684,10 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
                             e.stopPropagation();
                             dispatch({ type: "SET_SCREEN_VIEWER", payload: { open: true, webcamStreamer: m.userId } });
                           }}
-                          className="shrink-0 p-0.5 rounded hover:bg-blue-500/20 transition-colors flex items-center justify-center min-h-9 min-w-9 md:min-h-0 md:min-w-0"
+                          className="shrink-0 p-0.5 rounded hover:bg-info/20 transition-colors flex items-center justify-center min-h-9 min-w-9 md:min-h-0 md:min-w-0"
                           title={`Watch ${(state.userPresence[m.userId]?.displayName || displayUserId(m.userId))}'s camera`}
                         >
-                          <Camera className="h-3 w-3 text-blue-400" />
+                          <Camera className="h-3.5 w-3.5 text-info" />
                         </button>
                       )}
                       {m.screen_sharing && (

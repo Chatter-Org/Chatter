@@ -57,11 +57,12 @@ export function ForumReactions({
             <button
               onClick={() => toggle(emoji)}
               className={cn(
-                "inline-flex items-center gap-1 rounded-full border transition-colors cursor-pointer",
-                compact ? "px-1.5 py-0.5 text-3xs" : "px-2 py-0.5 text-xs",
+                // The same chip as a chat message's reactions.
+                "inline-flex items-center gap-1 rounded-lg border transition-colors cursor-pointer",
+                compact ? "h-6 px-1.5 text-xs" : "h-7 px-2 text-sm",
                 userIds.includes(state.userId ?? "")
-                  ? "border-primary/50 bg-primary/10"
-                  : "border-border hover:bg-accent",
+                  ? "border-ring/60 bg-ring/15 hover:bg-ring/25"
+                  : "border-transparent bg-secondary/70 hover:border-border hover:bg-secondary",
               )}
             >
               {isCustomEmojiUrl(emoji) ? (
@@ -73,7 +74,7 @@ export function ForumReactions({
               ) : (
                 emoji
               )}
-              <span className="text-muted-foreground font-medium">{userIds.length}</span>
+              <span className="text-xs font-semibold tabular-nums text-muted-foreground">{userIds.length}</span>
             </button>
           </TooltipTrigger>
           <TooltipContent>
@@ -89,8 +90,8 @@ export function ForumReactions({
             title="Add reaction"
             aria-label="Add reaction"
             className={cn(
-              "inline-flex items-center justify-center rounded-full border border-dashed border-border text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer",
-              compact ? "h-5 w-6" : "h-6 w-8",
+              "inline-flex items-center justify-center rounded-lg border border-dashed border-border text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer",
+              compact ? "h-6 w-7" : "h-7 w-8",
               revealAdd && !pickerOpen && "can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100",
             )}
           >

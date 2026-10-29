@@ -428,7 +428,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
           // and a frame round every comment drew a grid instead of a thread.
           // The reply being answered still stands out, as a wash.
           className={cn(
-            "group rounded-md px-1.5 py-1 transition-colors",
+            "group rounded-lg px-2 py-1.5 transition-colors",
             isReplyTarget && "bg-primary/5 ring-1 ring-primary/40",
           )}
         >
@@ -439,7 +439,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
           ) : (
             <>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-medium">{displayUserId(comment.author)}</span>
+                <span className="text-sm font-semibold">{displayUserId(comment.author)}</span>
                 {isThreadAuthor && (
                   <span className="rounded bg-secondary px-1 py-px text-3xs font-medium text-muted-foreground">
                     author
@@ -457,19 +457,21 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
                   {isCommentAuthor && !isEditing && (
                     <button
                       onClick={() => startEditingComment(comment)}
-                      className="text-muted-foreground hover:text-foreground cursor-pointer"
+                      className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
                       title="Edit comment"
+                      aria-label="Edit comment"
                     >
-                      <Pencil className="w-3 h-3" />
+                      <Pencil className="w-3.5 h-3.5" />
                     </button>
                   )}
                   {canDeleteComment && (
                     <button
                       onClick={() => handleDeleteComment(comment.comment_id)}
-                      className="text-muted-foreground hover:text-destructive cursor-pointer"
+                      className="rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors cursor-pointer"
                       title="Delete comment"
+                      aria-label="Delete comment"
                     >
-                      <Trash2 className="w-3 h-3" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
@@ -530,7 +532,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
             {!comment.deleted && (
               <button
                 onClick={() => startReply(comment)}
-                className="flex items-center gap-1 text-3xs font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
               >
                 <CornerUpLeft className="w-3 h-3" />
                 Reply
@@ -539,7 +541,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
             {replyCount > 0 && (
               <button
                 onClick={() => toggleFold(comment.comment_id)}
-                className="flex items-center gap-1 text-3xs font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
               >
                 {isFolded ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                 {replyCount} {replyCount === 1 ? "reply" : "replies"}
@@ -594,7 +596,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Header */}
-      <div className="flex items-center gap-2 px-2 md:px-4 py-1.5 md:py-2 border-b shrink-0">
+      <div className="flex items-center gap-2 px-2 md:px-4 py-1.5 md:py-2 md:min-h-14 border-b shrink-0">
         <Button variant="ghost" size="sm" onClick={onBack} className="gap-1.5">
           <ArrowLeft className="w-4 h-4" />
           Back
@@ -603,7 +605,9 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="p-3 md:p-4 space-y-4">
+        {/* One post is read rather than scanned, so it keeps to a line length
+            people can read at; the posts list stays full width. */}
+        <div className="mx-auto w-full max-w-3xl p-3 md:px-6 md:py-6 space-y-5">
           {/* Post title & meta */}
           {editingPost ? (
             <div className="space-y-3">
@@ -645,7 +649,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
           ) : (
             <div>
               <div className="flex items-start gap-2">
-                <h1 className="text-xl md:text-2xl font-bold leading-tight flex-1 min-w-0 break-words">{post.title}</h1>
+                <h1 className="text-xl md:text-2xl font-bold tracking-tight leading-tight flex-1 min-w-0 break-words">{post.title}</h1>
                 {isPostAuthor && (
                   <button
                     onClick={startEditingPost}
@@ -767,7 +771,8 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
       {/* Comment input */}
       <div
         className={cn(
-          "border-t p-2 md:p-3 shrink-0 transition-colors",
+          // Floats as one box on desktop, like the chat composer.
+          "border-t p-2 md:border-t-0 md:px-4 md:pb-4 md:pt-1 shrink-0 transition-colors",
           dragging && "outline-2 outline-dashed outline-primary -outline-offset-2 bg-primary/5",
         )}
         onDragEnter={onDragEnter}
@@ -817,7 +822,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
               ))}
             </div>
           )}
-          <div className="flex items-end gap-1 md:gap-2">
+          <div className="flex items-end gap-1 rounded-xl border border-input bg-secondary/40 p-1 transition-colors focus-within:border-ring/70">
             <input
               ref={fileInputRef}
               type="file"
@@ -849,7 +854,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
               )}
               <Textarea
                 ref={commentInputRef}
-                placeholder={replyingTo ? `Reply to ${displayUserId(replyingTo.author)}…` : "Write a comment..."}
+                placeholder={replyingTo ? `Reply to ${displayUserId(replyingTo.author)}…` : "Write a comment…"}
                 value={commentBody}
                 onChange={commentMentions.onChange}
                 onBlur={commentMentions.close}
@@ -868,13 +873,13 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
                     handleSubmitComment();
                   }
                 }}
-                className="min-h-[44px] md:min-h-[40px] max-h-[120px] resize-none"
+                className="min-h-[44px] md:min-h-9 max-h-[120px] resize-none border-0 bg-transparent dark:bg-transparent shadow-none focus-visible:ring-0 py-2"
                 rows={1}
               />
             </div>
             <Button
               size="icon"
-              className="shrink-0"
+              className="shrink-0 rounded-lg"
               onClick={handleSubmitComment}
               disabled={submitting || (!commentBody.trim() && commentImages.length === 0)}
             
