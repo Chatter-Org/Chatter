@@ -22,8 +22,8 @@ const NOTIFICATION_LEVELS: { value: NotificationLevel; label: string }[] = [
 ];
 import { UserProfileDialog } from "@/components/UserProfileDialog";
 import { RoomGroupDialog } from "@/components/RoomGroupDialog";
-import { GroupDMDialog } from "@/components/GroupDMDialog";
-import { LayoutDashboard, ChevronRight, ChevronDown, Folder, FolderOpen, FolderPlus, MessageCircle, Palette, Pencil, Plus, Trash2, Settings2, Shield, UsersRound, MoreVertical, LogOut, Check, Flag, ScrollText, Video, Volume2 } from "lucide-react";
+import { DmList } from "@/components/DmList";
+import { LayoutDashboard, ChevronRight, ChevronDown, UserRound, Folder, FolderOpen, FolderPlus, MessageCircle, Palette, Pencil, Trash2, Settings2, Shield, MoreVertical, LogOut, Check, Flag, ScrollText, Video, Volume2 } from "lucide-react";
 import { showReports, showRoomRules } from "@/components/moderation/moderationUtils";
 import {
   Sidebar,
@@ -56,15 +56,18 @@ import {
 interface AppSidebarProps {
   onCreateRoom: () => void;
   onJoinRoom: () => void;
+  /** Whether the DM column is showing beside the chat (desktop only). */
+  dmsOpen: boolean;
+  onDmsOpenChange: (open: boolean) => void;
 }
 
-export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
+export function AppSidebar({ onCreateRoom, onJoinRoom, dmsOpen, onDmsOpenChange }: AppSidebarProps) {
   const confirm = useConfirm();
   const { state, dispatch, selectRoom, leaveRoom, logout, toggleGroupCollapsed, deleteRoomGroup, setGroupRooms, setSidebarOrder, setNotificationLevel } = useAppContext();
-  const { isMobile, setOpenMobile, setOpen, state: sidebarState, toggleSidebar } = useSidebar();
-  // Only the desktop sidebar collapses to the rail; on mobile it is a sheet
-  // that is either open or gone.
-  const railed = !isMobile && sidebarState === "collapsed";
+  const { isMobile, setOpenMobile } = useSidebar();
+  // The desktop sidebar is only ever the rail — the layout holds it closed.
+  // On mobile it is a sheet with the full list, either open or gone.
+  const railed = !isMobile;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>();
   const [appearanceOpen, setAppearanceOpen] = useState(false);
@@ -81,8 +84,6 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
   const [groupDialogName, setGroupDialogName] = useState<string | undefined>();
   // Track which group has its context menu open
   const [groupMenuOpen, setGroupMenuOpen] = useState<string | null>(null);
-  // Group DM dialog
-  const [groupDMDialogOpen, setGroupDMDialogOpen] = useState(false);
   // Drag-and-drop state
   const [draggedRoomId, setDraggedRoomId] = useState<string | null>(null);
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
@@ -96,6 +97,11 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
   const [railOverId, setRailOverId] = useState<string | null>(null);
   const [railOverSide, setRailOverSide] = useState<"before" | "after">("before");
   const [railOverFolderId, setRailOverFolderId] = useState<string | null>(null);
+  // The rail's right-click menu: a room's options or a folder's, opened at
+  // the cursor. The rail has no room for a per-icon menu button.
+  const [railMenu, setRailMenu] = useState<
+    { kind: "room" | "folder"; id: string; x: number; y: number } | null
+  >(null);
 
   const displayName = (state.userId && state.userPresence[state.userId]?.displayName) || displayUserId(state.userId ?? "") || "User";
   const initial = displayName.substring(0, 1).toUpperCase();
@@ -229,8 +235,64 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
     setRailOverFolderId(null);
   }
 
-  function renderRoomCard(roomId: string, isDm: boolean) {
+  /** What a room offers from its menu — on its row in the mobile sheet, and
+   *  on a right-click of its rail icon. */
+  function renderRoomMenuItems(roomId: string) {
+    const info = state.roomInfoMap[roomId];
     const notificationLevel = resolveNotificationLevel(state.notificationSettings, roomId);
+    return (
+      <>
+        <DropdownMenuLabel className="ui-heading">
+          Notifications
+        </DropdownMenuLabel>
+        {NOTIFICATION_LEVELS.map(({ value, label }) => (
+          <DropdownMenuItem
+            key={value}
+            onClick={() => void setNotificationLevel(roomId, value).catch(() => {})}
+          >
+            <span className="w-4 flex justify-center">
+              {notificationLevel === value && <Check className="h-3.5 w-3.5" />}
+            </span>
+            {label}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        {/* The dialog reads the open room, so it is offered there only. */}
+        {roomId === state.currentRoomId && !!info?.moderation?.rules && (
+          <DropdownMenuItem onClick={showRoomRules}>
+            <ScrollText className="h-3.5 w-3.5 mr-2" /> Room rules
+          </DropdownMenuItem>
+        )}
+        {roomId === state.currentRoomId && state.reportCounts[roomId] !== undefined && (
+          <DropdownMenuItem onClick={() => showReports(roomId)}>
+            <Flag className="h-3.5 w-3.5 mr-2" /> Reports
+            {state.reportCounts[roomId] > 0 && (
+              <span className="ml-auto rounded-full bg-destructive px-1.5 text-3xs font-semibold text-destructive-foreground">
+                {state.reportCounts[roomId]}
+              </span>
+            )}
+          </DropdownMenuItem>
+        )}
+        {info?.creator === state.userId && (
+          <DropdownMenuItem onClick={() => setSettingsRoomId(roomId)}>
+            <Settings2 className="h-3.5 w-3.5 mr-2" /> Room settings
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem
+          className="text-destructive"
+          onClick={async () => {
+            if (await confirm({ title: "Leave this room?", confirmLabel: "Leave", destructive: true })) {
+              leaveRoom(roomId);
+            }
+          }}
+        >
+          <LogOut className="h-3.5 w-3.5 mr-2" /> Leave room
+        </DropdownMenuItem>
+      </>
+    );
+  }
+
+  function renderRoomCard(roomId: string) {
     const info = state.roomInfoMap[roomId];
     const summary = roomSummaries[roomId];
     const isActive = roomId === state.currentRoomId;
@@ -246,43 +308,11 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
     const live = state.wsConnected
       ? (liveVoice[roomId] ?? { count: 0, sharing: false })
       : undefined;
-    const voiceCount =
-      live?.count ?? (isDm ? (info?.dm_voice_count ?? 0) : (summary?.voice_count ?? 0));
+    const voiceCount = live?.count ?? (summary?.voice_count ?? 0);
     const screenShareActive = live?.sharing ?? (summary?.screen_share_active ?? false);
 
-    let roomName: string;
-    if (isDm && info?.name) {
-      // Strip "DM with " prefix for cleaner display
-      roomName = info.name.replace(/^DM with /, "");
-    } else {
-      roomName = info?.name || "Unnamed";
-    }
+    const roomName = info?.name || "Unnamed";
     const roomInitial = roomName.substring(0, 1).toUpperCase();
-
-    // Streak display calculations
-    // A one-to-one DM shows the other person's face. A group has no single
-    // face to show, so it keeps the conversation glyph.
-    // Self is filtered out server-side, and again here: a DM that listed both
-    // members would have two ids, no single peer, and would silently fall back
-    // to the glyph — a failure that looks exactly like the field being absent.
-    const dmUserIds = isDm
-      ? (info?.dm_user_ids ?? []).filter((id) => id !== state.userId)
-      : [];
-    const dmPeerId = dmUserIds.length === 1 ? dmUserIds[0] : null;
-    // Presence first — it follows an avatar change live — then the copy that
-    // came down with the room, which is there before the DM is ever opened.
-    const dmPeerAvatar = dmPeerId
-      ? (state.userPresence[dmPeerId]?.avatarUrl || info?.dm_avatars?.[dmPeerId] || "")
-      : "";
-
-    const streakCount = isDm ? (info?.dm_streak_count ?? 0) : 0;
-    const lastTs = isDm ? (info?.dm_streak_last_ts ?? 0) : 0;
-    const now = Date.now();
-    const lastDay = lastTs > 0 ? Math.floor(lastTs / 86400000) : 0;
-    const streakDeadline = lastTs > 0 ? (lastDay + 2) * 86400000 : 0;
-    const isStreakAlive = lastTs > 0 && now < streakDeadline;
-    const isStreakExpiring = isStreakAlive && (streakDeadline - now) < 4 * 3600 * 1000;
-    const showStreak = isDm && streakCount >= 2 && isStreakAlive;
 
     return (
       <button
@@ -291,9 +321,8 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
           selectRoom(roomId);
           if (isMobile) setOpenMobile(false);
         }}
-        draggable={!isDm}
+        draggable
         onDragStart={(e) => {
-          if (isDm) return;
           setDraggedRoomId(roomId);
           e.dataTransfer.setData("text/plain", roomId);
           e.dataTransfer.effectAllowed = "move";
@@ -304,7 +333,7 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
           setDragOverRoomId(null);
         }}
         onDragOver={(e) => {
-          if (isDm || !draggedRoomId || draggedRoomId === roomId) return;
+          if (!draggedRoomId || draggedRoomId === roomId) return;
           e.preventDefault();
           e.stopPropagation();
           e.dataTransfer.dropEffect = "move";
@@ -322,7 +351,6 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
           }
         }}
         onDrop={(e) => {
-          if (isDm) return;
           e.preventDefault();
           e.stopPropagation();
           const srcId = e.dataTransfer.getData("text/plain");
@@ -353,7 +381,7 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
           setDragOverRoomId(null);
         }}
         title={
-          !isDm && memberCount > 0
+          memberCount > 0
             ? `${roomName} — ${memberCount} member${memberCount === 1 ? "" : "s"}`
             : roomName
         }
@@ -392,23 +420,6 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
             alt=""
             className="h-7 w-7 shrink-0 rounded-md object-cover"
           />
-        ) : dmPeerAvatar && !showStreak ? (
-          // Radix's Avatar so a deleted or unreachable file falls back to the
-          // initial instead of a broken image, the way every other avatar in
-          // the app behaves.
-          <Avatar className="h-7 w-7 shrink-0">
-            <AuthAvatarImage src={dmPeerAvatar} />
-            <AvatarFallback
-              className={cn(
-                "rounded-full text-xs font-bold",
-                isActive
-                  ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                  : "bg-sidebar-accent text-sidebar-foreground",
-              )}
-            >
-              {roomInitial}
-            </AvatarFallback>
-          </Avatar>
         ) : (
           <span
             className={cn(
@@ -418,22 +429,7 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
                 : "bg-sidebar-accent text-sidebar-foreground",
             )}
           >
-            {isDm ? (
-              showStreak ? (
-                <span className="flex flex-col items-center leading-none">
-                  <span className="text-xs leading-none">{isStreakExpiring ? "⏳" : "🔥"}</span>
-                  <span className="text-3xs font-bold leading-none">{streakCount}</span>
-                </span>
-              ) : dmPeerId ? (
-                roomInitial
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M2.678 11.894a1 1 0 0 1 .287.801 10.97 10.97 0 0 1-.398 2c1.395-.323 2.247-.697 2.634-.893a1 1 0 0 1 .71-.074A8.06 8.06 0 0 0 8 14c3.996 0 7-2.807 7-6s-3.004-6-7-6-7 2.808-7 6c0 1.468.617 2.83 1.678 3.894z" />
-                </svg>
-              )
-            ) : (
-              roomInitial
-            )}
+            {roomInitial}
           </span>
         )}
 
@@ -476,7 +472,7 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
               </svg>
             </span>
           )}
-          {!isDm && screenShareActive && (
+          {screenShareActive && (
             <span className="text-destructive" title="Someone is sharing their screen">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M0 3.5A1.5 1.5 0 0 1 1.5 2h13A1.5 1.5 0 0 1 16 3.5v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 0 10.5v-7zM1.5 3a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .5.5h13a.5.5 0 0 0 .5-.5v-7a.5.5 0 0 0-.5-.5h-13z" />
@@ -512,52 +508,7 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuLabel className="ui-heading">
-                Notifications
-              </DropdownMenuLabel>
-              {NOTIFICATION_LEVELS.map(({ value, label }) => (
-                <DropdownMenuItem
-                  key={value}
-                  onClick={() => void setNotificationLevel(roomId, value).catch(() => {})}
-                >
-                  <span className="w-4 flex justify-center">
-                    {notificationLevel === value && <Check className="h-3.5 w-3.5" />}
-                  </span>
-                  {label}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              {/* The dialog reads the open room, so it is offered there only. */}
-              {!isDm && roomId === state.currentRoomId && !!info?.moderation?.rules && (
-                <DropdownMenuItem onClick={showRoomRules}>
-                  <ScrollText className="h-3.5 w-3.5 mr-2" /> Room rules
-                </DropdownMenuItem>
-              )}
-              {!isDm && roomId === state.currentRoomId && state.reportCounts[roomId] !== undefined && (
-                <DropdownMenuItem onClick={() => showReports(roomId)}>
-                  <Flag className="h-3.5 w-3.5 mr-2" /> Reports
-                  {state.reportCounts[roomId] > 0 && (
-                    <span className="ml-auto rounded-full bg-destructive px-1.5 text-3xs font-semibold text-destructive-foreground">
-                      {state.reportCounts[roomId]}
-                    </span>
-                  )}
-                </DropdownMenuItem>
-              )}
-              {!isDm && info?.creator === state.userId && (
-                <DropdownMenuItem onClick={() => setSettingsRoomId(roomId)}>
-                  <Settings2 className="h-3.5 w-3.5 mr-2" /> Room settings
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem
-                className="text-destructive"
-                onClick={async () => {
-                  if (await confirm({ title: "Leave this room?", confirmLabel: "Leave", destructive: true })) {
-                    leaveRoom(roomId);
-                  }
-                }}
-              >
-                <LogOut className="h-3.5 w-3.5 mr-2" /> Leave room
-              </DropdownMenuItem>
+              {renderRoomMenuItems(roomId)}
             </DropdownMenuContent>
           </DropdownMenu>
         </span>
@@ -613,7 +564,14 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
       <Tooltip>
         <TooltipTrigger asChild>
           <button
-            onClick={() => selectRoom(roomId)}
+            onClick={() => {
+              selectRoom(roomId);
+              onDmsOpenChange(false);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setRailMenu({ kind: "room", id: roomId, x: e.clientX, y: e.clientY });
+            }}
             aria-label={roomName}
             aria-current={isActive ? "page" : undefined}
             draggable
@@ -787,6 +745,10 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
             <TooltipTrigger asChild>
               <button
                 onClick={() => void toggleGroupCollapsed(group.group_id, open).catch(() => {})}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setRailMenu({ kind: "folder", id: group.group_id, x: e.clientX, y: e.clientY });
+                }}
                 aria-label={label}
                 aria-expanded={open}
                 draggable
@@ -1002,11 +964,12 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
         >
           {renderRailAction({
             label: "Activity",
-            active: !state.currentRoomId && !state.adminDashboardOpen,
+            active: !state.currentRoomId && !state.adminDashboardOpen && !dmsOpen,
             badge: state.incomingFriendRequests.length,
             onClick: () => {
               dispatch({ type: "SELECT_ROOM", payload: null });
               dispatch({ type: "SET_ADMIN_DASHBOARD_OPEN", payload: false });
+              onDmsOpenChange(false);
             },
             children: <LayoutDashboard className="h-5 w-5" />,
           })}
@@ -1014,17 +977,22 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
               mixing faces into the server rail, and the same holds here: a
               DM is a destination, not one more room to scroll past. The
               button carries the whole list's unread state and opens the
-              sidebar on it, since a rail this narrow cannot show the list. */}
+              list in the channel column's place, since a rail this narrow
+              cannot show it. */}
           {renderRailAction({
             label: dmMentions > 0
               ? `Direct messages — ${dmMentions} unread mention${dmMentions === 1 ? "" : "s"}`
               : "Direct messages",
-            active: currentIsDm,
+            active: currentIsDm || dmsOpen,
             unread: dmUnread,
             badge: dmMentions,
             onClick: () => {
-              setActiveTab("dms");
-              setOpen(true);
+              // Already reading a DM, the list is already beside it.
+              if (!currentIsDm) {
+                dispatch({ type: "SELECT_ROOM", payload: null });
+                dispatch({ type: "SET_ADMIN_DASHBOARD_OPEN", payload: false });
+              }
+              onDmsOpenChange(true);
             },
             children: <MessageCircle className="h-5 w-5" />,
           })}
@@ -1069,42 +1037,117 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
           </ScrollArea>
 
           <Separator className="w-8" />
-          {renderRailAction({
-            label: "Create a room",
-            onClick: onCreateRoom,
-            children: <Plus className="h-5 w-5" />,
-          })}
           {state.isAdmin && renderRailAction({
             label: "Server dashboard",
             active: state.adminDashboardOpen,
-            onClick: () => dispatch({ type: "SET_ADMIN_DASHBOARD_OPEN", payload: true }),
+            onClick: () => {
+              dispatch({ type: "SET_ADMIN_DASHBOARD_OPEN", payload: true });
+              onDmsOpenChange(false);
+            },
             children: <Shield className="h-5 w-5" />,
           })}
-          {renderRailAction({
-            label: "You",
-            onClick: () => setProfileOpen(true),
-            children: (
-              <Avatar className="size-(--rail-icon) rounded-none">
-                <AuthAvatarImage src={state.userId ? state.userPresence[state.userId]?.avatarUrl : undefined} />
-                <AvatarFallback className="rounded-none bg-transparent text-base font-bold">
-                  {initial}
-                </AvatarFallback>
-              </Avatar>
-            ),
-          })}
-          {/* Ctrl+B is the other way back, but nothing on screen says so. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={toggleSidebar}
-                aria-label="Expand sidebar"
-                className="flex h-6 w-(--rail-icon) shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors cursor-pointer"
+          {/* The rail is all there is on desktop, so what the full sidebar
+              kept in its header and footer lives behind your avatar. */}
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    aria-label="You"
+                    className="group/rail relative flex size-(--rail-icon) shrink-0 items-center justify-center cursor-pointer"
+                  >
+                    <span className="flex size-(--rail-icon) items-center justify-center overflow-hidden rounded-3xl bg-sidebar-accent text-sidebar-foreground transition-all duration-200 group-hover/rail:rounded-2xl group-hover/rail:bg-sidebar-primary group-hover/rail:text-sidebar-primary-foreground">
+                      <Avatar className="size-(--rail-icon) rounded-none">
+                        <AuthAvatarImage src={state.userId ? state.userPresence[state.userId]?.avatarUrl : undefined} />
+                        <AvatarFallback className="rounded-none bg-transparent text-base font-bold">
+                          {initial}
+                        </AvatarFallback>
+                      </Avatar>
+                    </span>
+                  </button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>{displayName}</TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent side="right" align="end" sideOffset={8} className="w-52">
+              <DropdownMenuLabel className="truncate">{displayName}</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setProfileOpen(true)}>
+                <UserRound className="h-3.5 w-3.5 mr-2" /> Profile
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setAppearanceOpen(true)}>
+                <Palette className="h-3.5 w-3.5 mr-2" /> Appearance
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setSettingsTab(undefined);
+                  setSettingsOpen(true);
+                }}
               >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8}>Expand sidebar (Ctrl+B)</TooltipContent>
-          </Tooltip>
+                <Settings2 className="h-3.5 w-3.5 mr-2" /> Voice & audio settings
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-destructive" onClick={logout}>
+                <LogOut className="h-3.5 w-3.5 mr-2" /> Log out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* One menu for every icon, anchored at the cursor. */}
+          <DropdownMenu open={!!railMenu} onOpenChange={(open) => !open && setRailMenu(null)}>
+            <DropdownMenuTrigger asChild>
+              <span
+                aria-hidden
+                className="pointer-events-none fixed size-0"
+                style={{ left: railMenu?.x ?? 0, top: railMenu?.y ?? 0 }}
+              />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-48">
+              {railMenu?.kind === "room" && renderRoomMenuItems(railMenu.id)}
+              {railMenu?.kind === "folder" && (() => {
+                const group = state.roomGroups.find((g) => g.group_id === railMenu.id);
+                if (!group) return null;
+                const openGroupDialog = (mode: "rename" | "manage") => {
+                  setGroupDialogMode(mode);
+                  setGroupDialogId(group.group_id);
+                  setGroupDialogName(group.name);
+                  setGroupDialogOpen(true);
+                };
+                return (
+                  <>
+                    <DropdownMenuLabel className="ui-heading truncate">{group.name}</DropdownMenuLabel>
+                    <DropdownMenuItem onClick={() => openGroupDialog("manage")}>
+                      <Settings2 className="h-3.5 w-3.5 mr-2" /> Manage rooms
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => openGroupDialog("rename")}>
+                      <Pencil className="h-3.5 w-3.5 mr-2" /> Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="text-destructive"
+                      onClick={async () => {
+                        if (await confirm({ title: `Delete group "${group.name}"?`, description: "Its rooms become ungrouped.", confirmLabel: "Delete", destructive: true })) {
+                          deleteRoomGroup(group.group_id);
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete group
+                    </DropdownMenuItem>
+                  </>
+                );
+              })()}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  setGroupDialogMode("create");
+                  setGroupDialogId(undefined);
+                  setGroupDialogName(undefined);
+                  setGroupDialogOpen(true);
+                }}
+              >
+                <FolderPlus className="h-3.5 w-3.5 mr-2" /> New group
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       ) : (
       <>
@@ -1336,7 +1379,7 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
                               {/* Group rooms */}
                               {!group.collapsed && (
                                 <div className="space-y-px px-2 pb-1">
-                                  {groupRooms.map((roomId) => renderRoomCard(roomId, false))}
+                                  {groupRooms.map((roomId) => renderRoomCard(roomId))}
                                 </div>
                               )}
                               {!group.collapsed && groupRooms.length === 0 && (
@@ -1378,7 +1421,7 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
                               </span>
                             </div>
                             <div className="space-y-px px-2 pb-2">
-                              {ungroupedRoomIds.map((roomId) => renderRoomCard(roomId, false))}
+                              {ungroupedRoomIds.map((roomId) => renderRoomCard(roomId))}
                             </div>
                           </div>
                         )}
@@ -1423,7 +1466,7 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
                               </p>
                             )}
                             <div className="space-y-px px-2 pb-2">
-                              {regularRoomIds.map((roomId) => renderRoomCard(roomId, false))}
+                              {regularRoomIds.map((roomId) => renderRoomCard(roomId))}
                             </div>
                           </>
                         )}
@@ -1432,25 +1475,7 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
                   })()}
                 </>
               ) : (
-                <>
-                  <div className="px-2 pb-1">
-                    <button
-                      onClick={() => setGroupDMDialogOpen(true)}
-                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      <UsersRound className="h-3 w-3" />
-                      Group DM
-                    </button>
-                  </div>
-                  {dmRoomIds.length === 0 && (
-                    <p className="px-3 py-3 text-xs text-muted-foreground">
-                      No direct messages yet
-                    </p>
-                  )}
-                  <div className="space-y-px px-2 pb-2">
-                    {dmRoomIds.map((roomId) => renderRoomCard(roomId, true))}
-                  </div>
-                </>
+                <DmList onSelect={() => setOpenMobile(false)} />
               )}
             </ScrollArea>
           </SidebarGroupContent>
@@ -1555,10 +1580,6 @@ export function AppSidebar({ onCreateRoom, onJoinRoom }: AppSidebarProps) {
         mode={groupDialogMode}
         groupId={groupDialogId}
         groupName={groupDialogName}
-      />
-      <GroupDMDialog
-        open={groupDMDialogOpen}
-        onOpenChange={setGroupDMDialogOpen}
       />
       {settingsRoomId && (
         <RoomSettingsDialog

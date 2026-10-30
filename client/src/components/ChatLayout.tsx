@@ -11,6 +11,7 @@ import { ChatArea } from "./ChatArea";
 import { MembersPanel } from "./MembersPanel";
 import { ThreadPanel } from "./ThreadPanel";
 import { ChannelList } from "./ChannelList";
+import { DmColumn } from "./DmList";
 import { VoiceControls, type ConnQualityData } from "./VoiceControls";
 import { ScreenShareViewer, ScreenShareHeader, MiniViewerControls } from "./ScreenShareViewer";
 import { StreamOptInBar } from "./voice/StreamOptInBar";
@@ -574,6 +575,16 @@ export function ChatLayout() {
   };
 
   const showChannelColumn = hasChannels;
+  // The DM list takes the channel column's place on desktop: opened from the
+  // rail's DM button over the activity page, and kept beside any DM you open
+  // from it. Opening a room puts it away.
+  const [dmsOpen, setDmsOpen] = useState(false);
+  if (dmsOpen && state.currentRoomId && !isDmRoom) setDmsOpen(false);
+  const showDmColumn =
+    !isMobile && !state.adminDashboardOpen && (isDmRoom || (dmsOpen && !state.currentRoomId));
+  const dmColumn = showDmColumn && (
+    <DmColumn onCreateRoom={() => setCreateOpen(true)} onJoinRoom={() => setJoinOpen(true)} />
+  );
   // The channel column carries the call's controls at its foot in every room,
   // so the bottom voice bar is only needed where that column is not showing:
   // a room with no channels, the activity page, the admin dashboard, or a
@@ -648,15 +659,23 @@ export function ChatLayout() {
         style={{ position: "fixed", top: -9999, left: -9999, width: 1, height: 1 }}
       />
 
-      {/* The collapsed sidebar is a rail of room icons rather than nothing,
-          so it needs Discord's width — a 48px icon with 12px either side —
-          not shadcn's 3rem default. Set here so the layout gap and the
-          sidebar itself agree on it. */}
-      <SidebarProvider style={{ "--sidebar-width-icon": "4.5rem" } as CSSProperties}>
+      {/* On desktop the sidebar is held to its rail of room icons for good —
+          the DM list and the room buttons live in the column beside it — so
+          it is closed here and Ctrl+B has nothing to open. The rail needs
+          Discord's width — a 48px icon with 12px either side — not shadcn's
+          3rem default. Set here so the layout gap and the sidebar itself
+          agree on it. Mobile's sheet keeps its own open state. */}
+      <SidebarProvider
+        open={false}
+        onOpenChange={() => {}}
+        style={{ "--sidebar-width-icon": "4.5rem" } as CSSProperties}
+      >
         <div className={`flex h-dvh w-full bg-muted ${isMobile ? "" : "gap-2 p-2"}`}>
           <AppSidebar
             onCreateRoom={() => setCreateOpen(true)}
             onJoinRoom={() => setJoinOpen(true)}
+            dmsOpen={dmsOpen}
+            onDmsOpenChange={setDmsOpen}
           />
 
           <SidebarInset className={`flex flex-1 flex-col min-w-0 overflow-hidden ${isMobile ? "" : "rounded-lg border border-border"}`}>
@@ -770,10 +789,14 @@ export function ChatLayout() {
               {state.adminDashboardOpen ? (
                 <AdminDashboard />
               ) : !state.currentRoomId ? (
-                <ActivityPage />
+                <>
+                  {dmColumn}
+                  <ActivityPage />
+                </>
               ) : (
               <>
                 {showChannelColumn && !isMobile && renderChannelList(false)}
+                {dmColumn}
                 {/* The viewer sits beside whichever view the room has, as
                     one element for as long as it is open — filling the area
                     on the call's room, or a thumbnail over any room's view —
