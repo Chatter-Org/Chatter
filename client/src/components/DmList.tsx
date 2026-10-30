@@ -161,7 +161,7 @@ function DmRow({
       }}
       title={roomName}
       className={cn(
-        "group/card relative flex w-full items-center gap-2 rounded-md py-1 pl-3 pr-1.5 text-left transition-colors cursor-pointer",
+        "group/card relative flex w-full items-center gap-2.5 rounded-md py-1.5 pl-3 pr-1.5 text-left transition-colors cursor-pointer",
         isActive
           ? "bg-sidebar-accent text-sidebar-accent-foreground"
           : "hover:bg-sidebar-accent/50",
@@ -182,16 +182,16 @@ function DmRow({
         <AuthImage
           src={info.icon_url}
           alt=""
-          className="h-7 w-7 shrink-0 rounded-md object-cover"
+          className="h-9 w-9 shrink-0 rounded-md object-cover"
         />
       ) : dmPeerAvatar && !showStreak ? (
         // Radix's Avatar so a deleted or unreachable file falls back to the
         // initial instead of a broken image.
-        <Avatar className="h-7 w-7 shrink-0">
+        <Avatar className="h-9 w-9 shrink-0">
           <AuthAvatarImage src={dmPeerAvatar} />
           <AvatarFallback
             className={cn(
-              "rounded-full text-xs font-bold",
+              "rounded-full text-sm font-bold",
               isActive
                 ? "bg-sidebar-primary text-sidebar-primary-foreground"
                 : "bg-sidebar-accent text-sidebar-foreground",
@@ -203,7 +203,7 @@ function DmRow({
       ) : (
         <span
           className={cn(
-            "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-xs font-bold",
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-sm font-bold",
             isActive
               ? "bg-sidebar-primary text-sidebar-primary-foreground"
               : "bg-sidebar-accent text-sidebar-foreground",
@@ -224,7 +224,7 @@ function DmRow({
         </span>
       )}
 
-      <span className="min-w-0 flex-1 truncate text-sm leading-tight">{roomName}</span>
+      <span className="min-w-0 flex-1 truncate text-[0.9375rem] font-medium leading-tight">{roomName}</span>
 
       <span className="ml-auto flex shrink-0 items-center gap-1.5">
         {voiceCount > 0 && (
