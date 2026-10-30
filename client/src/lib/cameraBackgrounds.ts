@@ -5,17 +5,17 @@
  * server never needs the images, and a storage that throws (private windows,
  * blocked site data) just means starting from no effect with no images.
  *
- * In the desktop app there is also a 3D avatar to put in place of the
- * person (`avatarCamera.ts`), chosen apart from the background so an image
- * can go behind it; its files are kept by the app, not here.
+ * There is also a 3D avatar to put in place of the person
+ * (`avatarCamera.ts`), chosen apart from the background so an image can go
+ * behind it; its files are kept by `avatarStore`, not here.
  */
-import { desktop, hasDesktopFeature, type DesktopAvatars } from "@/lib/desktop/bridge";
+import { avatarStore } from "@/lib/avatarStore";
 
 export type CameraEffect =
   | { kind: "none" }
   | { kind: "blur" }
   | { kind: "image"; id: string; src: string }
-  /** A VRM file the desktop app keeps (`DesktopAvatars`), by its id, drawn
+  /** A VRM file kept on this device (`avatarStore`), by its id, drawn
    *  in front of one of the images (a data URL) or a plain backdrop. */
   | { kind: "avatar"; id: string; backgroundSrc?: string };
 
@@ -133,7 +133,7 @@ export function saveCameraEffect(effect: CameraBackgroundEffect) {
 /** This device's last avatar, by id. Whether its file is still there is only
  *  known once it is listed or read. */
 export function readCameraAvatar(): string | null {
-  if (!desktopAvatars) return null;
+  if (!avatarStore) return null;
   try {
     const saved = localStorage.getItem(AVATAR_KEY);
     if (saved) return saved;
@@ -162,14 +162,10 @@ export function decodeCameraBackground(src: string): Promise<ImageBitmap> {
     .then((blob) => createImageBitmap(blob));
 }
 
-/** The desktop app's avatars, or null where there are none to offer. */
-export const desktopAvatars: DesktopAvatars | null =
-  hasDesktopFeature("avatars@1") ? (desktop?.avatars ?? null) : null;
-
 /** An avatar's VRM file, ready for `startAvatarCamera`. */
 export async function readAvatar(id: string): Promise<ArrayBuffer> {
-  if (!desktopAvatars) throw new Error("Avatars need the Chatter desktop app.");
-  return desktopAvatars.read(id).catch(() => {
+  if (!avatarStore) throw new Error("This browser has nowhere to keep avatars.");
+  return avatarStore.read(id).catch(() => {
     throw new Error("That avatar's file couldn't be opened. Has it been moved?");
   });
 }

@@ -11,7 +11,6 @@ import type { BlurredCamera } from "@/lib/backgroundBlur";
 import {
   addCameraBackground,
   decodeCameraBackground,
-  desktopAvatars,
   listCameraBackgrounds,
   MAX_CAMERA_BACKGROUNDS,
   readAvatar,
@@ -23,7 +22,7 @@ import {
   type CameraBackgroundEffect,
   type CameraEffect,
 } from "@/lib/cameraBackgrounds";
-import type { DesktopAvatar } from "@/lib/desktop/bridge";
+import { avatarStore, type StoredAvatar } from "@/lib/avatarStore";
 import { Ban, Droplets, FolderOpen, ImagePlus, Plus, UserRound, X } from "lucide-react";
 
 interface CameraSelectModalProps {
@@ -55,8 +54,8 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
   // The preview through the effect, so what you see is what the call will see.
   const [blurredPreview, setBlurredPreview] = useState<BlurredCamera | null>(null);
   const [effectFailed, setEffectFailed] = useState(false);
-  // The desktop app's avatars; null until listed, and always where there are none.
-  const [avatars, setAvatars] = useState<DesktopAvatar[] | null>(null);
+  // This device's avatars; null until listed, and always where there is nowhere to keep them.
+  const [avatars, setAvatars] = useState<StoredAvatar[] | null>(null);
   // Loading the chosen avatar failed (blocks starting), or adding or removing one did.
   const [avatarError, setAvatarError] = useState<string | null>(null);
   const [avatarFileError, setAvatarFileError] = useState<string | null>(null);
@@ -105,8 +104,8 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
 
   // The avatars, kept current while the folder changes under us.
   useEffect(() => {
-    if (!open || !desktopAvatars) return;
-    const avatarsApi = desktopAvatars;
+    if (!open || !avatarStore) return;
+    const avatarsApi = avatarStore;
     let cancelled = false;
     const refresh = () =>
       avatarsApi
@@ -232,12 +231,12 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
   }
 
   async function handleAddAvatars() {
-    if (!desktopAvatars) return;
+    if (!avatarStore) return;
     setAvatarFileError(null);
     try {
-      const added = await desktopAvatars.add();
+      const added = await avatarStore.add();
       if (added.length === 0) return;
-      setAvatars(await desktopAvatars.list());
+      setAvatars(await avatarStore.list());
       selectAvatar(added[0].id);
     } catch (err) {
       setAvatarFileError(err instanceof Error ? err.message : "That avatar couldn't be added.");
@@ -245,11 +244,11 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
   }
 
   async function handleRemoveAvatar(id: string) {
-    if (!desktopAvatars) return;
+    if (!avatarStore) return;
     setAvatarFileError(null);
     try {
-      await desktopAvatars.remove(id);
-      setAvatars(await desktopAvatars.list());
+      await avatarStore.remove(id);
+      setAvatars(await avatarStore.list());
     } catch (err) {
       setAvatarFileError(err instanceof Error ? err.message : "That avatar couldn't be removed.");
     }
@@ -343,19 +342,21 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                 </p>
               </div>
 
-              {desktopAvatars && (
+              {avatarStore && (
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-medium text-muted-foreground">Avatar</label>
-                    <button
-                      type="button"
-                      onClick={() => desktopAvatars?.openFolder()}
-                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
-                      title="Show the avatars folder"
-                    >
-                      <FolderOpen className="h-3 w-3" />
-                      Open folder
-                    </button>
+                    {avatarStore.openFolder && (
+                      <button
+                        type="button"
+                        onClick={() => avatarStore?.openFolder?.()}
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                        title="Show the avatars folder"
+                      >
+                        <FolderOpen className="h-3 w-3" />
+                        Open folder
+                      </button>
+                    )}
                   </div>
                   <div className="grid grid-cols-4 gap-2">
                     <button
@@ -387,7 +388,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                           type="button"
                           onClick={() => void handleRemoveAvatar(a.id)}
                           className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-background text-muted-foreground shadow ring-1 ring-border hover:text-foreground can-hover:opacity-0 can-hover:group-hover:opacity-100 cursor-pointer"
-                          title="Move this avatar to the trash"
+                          title={avatarStore?.openFolder ? "Move this avatar to the trash" : "Remove this avatar"}
                         >
                           <X className="h-3 w-3" />
                         </button>
@@ -410,7 +411,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                   >
                     {avatarError ??
                       avatarFileError ??
-                      "A 3D avatar follows your face in place of your camera; the camera's picture never leaves this computer."}
+                      "A 3D avatar (a .vrm file) follows your face in place of your camera. The avatar and the camera's picture stay on this device."}
                   </p>
                 </div>
               )}

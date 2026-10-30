@@ -1,5 +1,5 @@
 /**
- * A 3D avatar in place of the camera, for the desktop app. The camera's
+ * A 3D avatar in place of the camera. The camera's
  * frames are only looked at here, never sent: MediaPipe's face landmarker
  * reads the head's pose and 52 expression scores ("blendshapes") off each
  * one, those pose a VRM model, and three.js draws it onto a canvas whose
@@ -206,46 +206,11 @@ function backdropTexture(image: ImageBitmap): THREE.CanvasTexture {
 }
 
 /**
- * Draw the VRM avatar in `model`, following the face in `source`, at up to
- * `fps` frames a second, in front of `image` (closed once drawn) or a plain
- * backdrop. Chromium only (the desktop app): it reads the
- * camera's frames and writes the avatar's with the breakout box, as the blur
- * does. A camera unplugged or revoked ends `source`, not the returned track:
- * whoever holds the source watches it and calls `stop`.
+ * The avatar's scene: `draw` reads the face off a camera frame, poses the
+ * avatar from it and renders it onto `canvas`. Owns everything it is given;
+ * `dispose` lets it all go.
  */
-export async function startAvatarCamera(
-  source: MediaStreamTrack,
-  fps: number,
-  model: ArrayBuffer,
-  image?: ImageBitmap,
-): Promise<BlurredCamera> {
-  let backdrop: THREE.CanvasTexture | null = null;
-  try {
-    const box = globalThis as unknown as BreakoutBox;
-    if (!box.MediaStreamTrackProcessor || !box.MediaStreamTrackGenerator || typeof VideoFrame === "undefined") {
-      throw new Error("Avatars need the Chatter desktop app.");
-    }
-    if (image) backdrop = backdropTexture(image);
-    const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
-    return run(box as Required<BreakoutBox>, landmarker, vrm, backdrop, source, fps);
-  } catch (err) {
-    backdrop?.dispose();
-    throw err;
-  } finally {
-    // Copied onto the backdrop's own canvas by now, so it is done with.
-    image?.close();
-  }
-}
-
-/** Sets the scene up and starts drawing; owns everything it is given. */
-function run(
-  box: Required<BreakoutBox>,
-  landmarker: FaceLandmarker,
-  vrm: VRM,
-  backdrop: THREE.CanvasTexture | null,
-  source: MediaStreamTrack,
-  fps: number,
-): BlurredCamera {
+function makeScene(landmarker: FaceLandmarker, vrm: VRM, backdrop: THREE.CanvasTexture | null) {
   const canvas = document.createElement("canvas");
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
@@ -255,7 +220,7 @@ function run(
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
   } catch {
     VRMUtils.deepDispose(vrm.scene);
-    throw new Error("This computer can't draw the avatar (no WebGL).");
+    throw new Error("This device can't draw the avatar (no WebGL).");
   }
   renderer.setPixelRatio(1);
   renderer.setSize(WIDTH, HEIGHT, false);
@@ -278,6 +243,34 @@ function run(
   }
   const rig = makeRig(vrm);
 
+  const draw = (frame: VideoFrame | HTMLVideoElement, deltaS: number) => {
+    const nowMs = performance.now();
+    lastTimestamp = Math.max(nowMs, lastTimestamp + 1);
+    let result: FaceLandmarkerResult | null = null;
+    try {
+      result = landmarker.detectForVideo(frame, lastTimestamp);
+    } catch {
+      // No reading this frame; the avatar carries on as if the face were lost.
+    }
+    rig(result, deltaS, nowMs);
+    renderer.render(scene, camera);
+  };
+
+  return { canvas, draw, dispose };
+}
+
+type AvatarScene = ReturnType<typeof makeScene>;
+
+/**
+ * Chromium (Chrome, Edge, the desktop app): the camera's frames in, the
+ * avatar's out, as they come, which keeps going in a background tab.
+ */
+function avatarWithBreakoutBox(
+  box: Required<BreakoutBox>,
+  avatar: AvatarScene,
+  source: MediaStreamTrack,
+  fps: number,
+): BlurredCamera {
   const reader = new box.MediaStreamTrackProcessor({ track: source, maxBufferSize: 1 }).readable.getReader();
   const generator = new box.MediaStreamTrackGenerator({ kind: "video" });
   const writer = generator.writable.getWriter();
@@ -293,17 +286,8 @@ function run(
         if (stopped || frame.timestamp - lastUs < minGapUs) continue;
         const deltaS = lastUs === -Infinity ? 0 : (frame.timestamp - lastUs) / 1_000_000;
         lastUs = frame.timestamp;
-        const nowMs = performance.now();
-        lastTimestamp = Math.max(nowMs, lastTimestamp + 1);
-        let result: FaceLandmarkerResult | null = null;
-        try {
-          result = landmarker.detectForVideo(frame, lastTimestamp);
-        } catch {
-          // No reading this frame; the avatar carries on as if the face were lost.
-        }
-        rig(result, deltaS, nowMs);
-        renderer.render(scene, camera);
-        await writer.write(new VideoFrame(canvas, { timestamp: frame.timestamp }));
+        avatar.draw(frame, deltaS);
+        await writer.write(new VideoFrame(avatar.canvas, { timestamp: frame.timestamp }));
       } catch {
         // The track was stopped under us; the loop's condition ends it.
       } finally {
@@ -311,7 +295,7 @@ function run(
       }
     }
     // Only once the loop is done with them.
-    dispose();
+    avatar.dispose();
   })();
 
   return {
@@ -325,4 +309,85 @@ function run(
       source.stop();
     },
   };
+}
+
+/**
+ * Firefox and Safari: the camera played into a video element, the avatar
+ * drawn on a worker's clock, and the canvas streamed. As with the blur, the
+ * canvas stream only sends when the page paints, so the camera can stall
+ * while the sender's tab is hidden.
+ */
+async function avatarWithCanvasStream(
+  avatar: AvatarScene,
+  source: MediaStreamTrack,
+  fps: number,
+): Promise<BlurredCamera> {
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.srcObject = new MediaStream([source]);
+  try {
+    await video.play();
+  } catch (err) {
+    avatar.dispose();
+    throw err;
+  }
+  const track = avatar.canvas.captureStream(fps).getVideoTracks()[0];
+
+  const tickSource = `setInterval(() => postMessage(0), ${Math.max(1, Math.round(1000 / fps))});`;
+  const tickUrl = URL.createObjectURL(new Blob([tickSource], { type: "text/javascript" }));
+  const ticker = new Worker(tickUrl);
+  let lastMs = performance.now();
+  ticker.onmessage = () => {
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+    const now = performance.now();
+    avatar.draw(video, (now - lastMs) / 1000);
+    lastMs = now;
+  };
+
+  let stopped = false;
+  return {
+    track,
+    stop: () => {
+      if (stopped) return;
+      stopped = true;
+      ticker.terminate();
+      URL.revokeObjectURL(tickUrl);
+      source.stop();
+      track.stop();
+      video.srcObject = null;
+      avatar.dispose();
+    },
+  };
+}
+
+/**
+ * Draw the VRM avatar in `model`, following the face in `source`, at up to
+ * `fps` frames a second, in front of `image` (closed once drawn) or a plain
+ * backdrop. A camera unplugged or revoked ends `source`, not the returned
+ * track: whoever holds the source watches it and calls `stop`.
+ */
+export async function startAvatarCamera(
+  source: MediaStreamTrack,
+  fps: number,
+  model: ArrayBuffer,
+  image?: ImageBitmap,
+): Promise<BlurredCamera> {
+  let backdrop: THREE.CanvasTexture | null = null;
+  try {
+    if (image) backdrop = backdropTexture(image);
+    const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
+    const avatar = makeScene(landmarker, vrm, backdrop);
+    const box = globalThis as unknown as BreakoutBox;
+    if (box.MediaStreamTrackProcessor && box.MediaStreamTrackGenerator && typeof VideoFrame !== "undefined") {
+      return avatarWithBreakoutBox(box as Required<BreakoutBox>, avatar, source, fps);
+    }
+    return await avatarWithCanvasStream(avatar, source, fps);
+  } catch (err) {
+    backdrop?.dispose();
+    throw err;
+  } finally {
+    // Copied onto the backdrop's own canvas by now, so it is done with.
+    image?.close();
+  }
 }
