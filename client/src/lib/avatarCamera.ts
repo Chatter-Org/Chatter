@@ -19,6 +19,7 @@ import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import type { BlurredCamera, BreakoutBox } from "@/lib/backgroundBlur";
+import { AVATAR_ZOOM } from "@/lib/cameraBackgrounds";
 
 /** The avatar is drawn at this size whatever the camera's. */
 const WIDTH = 1280;
@@ -177,8 +178,16 @@ function makeRig(vrm: VRM) {
   };
 }
 
-/** Arms down from the T-pose models are made in, and the camera on the face. */
-function poseAndFrame(vrm: VRM, camera: THREE.PerspectiveCamera) {
+export interface AvatarCamera extends BlurredCamera {
+  /** Moves the camera in (above 1) or out (below), from the next frame. */
+  setZoom: (zoom: number) => void;
+}
+
+/**
+ * Arms down from the T-pose models are made in, and the camera on the face.
+ * Returns what moves the camera in and out.
+ */
+function poseAndFrame(vrm: VRM, camera: THREE.PerspectiveCamera): (zoom: number) => void {
   // In a VRM 1.0 model's own space it faces +Z, its left arm points along +X,
   // and a turn about Z brings it down; a 0.x model is the other way round.
   const down = isVrm0(vrm) ? -1.2 : 1.2;
@@ -192,10 +201,13 @@ function poseAndFrame(vrm: VRM, camera: THREE.PerspectiveCamera) {
   const head = vrm.humanoid.getRawBoneNode("head");
   if (!head) throw new Error("That avatar has no head to move.");
   const at = head.getWorldPosition(new THREE.Vector3());
-  // Head and shoulders with room around them, as a webcam frames a person,
-  // whatever the model's height. The head bone is at the base of the skull.
-  camera.position.set(at.x, at.y - 0.02, at.z + 1.6);
-  camera.lookAt(at.x, at.y - 0.08, at.z);
+  // At 1, head and shoulders with room around them, as a webcam frames a
+  // person. The head bone is at the base of the skull.
+  return (zoom) => {
+    const z = Math.min(AVATAR_ZOOM.max, Math.max(AVATAR_ZOOM.min, zoom));
+    camera.position.set(at.x, at.y - 0.02, at.z + 1.6 / z);
+    camera.lookAt(at.x, at.y - 0.08, at.z);
+  };
 }
 
 /** `image` cropped to fill the frame, as a backdrop for the avatar. */
@@ -219,7 +231,7 @@ function backdropTexture(image: ImageBitmap): THREE.CanvasTexture {
  * avatar from it and renders it onto `canvas`. Owns everything it is given;
  * `dispose` lets it all go.
  */
-function makeScene(landmarker: FaceLandmarker, vrm: VRM, backdrop: THREE.CanvasTexture | null) {
+function makeScene(landmarker: FaceLandmarker, vrm: VRM, backdrop: THREE.CanvasTexture | null, zoom: number) {
   const canvas = document.createElement("canvas");
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
@@ -244,12 +256,14 @@ function makeScene(landmarker: FaceLandmarker, vrm: VRM, backdrop: THREE.CanvasT
     backdrop?.dispose();
     renderer.dispose();
   };
+  let setZoom: (zoom: number) => void;
   try {
-    poseAndFrame(vrm, camera);
+    setZoom = poseAndFrame(vrm, camera);
   } catch (err) {
     dispose();
     throw err;
   }
+  setZoom(zoom);
   const rig = makeRig(vrm);
 
   const draw = (frame: VideoFrame | HTMLVideoElement, deltaS: number) => {
@@ -265,7 +279,7 @@ function makeScene(landmarker: FaceLandmarker, vrm: VRM, backdrop: THREE.CanvasT
     renderer.render(scene, camera);
   };
 
-  return { canvas, draw, dispose };
+  return { canvas, draw, dispose, setZoom };
 }
 
 type AvatarScene = ReturnType<typeof makeScene>;
@@ -279,7 +293,7 @@ function avatarWithBreakoutBox(
   avatar: AvatarScene,
   source: MediaStreamTrack,
   fps: number,
-): BlurredCamera {
+): AvatarCamera {
   const reader = new box.MediaStreamTrackProcessor({ track: source, maxBufferSize: 1 }).readable.getReader();
   const generator = new box.MediaStreamTrackGenerator({ kind: "video" });
   const writer = generator.writable.getWriter();
@@ -309,6 +323,7 @@ function avatarWithBreakoutBox(
 
   return {
     track: generator,
+    setZoom: avatar.setZoom,
     stop: () => {
       if (stopped) return;
       stopped = true;
@@ -330,7 +345,7 @@ async function avatarWithCanvasStream(
   avatar: AvatarScene,
   source: MediaStreamTrack,
   fps: number,
-): Promise<BlurredCamera> {
+): Promise<AvatarCamera> {
   const video = document.createElement("video");
   video.muted = true;
   video.playsInline = true;
@@ -357,6 +372,7 @@ async function avatarWithCanvasStream(
   let stopped = false;
   return {
     track,
+    setZoom: avatar.setZoom,
     stop: () => {
       if (stopped) return;
       stopped = true;
@@ -373,20 +389,22 @@ async function avatarWithCanvasStream(
 /**
  * Draw the VRM avatar in `model`, following the face in `source`, at up to
  * `fps` frames a second, in front of `image` (closed once drawn) or a plain
- * backdrop. A camera unplugged or revoked ends `source`, not the returned
- * track: whoever holds the source watches it and calls `stop`.
+ * backdrop, with the camera at `zoom` (`AVATAR_ZOOM`). A camera unplugged
+ * or revoked ends `source`, not the returned track: whoever holds the source
+ * watches it and calls `stop`.
  */
 export async function startAvatarCamera(
   source: MediaStreamTrack,
   fps: number,
   model: ArrayBuffer,
   image?: ImageBitmap,
-): Promise<BlurredCamera> {
+  zoom: number = AVATAR_ZOOM.default,
+): Promise<AvatarCamera> {
   let backdrop: THREE.CanvasTexture | null = null;
   try {
     if (image) backdrop = backdropTexture(image);
     const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
-    const avatar = makeScene(landmarker, vrm, backdrop);
+    const avatar = makeScene(landmarker, vrm, backdrop, zoom);
     const box = globalThis as unknown as BreakoutBox;
     if (box.MediaStreamTrackProcessor && box.MediaStreamTrackGenerator && typeof VideoFrame !== "undefined") {
       return avatarWithBreakoutBox(box as Required<BreakoutBox>, avatar, source, fps);

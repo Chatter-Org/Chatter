@@ -17,7 +17,7 @@ export type CameraEffect =
   | { kind: "image"; id: string; src: string }
   /** A VRM file kept on this device (`avatarStore`), by its id, drawn
    *  in front of one of the images (a data URL) or a plain backdrop. */
-  | { kind: "avatar"; id: string; backgroundSrc?: string };
+  | { kind: "avatar"; id: string; backgroundSrc?: string; zoom?: number };
 
 /** What can be chosen as the background; an avatar is chosen separately. */
 export type CameraBackgroundEffect = Exclude<CameraEffect, { kind: "avatar" }>;
@@ -33,6 +33,13 @@ const LEGACY_BLUR_KEY = "chatter_camera_blur";
 const EFFECT_KEY = "chatter_camera_effect";
 /** The avatar's id, when one is on; absent when none is. */
 const AVATAR_KEY = "chatter_camera_avatar";
+/** Each avatar's zoom, by id: models differ in size. */
+const AVATAR_ZOOM_KEY = "chatter_camera_avatar_zoom";
+
+/** How close the avatar's camera is: 1 frames a person-sized model's head
+ *  and shoulders. Here rather than in `avatarCamera.ts` so the picker can
+ *  use it without loading three.js. */
+export const AVATAR_ZOOM = { min: 0.4, max: 2, default: 1 } as const;
 const BACKGROUNDS_KEY = "chatter_camera_backgrounds";
 
 /** Enough to choose between without filling the browser's storage. */
@@ -144,6 +151,34 @@ export function readCameraAvatar(): string | null {
     // Unreadable storage: no avatar.
   }
   return null;
+}
+
+function readAvatarZooms(): Record<string, number> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(AVATAR_ZOOM_KEY) ?? "{}");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function readAvatarZoom(id: string): number {
+  const zoom = readAvatarZooms()[id];
+  return typeof zoom === "number" && zoom >= AVATAR_ZOOM.min && zoom <= AVATAR_ZOOM.max
+    ? zoom
+    : AVATAR_ZOOM.default;
+}
+
+/** Remembers an avatar's zoom; null forgets it (the avatar was removed). */
+export function saveAvatarZoom(id: string, zoom: number | null) {
+  const zooms = readAvatarZooms();
+  if (zoom === null || zoom === AVATAR_ZOOM.default) delete zooms[id];
+  else zooms[id] = zoom;
+  try {
+    localStorage.setItem(AVATAR_ZOOM_KEY, JSON.stringify(zooms));
+  } catch {
+    // Not remembered; it starts from the default next time.
+  }
 }
 
 export function saveCameraAvatar(id: string | null) {
