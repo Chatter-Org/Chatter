@@ -111,6 +111,13 @@ function expressionsFrom(categories: Category[]): Expressions {
 }
 
 /**
+ * A VRM 0.x model faces -Z in its own space (three-vrm turns its scene round
+ * to face the camera, but its bones keep their axes), so a turn about X or Z
+ * goes the other way on it; about Y it is the same either way.
+ */
+const isVrm0 = (vrm: VRM) => vrm.meta?.metaVersion === "0";
+
+/**
  * Moves the avatar toward what each reading says: the head (shared with the
  * neck, so it does not turn on a stick) and the face. Called once a frame.
  */
@@ -120,11 +127,11 @@ function makeRig(vrm: VRM) {
   const identity = new THREE.Quaternion();
   const headTarget = new THREE.Quaternion();
   const headNow = new THREE.Quaternion();
-  const euler = new THREE.Euler(0, 0, 0, "YXZ");
   const matrix = new THREE.Matrix4();
   const position = new THREE.Vector3();
   const scale = new THREE.Vector3();
   const values = Object.fromEntries(EXPRESSIONS.map((name) => [name, 0])) as Expressions;
+  const vrm0 = isVrm0(vrm);
   let nextBlinkAt = performance.now() + IDLE_BLINK_GAP_MS[0];
 
   const idle = (nowMs: number): Expressions => {
@@ -143,12 +150,13 @@ function makeRig(vrm: VRM) {
     let target: Expressions;
     if (face && transform) {
       // The face's pose in the camera's space, where it looks back along +Z
-      // as the avatar does at its own camera. Turn and tilt apply as they
-      // are; nodding comes out the other way up, so pitch is reversed.
+      // as a VRM 1.0 model does at its own camera, so it applies as it is.
       matrix.fromArray(transform.data).decompose(position, headTarget, scale);
-      euler.setFromQuaternion(headTarget);
-      euler.x = -euler.x;
-      headTarget.setFromEuler(euler);
+      if (vrm0) {
+        // Turned half round about Y for a model that faces -Z.
+        headTarget.x = -headTarget.x;
+        headTarget.z = -headTarget.z;
+      }
       target = expressionsFrom(face.categories);
     } else {
       // Lost the face: settle back to looking ahead.
@@ -171,12 +179,13 @@ function makeRig(vrm: VRM) {
 
 /** Arms down from the T-pose models are made in, and the camera on the face. */
 function poseAndFrame(vrm: VRM, camera: THREE.PerspectiveCamera) {
-  // Normalized bones share the world's axes, with the avatar facing +Z: its
-  // left arm points along +X, and a turn about Z brings it down.
+  // In a VRM 1.0 model's own space it faces +Z, its left arm points along +X,
+  // and a turn about Z brings it down; a 0.x model is the other way round.
+  const down = isVrm0(vrm) ? -1.2 : 1.2;
   const leftArm = vrm.humanoid.getNormalizedBoneNode("leftUpperArm");
   const rightArm = vrm.humanoid.getNormalizedBoneNode("rightUpperArm");
-  if (leftArm) leftArm.rotation.z = -1.2;
-  if (rightArm) rightArm.rotation.z = 1.2;
+  if (leftArm) leftArm.rotation.z = -down;
+  if (rightArm) rightArm.rotation.z = down;
   vrm.update(0);
   vrm.scene.updateMatrixWorld(true);
 
