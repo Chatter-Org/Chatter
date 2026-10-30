@@ -11,10 +11,17 @@
  * fallback to the bare camera: an avatar is on because the face is not for
  * sharing, so anything that fails here fails the camera.
  */
-import { FaceLandmarker, type Category, type FaceLandmarkerResult } from "@mediapipe/tasks-vision";
+import {
+  FaceLandmarker,
+  PoseLandmarker,
+  type Category,
+  type FaceLandmarkerResult,
+  type Landmark,
+} from "@mediapipe/tasks-vision";
 import wasmLoaderPath from "@mediapipe/tasks-vision/vision_wasm_internal.js?url";
 import wasmBinaryPath from "@mediapipe/tasks-vision/vision_wasm_internal.wasm?url";
 import modelAssetPath from "@/assets/models/face_landmarker.task?url";
+import poseModelAssetPath from "@/assets/models/pose_landmarker_lite.task?url";
 import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -35,6 +42,22 @@ const BLINK_SMOOTHING = 0.8;
 const IDLE_BLINK_MS = 150;
 const IDLE_BLINK_GAP_MS = [2500, 6000] as const;
 
+/** Each arm's shoulder, elbow and wrist in MediaPipe's pose landmarks, which
+ *  name sides as the person's own, as VRM does. */
+const ARMS = [
+  { upper: "leftUpperArm", lower: "leftLowerArm", points: [11, 13, 15] },
+  { upper: "rightUpperArm", lower: "rightLowerArm", points: [12, 14, 16] },
+] as const;
+/** A point the pose is less sure than this is in view counts as out of it. */
+const MIN_VISIBILITY = 0.6;
+/** Arms are slower and noisier to read than a face, so they follow more loosely. */
+const ARM_SMOOTHING = 0.35;
+/** Depth read from one camera is the noisiest part of a pose; only some of it
+ *  is used, so an arm does not lunge at the camera. */
+const ARM_DEPTH = 0.5;
+/** The pose is read on every this many frames, to keep its cost down. */
+const POSE_EVERY = 2;
+
 /** VRM's own expression names; three-vrm maps a VRM 0.x model's onto them. */
 const EXPRESSIONS = ["blinkLeft", "blinkRight", "aa", "ee", "oh", "ou", "happy", "surprised"] as const;
 type Expressions = Record<(typeof EXPRESSIONS)[number], number>;
@@ -43,6 +66,31 @@ let landmarkerPromise: Promise<FaceLandmarker> | null = null;
 /** The landmarker refuses a timestamp that does not move forward, across
  *  every camera it is given — the picker's preview, then the call's. */
 let lastTimestamp = 0;
+
+let poseLandmarkerPromise: Promise<PoseLandmarker | null> | null = null;
+
+/** One pose landmarker for the page, for the arms. Without it the arms rest,
+ *  which is no reason to fail the camera. */
+function loadPoseLandmarker(): Promise<PoseLandmarker | null> {
+  poseLandmarkerPromise ??= (async () => {
+    const fileset = { wasmLoaderPath, wasmBinaryPath };
+    const options = (delegate: "GPU" | "CPU") => ({
+      baseOptions: { modelAssetPath: poseModelAssetPath, delegate },
+      runningMode: "VIDEO" as const,
+      numPoses: 1,
+    });
+    try {
+      return await PoseLandmarker.createFromOptions(fileset, options("GPU"));
+    } catch {
+      return await PoseLandmarker.createFromOptions(fileset, options("CPU"));
+    }
+  })().catch((err) => {
+    console.warn("[avatar] arm tracking unavailable:", err);
+    poseLandmarkerPromise = null;
+    return null;
+  });
+  return poseLandmarkerPromise;
+}
 
 /** One landmarker for the page; building it is the slow part. */
 function loadLandmarker(): Promise<FaceLandmarker> {
@@ -120,7 +168,9 @@ const isVrm0 = (vrm: VRM) => vrm.meta?.metaVersion === "0";
 
 /**
  * Moves the avatar toward what each reading says: the head (shared with the
- * neck, so it does not turn on a stick) and the face. Called once a frame.
+ * neck, so it does not turn on a stick), the face, and the arms while they
+ * are in view. Called once a frame, after `poseAndFrame` has put the arms at
+ * rest.
  */
 function makeRig(vrm: VRM) {
   const neck = vrm.humanoid.getNormalizedBoneNode("neck");
@@ -135,6 +185,57 @@ function makeRig(vrm: VRM) {
   const vrm0 = isVrm0(vrm);
   let nextBlinkAt = performance.now() + IDLE_BLINK_GAP_MS[0];
 
+  const arms = ARMS.map(({ upper, lower, points }) => {
+    const upperBone = vrm.humanoid.getNormalizedBoneNode(upper);
+    // Out to its own side in the T-pose: +X for the left arm of a model
+    // facing +Z, the other way for the right, and both reversed for 0.x.
+    const side = (upper === "leftUpperArm" ? 1 : -1) * (vrm0 ? -1 : 1);
+    return {
+      upperBone,
+      lowerBone: vrm.humanoid.getNormalizedBoneNode(lower),
+      points,
+      along: new THREE.Vector3(side, 0, 0),
+      rest: upperBone?.quaternion.clone() ?? new THREE.Quaternion(),
+      upperTarget: new THREE.Quaternion(),
+      lowerTarget: new THREE.Quaternion(),
+    };
+  });
+  const shoulder = new THREE.Vector3();
+  const elbow = new THREE.Vector3();
+  const wrist = new THREE.Vector3();
+  const direction = new THREE.Vector3();
+  const undo = new THREE.Quaternion();
+  const seen = (p: Landmark | undefined): p is Landmark => p !== undefined && p.visibility >= MIN_VISIBILITY;
+  // MediaPipe's world landmarks are in metres with Y down and Z away from the
+  // camera; the model's space has Y up and faces +Z (-Z for 0.x).
+  const toModel = (p: Landmark, out: THREE.Vector3) =>
+    vrm0 ? out.set(-p.x, -p.y, p.z * ARM_DEPTH) : out.set(p.x, -p.y, -p.z * ARM_DEPTH);
+
+  const poseArms = (pose: Landmark[] | null) => {
+    for (const arm of arms) {
+      if (!arm.upperBone) continue;
+      const [s, e, w] = arm.points.map((i) => pose?.[i]);
+      if (seen(s) && seen(e)) {
+        toModel(s, shoulder);
+        toModel(e, elbow);
+        arm.upperTarget.setFromUnitVectors(arm.along, direction.subVectors(elbow, shoulder).normalize());
+        if (seen(w)) {
+          // The forearm turns from where the upper arm already points.
+          toModel(w, wrist);
+          direction.subVectors(wrist, elbow).normalize().applyQuaternion(undo.copy(arm.upperTarget).invert());
+          arm.lowerTarget.setFromUnitVectors(arm.along, direction);
+        } else {
+          arm.lowerTarget.identity();
+        }
+      } else {
+        arm.upperTarget.copy(arm.rest);
+        arm.lowerTarget.identity();
+      }
+      arm.upperBone.quaternion.slerp(arm.upperTarget, ARM_SMOOTHING);
+      arm.lowerBone?.quaternion.slerp(arm.lowerTarget, ARM_SMOOTHING);
+    }
+  };
+
   const idle = (nowMs: number): Expressions => {
     if (nowMs >= nextBlinkAt + IDLE_BLINK_MS) {
       const [min, max] = IDLE_BLINK_GAP_MS;
@@ -145,7 +246,7 @@ function makeRig(vrm: VRM) {
     return { ...rest, blinkLeft: blink, blinkRight: blink };
   };
 
-  return (result: FaceLandmarkerResult | null, deltaS: number, nowMs: number) => {
+  return (result: FaceLandmarkerResult | null, pose: Landmark[] | null, deltaS: number, nowMs: number) => {
     const face = result?.faceBlendshapes?.[0];
     const transform = result?.facialTransformationMatrixes?.[0];
     let target: Expressions;
@@ -172,6 +273,7 @@ function makeRig(vrm: VRM) {
       values[name] += (target[name] - values[name]) * k;
       vrm.expressionManager?.setValue(name, values[name]);
     }
+    poseArms(pose);
     // Also runs the hair and clothes' spring bones; a long gap (a stalled
     // camera) would fling them.
     vrm.update(Math.min(deltaS, 0.1));
@@ -227,11 +329,18 @@ function backdropTexture(image: ImageBitmap): THREE.CanvasTexture {
 }
 
 /**
- * The avatar's scene: `draw` reads the face off a camera frame, poses the
- * avatar from it and renders it onto `canvas`. Owns everything it is given;
+ * The avatar's scene: `draw` reads the face (and every other frame, the
+ * arms) off a camera frame, poses the avatar from them and renders it onto
+ * `canvas`. Owns everything it is given;
  * `dispose` lets it all go.
  */
-function makeScene(landmarker: FaceLandmarker, vrm: VRM, backdrop: THREE.CanvasTexture | null, zoom: number) {
+function makeScene(
+  landmarker: FaceLandmarker,
+  poseLandmarker: PoseLandmarker | null,
+  vrm: VRM,
+  backdrop: THREE.CanvasTexture | null,
+  zoom: number,
+) {
   const canvas = document.createElement("canvas");
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
@@ -265,6 +374,8 @@ function makeScene(landmarker: FaceLandmarker, vrm: VRM, backdrop: THREE.CanvasT
   }
   setZoom(zoom);
   const rig = makeRig(vrm);
+  let frames = 0;
+  let pose: Landmark[] | null = null;
 
   const draw = (frame: VideoFrame | HTMLVideoElement, deltaS: number) => {
     const nowMs = performance.now();
@@ -275,7 +386,15 @@ function makeScene(landmarker: FaceLandmarker, vrm: VRM, backdrop: THREE.CanvasT
     } catch {
       // No reading this frame; the avatar carries on as if the face were lost.
     }
-    rig(result, deltaS, nowMs);
+    // In between, the arms keep heading for the last reading.
+    if (poseLandmarker && frames++ % POSE_EVERY === 0) {
+      try {
+        pose = poseLandmarker.detectForVideo(frame, lastTimestamp).worldLandmarks[0] ?? null;
+      } catch {
+        pose = null;
+      }
+    }
+    rig(result, pose, deltaS, nowMs);
     renderer.render(scene, camera);
   };
 
@@ -403,8 +522,12 @@ export async function startAvatarCamera(
   let backdrop: THREE.CanvasTexture | null = null;
   try {
     if (image) backdrop = backdropTexture(image);
-    const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
-    const avatar = makeScene(landmarker, vrm, backdrop, zoom);
+    const [landmarker, poseLandmarker, vrm] = await Promise.all([
+      loadLandmarker(),
+      loadPoseLandmarker(),
+      loadVrm(model),
+    ]);
+    const avatar = makeScene(landmarker, poseLandmarker, vrm, backdrop, zoom);
     const box = globalThis as unknown as BreakoutBox;
     if (box.MediaStreamTrackProcessor && box.MediaStreamTrackGenerator && typeof VideoFrame !== "undefined") {
       return avatarWithBreakoutBox(box as Required<BreakoutBox>, avatar, source, fps);
