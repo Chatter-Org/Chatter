@@ -189,9 +189,26 @@ function poseAndFrame(vrm: VRM, camera: THREE.PerspectiveCamera) {
   camera.lookAt(at.x, at.y - 0.08, at.z);
 }
 
+/** `image` cropped to fill the frame, as a backdrop for the avatar. */
+function backdropTexture(image: ImageBitmap): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = WIDTH;
+  canvas.height = HEIGHT;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("This computer can't draw the avatar's background.");
+  const cover = Math.max(WIDTH / image.width, HEIGHT / image.height);
+  const w = image.width * cover;
+  const h = image.height * cover;
+  ctx.drawImage(image, (WIDTH - w) / 2, (HEIGHT - h) / 2, w, h);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 /**
  * Draw the VRM avatar in `model`, following the face in `source`, at up to
- * `fps` frames a second. Chromium only (the desktop app): it reads the
+ * `fps` frames a second, in front of `image` (closed once drawn) or a plain
+ * backdrop. Chromium only (the desktop app): it reads the
  * camera's frames and writes the avatar's with the breakout box, as the blur
  * does. A camera unplugged or revoked ends `source`, not the returned track:
  * whoever holds the source watches it and calls `stop`.
@@ -200,13 +217,35 @@ export async function startAvatarCamera(
   source: MediaStreamTrack,
   fps: number,
   model: ArrayBuffer,
+  image?: ImageBitmap,
 ): Promise<BlurredCamera> {
-  const box = globalThis as unknown as BreakoutBox;
-  if (!box.MediaStreamTrackProcessor || !box.MediaStreamTrackGenerator || typeof VideoFrame === "undefined") {
-    throw new Error("Avatars need the Chatter desktop app.");
+  let backdrop: THREE.CanvasTexture | null = null;
+  try {
+    const box = globalThis as unknown as BreakoutBox;
+    if (!box.MediaStreamTrackProcessor || !box.MediaStreamTrackGenerator || typeof VideoFrame === "undefined") {
+      throw new Error("Avatars need the Chatter desktop app.");
+    }
+    if (image) backdrop = backdropTexture(image);
+    const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
+    return run(box as Required<BreakoutBox>, landmarker, vrm, backdrop, source, fps);
+  } catch (err) {
+    backdrop?.dispose();
+    throw err;
+  } finally {
+    // Copied onto the backdrop's own canvas by now, so it is done with.
+    image?.close();
   }
-  const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
+}
 
+/** Sets the scene up and starts drawing; owns everything it is given. */
+function run(
+  box: Required<BreakoutBox>,
+  landmarker: FaceLandmarker,
+  vrm: VRM,
+  backdrop: THREE.CanvasTexture | null,
+  source: MediaStreamTrack,
+  fps: number,
+): BlurredCamera {
   const canvas = document.createElement("canvas");
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
@@ -221,13 +260,14 @@ export async function startAvatarCamera(
   renderer.setPixelRatio(1);
   renderer.setSize(WIDTH, HEIGHT, false);
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(BACKGROUND);
+  scene.background = backdrop ?? new THREE.Color(BACKGROUND);
   const light = new THREE.DirectionalLight(0xffffff, Math.PI);
   light.position.set(0.5, 1, 2);
   scene.add(light, vrm.scene);
   const camera = new THREE.PerspectiveCamera(30, WIDTH / HEIGHT, 0.05, 20);
   const dispose = () => {
     VRMUtils.deepDispose(vrm.scene);
+    backdrop?.dispose();
     renderer.dispose();
   };
   try {

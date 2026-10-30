@@ -418,11 +418,12 @@ export function useWebRTCWebcam() {
       if (effect.kind === "avatar") {
         // Unlike the background effects, an avatar that fails stops the
         // camera here (the catch below): the face is not for sharing.
-        const [{ startAvatarCamera }, model] = await Promise.all([
+        const [{ startAvatarCamera }, model, image] = await Promise.all([
           import("@/lib/avatarCamera"),
           readAvatar(effect.id),
+          effect.backgroundSrc ? decodeCameraBackground(effect.backgroundSrc) : undefined,
         ]);
-        blurRef.current = await startAvatarCamera(stream.getVideoTracks()[0], profile.targetFps, model);
+        blurRef.current = await startAvatarCamera(stream.getVideoTracks()[0], profile.targetFps, model, image);
         sent = new MediaStream([blurRef.current.track]);
       } else if (effect.kind !== "none") {
         try {

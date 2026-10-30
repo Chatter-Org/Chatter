@@ -15,9 +15,12 @@ import {
   listCameraBackgrounds,
   MAX_CAMERA_BACKGROUNDS,
   readAvatar,
+  readCameraAvatar,
   readCameraEffect,
   removeCameraBackground,
+  saveCameraAvatar,
   saveCameraEffect,
+  type CameraBackgroundEffect,
   type CameraEffect,
 } from "@/lib/cameraBackgrounds";
 import type { DesktopAvatar } from "@/lib/desktop/bridge";
@@ -43,7 +46,10 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
   const [maxDeviceFps, setMaxDeviceFps] = useState<number | null>(null);
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
   const [permissionError, setPermissionError] = useState(false);
-  const [effect, setEffect] = useState<CameraEffect>(readCameraEffect);
+  // The background, and the avatar in front of it if there is one; an image
+  // goes behind an avatar, a blur does not (there is no room to blur).
+  const [effect, setEffect] = useState<CameraBackgroundEffect>(readCameraEffect);
+  const [avatarId, setAvatarId] = useState<string | null>(readCameraAvatar);
   const [backgrounds, setBackgrounds] = useState(listCameraBackgrounds);
   const [uploadError, setUploadError] = useState<string | null>(null);
   // The preview through the effect, so what you see is what the call will see.
@@ -57,7 +63,15 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // An avatar never falls back to the bare camera, so it counts even when broken.
-  const hasEffect = effect.kind === "avatar" || (effect.kind !== "none" && !effectFailed);
+  const hasEffect = avatarId !== null || (effect.kind !== "none" && !effectFailed);
+  // What the call will send.
+  const chosen = useMemo<CameraEffect>(
+    () =>
+      avatarId
+        ? { kind: "avatar", id: avatarId, backgroundSrc: effect.kind === "image" ? effect.src : undefined }
+        : effect,
+    [avatarId, effect],
+  );
 
   // Cameras often report 59.94 (NTSC) rather than a flat 60, so allow a
   // little slack instead of hiding the option from them.
@@ -109,10 +123,8 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
 
   // An avatar whose file has gone is no longer a choice.
   useEffect(() => {
-    if (avatars && effect.kind === "avatar" && !avatars.some((a) => a.id === effect.id)) {
-      setEffect({ kind: "none" });
-    }
-  }, [avatars, effect]);
+    if (avatars && avatarId && !avatars.some((a) => a.id === avatarId)) setAvatarId(null);
+  }, [avatars, avatarId]);
 
   // Start/restart preview when selected device changes
   useEffect(() => {
@@ -141,19 +153,21 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
   // clone, so turning the effect off (which stops what it was given) leaves
   // the preview going.
   useEffect(() => {
-    const source = effect.kind !== "none" ? previewStream?.getVideoTracks()[0] : undefined;
+    const source = chosen.kind !== "none" ? previewStream?.getVideoTracks()[0] : undefined;
     if (!source) return;
     let cancelled = false;
     let blurred: BlurredCamera | null = null;
     const clone = source.clone();
     const started =
-      effect.kind === "avatar"
-        ? Promise.all([import("@/lib/avatarCamera"), readAvatar(effect.id)]).then(
-            ([{ startAvatarCamera }, model]) => startAvatarCamera(clone, 30, model),
-          )
+      chosen.kind === "avatar"
+        ? Promise.all([
+            import("@/lib/avatarCamera"),
+            readAvatar(chosen.id),
+            chosen.backgroundSrc ? decodeCameraBackground(chosen.backgroundSrc) : undefined,
+          ]).then(([{ startAvatarCamera }, model, image]) => startAvatarCamera(clone, 30, model, image))
         : Promise.all([
             import("@/lib/backgroundBlur"),
-            effect.kind === "image" ? decodeCameraBackground(effect.src) : undefined,
+            chosen.kind === "image" ? decodeCameraBackground(chosen.src) : undefined,
           ]).then(([{ blurBackground }, image]) => blurBackground(clone, 30, image));
     setAvatarError(null);
     started
@@ -163,14 +177,14 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
           return;
         }
         blurred = b;
-        if (effect.kind !== "avatar") setEffectFailed(false);
+        if (chosen.kind !== "avatar") setEffectFailed(false);
         setBlurredPreview(b);
       })
       .catch((err) => {
         console.warn("[camera] camera effect unavailable:", err);
         clone.stop();
         if (cancelled) return;
-        if (effect.kind === "avatar") {
+        if (chosen.kind === "avatar") {
           setAvatarError(err instanceof Error ? err.message : "That avatar couldn't be loaded.");
         } else {
           setEffectFailed(true);
@@ -181,7 +195,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
       blurred?.stop();
       setBlurredPreview(null);
     };
-  }, [effect, previewStream]);
+  }, [chosen, previewStream]);
 
   const blurredStream = useMemo(
     () => (blurredPreview ? new MediaStream([blurredPreview.track]) : null),
@@ -224,7 +238,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
       const added = await desktopAvatars.add();
       if (added.length === 0) return;
       setAvatars(await desktopAvatars.list());
-      setEffect({ kind: "avatar", id: added[0].id });
+      selectAvatar(added[0].id);
     } catch (err) {
       setAvatarFileError(err instanceof Error ? err.message : "That avatar couldn't be added.");
     }
@@ -241,6 +255,11 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
     }
   }
 
+  function selectAvatar(id: string | null) {
+    setAvatarId(id);
+    if (id && effect.kind === "blur") setEffect({ kind: "none" });
+  }
+
   function handleRemove(id: string) {
     removeCameraBackground(id);
     setBackgrounds(listCameraBackgrounds());
@@ -250,9 +269,10 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
   function handleStart() {
     stopPreview();
     saveCameraEffect(effect);
+    saveCameraAvatar(avatarId);
     // Segmenting every frame twice as often is more than most machines can
     // keep up with, so an effect sends at 30.
-    onStart(selectedDeviceId, supports60 && !hasEffect ? fps : 30, hasEffect ? effect : { kind: "none" });
+    onStart(selectedDeviceId, supports60 && !hasEffect ? fps : 30, hasEffect ? chosen : { kind: "none" });
     onClose();
   }
 
@@ -316,7 +336,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                   {!supports60
                     ? "This camera only reports support for 30 FPS."
                     : hasEffect
-                      ? effect.kind === "avatar"
+                      ? avatarId
                         ? "Avatars send at 30 FPS."
                         : "Background effects send at 30 FPS."
                       : "60 FPS is smoother but uses more bandwidth."}
@@ -338,15 +358,23 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                     </button>
                   </div>
                   <div className="grid grid-cols-4 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => selectAvatar(null)}
+                      className={cn(TILE, avatarId === null ? "border-primary" : "border-transparent hover:border-border")}
+                      title="No avatar"
+                    >
+                      <Ban className="h-4 w-4" />
+                    </button>
                     {(avatars ?? []).map((a) => (
                       <div key={a.id} className="group relative">
                         <button
                           type="button"
-                          onClick={() => setEffect({ kind: "avatar", id: a.id })}
+                          onClick={() => selectAvatar(a.id)}
                           className={cn(
                             TILE,
                             "w-full flex-col gap-1 px-1",
-                            effect.kind === "avatar" && effect.id === a.id
+                            avatarId === a.id
                               ? "border-primary"
                               : "border-transparent hover:border-border",
                           )}
@@ -394,13 +422,19 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                     <button
                       key={kind}
                       type="button"
-                      disabled={kind === "blur" && effectFailed}
+                      disabled={kind === "blur" && (effectFailed || avatarId !== null)}
                       onClick={() => setEffect({ kind })}
                       className={cn(
                         TILE,
                         effect.kind === kind ? "border-primary" : "border-transparent hover:border-border",
                       )}
-                      title={kind === "none" ? "No effect" : "Blur background"}
+                      title={
+                        kind === "none"
+                          ? "No effect"
+                          : avatarId
+                            ? "Blur isn't used with an avatar"
+                            : "Blur background"
+                      }
                     >
                       {kind === "none" ? <Ban className="h-4 w-4" /> : <Droplets className="h-4 w-4" />}
                     </button>
@@ -409,7 +443,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                     <div key={b.id} className="group relative">
                       <button
                         type="button"
-                        disabled={effectFailed}
+                        disabled={effectFailed && !avatarId}
                         onClick={() => setEffect({ kind: "image", id: b.id, src: b.src })}
                         className={cn(
                           TILE,
@@ -435,7 +469,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                   {backgrounds.length < MAX_CAMERA_BACKGROUNDS && (
                     <button
                       type="button"
-                      disabled={effectFailed}
+                      disabled={effectFailed && !avatarId}
                       onClick={() => fileInputRef.current?.click()}
                       className={cn(TILE, "border-dashed border-border hover:text-foreground")}
                       title="Upload a background image"
@@ -457,10 +491,12 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                   }}
                 />
                 <p className={cn("text-xs", uploadError ? "text-destructive" : "text-muted-foreground")}>
-                  {effectFailed
-                    ? "Background effects aren't available on this device."
-                    : uploadError ??
-                      "Done on this device, and images stay in this browser. The first time takes a moment to load."}
+                  {uploadError ??
+                    (avatarId
+                      ? "An image goes behind your avatar; without one it stands on plain grey."
+                      : effectFailed
+                        ? "Background effects aren't available on this device."
+                        : "Done on this device, and images stay in this browser. The first time takes a moment to load.")}
                 </p>
               </div>
 
@@ -477,7 +513,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                   <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
                     {!selectedDeviceId
                       ? "No camera found"
-                      : previewStream && effect.kind === "avatar"
+                      : previewStream && avatarId
                         ? avatarError
                           ? "Avatar unavailable"
                           : "Loading avatar..."
@@ -497,7 +533,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
             <Button
               size="sm"
               onClick={handleStart}
-              disabled={permissionError || !selectedDeviceId || (effect.kind === "avatar" && avatarError !== null)}
+              disabled={permissionError || !selectedDeviceId || (avatarId !== null && avatarError !== null)}
             >
               Start Camera
             </Button>

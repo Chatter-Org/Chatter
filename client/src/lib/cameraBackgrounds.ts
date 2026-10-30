@@ -5,8 +5,9 @@
  * server never needs the images, and a storage that throws (private windows,
  * blocked site data) just means starting from no effect with no images.
  *
- * In the desktop app the choice can also be a 3D avatar in place of the
- * person (`avatarCamera.ts`); its files are kept by the app, not here.
+ * In the desktop app there is also a 3D avatar to put in place of the
+ * person (`avatarCamera.ts`), chosen apart from the background so an image
+ * can go behind it; its files are kept by the app, not here.
  */
 import { desktop, hasDesktopFeature, type DesktopAvatars } from "@/lib/desktop/bridge";
 
@@ -14,8 +15,12 @@ export type CameraEffect =
   | { kind: "none" }
   | { kind: "blur" }
   | { kind: "image"; id: string; src: string }
-  /** A VRM file the desktop app keeps (`DesktopAvatars`), by its id. */
-  | { kind: "avatar"; id: string };
+  /** A VRM file the desktop app keeps (`DesktopAvatars`), by its id, drawn
+   *  in front of one of the images (a data URL) or a plain backdrop. */
+  | { kind: "avatar"; id: string; backgroundSrc?: string };
+
+/** What can be chosen as the background; an avatar is chosen separately. */
+export type CameraBackgroundEffect = Exclude<CameraEffect, { kind: "avatar" }>;
 
 export interface CameraBackground {
   id: string;
@@ -26,6 +31,8 @@ export interface CameraBackground {
 /** The blur choice from before images existed; still read, never written. */
 const LEGACY_BLUR_KEY = "chatter_camera_blur";
 const EFFECT_KEY = "chatter_camera_effect";
+/** The avatar's id, when one is on; absent when none is. */
+const AVATAR_KEY = "chatter_camera_avatar";
 const BACKGROUNDS_KEY = "chatter_camera_backgrounds";
 
 /** Enough to choose between without filling the browser's storage. */
@@ -97,7 +104,7 @@ export function removeCameraBackground(id: string) {
 }
 
 /** This device's last choice; an image since deleted counts as none. */
-export function readCameraEffect(): CameraEffect {
+export function readCameraEffect(): CameraBackgroundEffect {
   try {
     const saved = localStorage.getItem(EFFECT_KEY);
     if (saved === null) {
@@ -109,22 +116,40 @@ export function readCameraEffect(): CameraEffect {
       const background = listCameraBackgrounds().find((b) => b.id === id);
       if (background) return { kind: "image", id, src: background.src };
     }
-    // Whether the file is still there is only known once it is read.
-    if (saved.startsWith("avatar:") && desktopAvatars) {
-      return { kind: "avatar", id: saved.slice("avatar:".length) };
-    }
   } catch {
     // Unreadable storage: start from off.
   }
   return { kind: "none" };
 }
 
-export function saveCameraEffect(effect: CameraEffect) {
+export function saveCameraEffect(effect: CameraBackgroundEffect) {
   try {
-    localStorage.setItem(
-      EFFECT_KEY,
-      effect.kind === "image" || effect.kind === "avatar" ? `${effect.kind}:${effect.id}` : effect.kind,
-    );
+    localStorage.setItem(EFFECT_KEY, effect.kind === "image" ? `image:${effect.id}` : effect.kind);
+  } catch {
+    // Not remembered; nothing else depends on it.
+  }
+}
+
+/** This device's last avatar, by id. Whether its file is still there is only
+ *  known once it is listed or read. */
+export function readCameraAvatar(): string | null {
+  if (!desktopAvatars) return null;
+  try {
+    const saved = localStorage.getItem(AVATAR_KEY);
+    if (saved) return saved;
+    // The first builds kept it in place of the background, as "avatar:<id>".
+    const legacy = localStorage.getItem(EFFECT_KEY);
+    if (legacy?.startsWith("avatar:")) return legacy.slice("avatar:".length);
+  } catch {
+    // Unreadable storage: no avatar.
+  }
+  return null;
+}
+
+export function saveCameraAvatar(id: string | null) {
+  try {
+    if (id) localStorage.setItem(AVATAR_KEY, id);
+    else localStorage.removeItem(AVATAR_KEY);
   } catch {
     // Not remembered; nothing else depends on it.
   }
