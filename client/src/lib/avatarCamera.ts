@@ -120,6 +120,7 @@ function makeRig(vrm: VRM) {
   const identity = new THREE.Quaternion();
   const headTarget = new THREE.Quaternion();
   const headNow = new THREE.Quaternion();
+  const euler = new THREE.Euler(0, 0, 0, "YXZ");
   const matrix = new THREE.Matrix4();
   const position = new THREE.Vector3();
   const scale = new THREE.Vector3();
@@ -142,8 +143,12 @@ function makeRig(vrm: VRM) {
     let target: Expressions;
     if (face && transform) {
       // The face's pose in the camera's space, where it looks back along +Z
-      // as the avatar does at its own camera, so it applies as it is.
+      // as the avatar does at its own camera. Turn and tilt apply as they
+      // are; nodding comes out the other way up, so pitch is reversed.
       matrix.fromArray(transform.data).decompose(position, headTarget, scale);
+      euler.setFromQuaternion(headTarget);
+      euler.x = -euler.x;
+      headTarget.setFromEuler(euler);
       target = expressionsFrom(face.categories);
     } else {
       // Lost the face: settle back to looking ahead.
@@ -178,10 +183,10 @@ function poseAndFrame(vrm: VRM, camera: THREE.PerspectiveCamera) {
   const head = vrm.humanoid.getRawBoneNode("head");
   if (!head) throw new Error("That avatar has no head to move.");
   const at = head.getWorldPosition(new THREE.Vector3());
-  // Head and shoulders, whatever the model's height. The head bone is at the
-  // base of the skull, so aiming just under it leaves room above the hair.
-  camera.position.set(at.x, at.y, at.z + 1.1);
-  camera.lookAt(at.x, at.y - 0.02, at.z);
+  // Head and shoulders with room around them, as a webcam frames a person,
+  // whatever the model's height. The head bone is at the base of the skull.
+  camera.position.set(at.x, at.y - 0.02, at.z + 1.6);
+  camera.lookAt(at.x, at.y - 0.08, at.z);
 }
 
 /**
