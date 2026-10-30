@@ -14,7 +14,7 @@ import {
 import type { WebcamPublishProfile, WebcamQuality } from "@/lib/webrtc";
 import { toast } from "sonner";
 import type { BlurredCamera } from "@/lib/backgroundBlur";
-import { decodeCameraBackground, type CameraEffect } from "@/lib/cameraBackgrounds";
+import { decodeCameraBackground, readAvatar, type CameraEffect } from "@/lib/cameraBackgrounds";
 
 function buildWebcamVideoConstraints(
   profile: WebcamPublishProfile,
@@ -99,7 +99,7 @@ export function useWebRTCWebcam() {
   const { state, dispatch, wsRef } = useAppContext();
 
   const webcamStreamRef = useRef<MediaStream | null>(null);
-  // The blur or background image between the camera and the call, when one is on.
+  // The blur, background image or avatar between the camera and the call, when one is on.
   const blurRef = useRef<BlurredCamera | null>(null);
   const webcamPubPcRef = useRef<RTCPeerConnection | null>(null);
   const webcamSubPcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -415,7 +415,16 @@ export function useWebRTCWebcam() {
       // `stream` stays the camera itself — it is what is stopped, and what
       // says when the camera is unplugged. `sent` is what the call sees.
       let sent = stream;
-      if (effect.kind !== "none") {
+      if (effect.kind === "avatar") {
+        // Unlike the background effects, an avatar that fails stops the
+        // camera here (the catch below): the face is not for sharing.
+        const [{ startAvatarCamera }, model] = await Promise.all([
+          import("@/lib/avatarCamera"),
+          readAvatar(effect.id),
+        ]);
+        blurRef.current = await startAvatarCamera(stream.getVideoTracks()[0], profile.targetFps, model);
+        sent = new MediaStream([blurRef.current.track]);
+      } else if (effect.kind !== "none") {
         try {
           const [{ blurBackground }, image] = await Promise.all([
             import("@/lib/backgroundBlur"),

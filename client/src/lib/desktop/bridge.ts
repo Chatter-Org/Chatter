@@ -77,6 +77,35 @@ export interface DesktopSettings {
   onOpenRequest(listener: () => void): () => void;
 }
 
+/** A VRM avatar the desktop app keeps for this computer. */
+export interface DesktopAvatar {
+  /** Its file name in the app's avatars folder; stable while the file is. */
+  id: string;
+  /** For display: the file name without `.vrm`. */
+  name: string;
+  /** File size in bytes. */
+  bytes: number;
+}
+
+/** feature "avatars@1": 3D avatars for the camera, kept as `.vrm` files in a
+ *  folder the desktop app owns. The page never sees a path: files come in
+ *  through the app's own file picker (or the person copying them into the
+ *  folder) and are read back by id. */
+export interface DesktopAvatars {
+  list(): Promise<DesktopAvatar[]>;
+  /** Opens the app's file picker; resolves with the avatars added, none if
+   *  the person cancels. */
+  add(): Promise<DesktopAvatar[]>;
+  /** The file's bytes. Rejects if it has gone. */
+  read(id: string): Promise<ArrayBuffer>;
+  /** Moves the file to the system's trash. */
+  remove(id: string): Promise<void>;
+  /** Shows the folder in the system's file manager. */
+  openFolder(): void;
+  /** Called whenever the folder's contents change. Returns an unsubscribe. */
+  subscribe(listener: () => void): () => void;
+}
+
 export interface ChatterDesktopBridge {
   bridgeVersion: number;
   appVersion: string;
@@ -92,6 +121,7 @@ export interface ChatterDesktopBridge {
   gameActivity?: DesktopGameActivity;
   ducking?: DesktopDucking;
   settings?: DesktopSettings;
+  avatars?: DesktopAvatars;
 }
 
 declare global {

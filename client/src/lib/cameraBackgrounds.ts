@@ -4,12 +4,18 @@
  * effect is drawn on the sender's machine (see `backgroundBlur.ts`), so the
  * server never needs the images, and a storage that throws (private windows,
  * blocked site data) just means starting from no effect with no images.
+ *
+ * In the desktop app the choice can also be a 3D avatar in place of the
+ * person (`avatarCamera.ts`); its files are kept by the app, not here.
  */
+import { desktop, hasDesktopFeature, type DesktopAvatars } from "@/lib/desktop/bridge";
 
 export type CameraEffect =
   | { kind: "none" }
   | { kind: "blur" }
-  | { kind: "image"; id: string; src: string };
+  | { kind: "image"; id: string; src: string }
+  /** A VRM file the desktop app keeps (`DesktopAvatars`), by its id. */
+  | { kind: "avatar"; id: string };
 
 export interface CameraBackground {
   id: string;
@@ -103,6 +109,10 @@ export function readCameraEffect(): CameraEffect {
       const background = listCameraBackgrounds().find((b) => b.id === id);
       if (background) return { kind: "image", id, src: background.src };
     }
+    // Whether the file is still there is only known once it is read.
+    if (saved.startsWith("avatar:") && desktopAvatars) {
+      return { kind: "avatar", id: saved.slice("avatar:".length) };
+    }
   } catch {
     // Unreadable storage: start from off.
   }
@@ -113,7 +123,7 @@ export function saveCameraEffect(effect: CameraEffect) {
   try {
     localStorage.setItem(
       EFFECT_KEY,
-      effect.kind === "image" ? `image:${effect.id}` : effect.kind,
+      effect.kind === "image" || effect.kind === "avatar" ? `${effect.kind}:${effect.id}` : effect.kind,
     );
   } catch {
     // Not remembered; nothing else depends on it.
@@ -125,4 +135,16 @@ export function decodeCameraBackground(src: string): Promise<ImageBitmap> {
   return fetch(src)
     .then((r) => r.blob())
     .then((blob) => createImageBitmap(blob));
+}
+
+/** The desktop app's avatars, or null where there are none to offer. */
+export const desktopAvatars: DesktopAvatars | null =
+  hasDesktopFeature("avatars@1") ? (desktop?.avatars ?? null) : null;
+
+/** An avatar's VRM file, ready for `startAvatarCamera`. */
+export async function readAvatar(id: string): Promise<ArrayBuffer> {
+  if (!desktopAvatars) throw new Error("Avatars need the Chatter desktop app.");
+  return desktopAvatars.read(id).catch(() => {
+    throw new Error("That avatar's file couldn't be opened. Has it been moved?");
+  });
 }

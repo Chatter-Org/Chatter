@@ -72,7 +72,7 @@ function loadSegmenter(): Promise<ImageSegmenter> {
  * frames as they arrive, and make a track out of frames written to it. Not in
  * TypeScript's DOM types, since only Chromium has it.
  */
-interface BreakoutBox {
+export interface BreakoutBox {
   MediaStreamTrackProcessor?: new (init: {
     track: MediaStreamTrack;
     maxBufferSize?: number;
