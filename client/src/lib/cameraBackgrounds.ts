@@ -17,7 +17,7 @@ export type CameraEffect =
   | { kind: "image"; id: string; src: string }
   /** A VRM file kept on this device (`avatarStore`), by its id, drawn
    *  in front of one of the images (a data URL) or a plain backdrop. */
-  | { kind: "avatar"; id: string; backgroundSrc?: string; zoom?: number };
+  | { kind: "avatar"; id: string; backgroundSrc?: string; zoom?: number; arms?: boolean };
 
 /** What can be chosen as the background; an avatar is chosen separately. */
 export type CameraBackgroundEffect = Exclude<CameraEffect, { kind: "avatar" }>;
@@ -35,6 +35,9 @@ const EFFECT_KEY = "chatter_camera_effect";
 const AVATAR_KEY = "chatter_camera_avatar";
 /** Each avatar's zoom, by id: models differ in size. */
 const AVATAR_ZOOM_KEY = "chatter_camera_avatar_zoom";
+/** "0" when arm tracking is off; it costs this device, so it is one setting
+ *  for every avatar. */
+const AVATAR_ARMS_KEY = "chatter_camera_avatar_arms";
 
 /** How close the avatar's camera is: 1 frames a person-sized model's head
  *  and shoulders. Here rather than in `avatarCamera.ts` so the picker can
@@ -178,6 +181,23 @@ export function saveAvatarZoom(id: string, zoom: number | null) {
     localStorage.setItem(AVATAR_ZOOM_KEY, JSON.stringify(zooms));
   } catch {
     // Not remembered; it starts from the default next time.
+  }
+}
+
+export function readAvatarArms(): boolean {
+  try {
+    return localStorage.getItem(AVATAR_ARMS_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function saveAvatarArms(on: boolean) {
+  try {
+    if (on) localStorage.removeItem(AVATAR_ARMS_KEY);
+    else localStorage.setItem(AVATAR_ARMS_KEY, "0");
+  } catch {
+    // Not remembered; it is on again next time.
   }
 }
 

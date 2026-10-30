@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { AvatarCamera } from "@/lib/avatarCamera";
 import type { BlurredCamera } from "@/lib/backgroundBlur";
@@ -17,10 +18,12 @@ import {
   listCameraBackgrounds,
   MAX_CAMERA_BACKGROUNDS,
   readAvatar,
+  readAvatarArms,
   readAvatarZoom,
   readCameraAvatar,
   readCameraEffect,
   removeCameraBackground,
+  saveAvatarArms,
   saveAvatarZoom,
   saveCameraAvatar,
   saveCameraEffect,
@@ -62,6 +65,9 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
   // of the slider; the running preview is moved with `setZoom` instead.
   const avatarZoomRef = useRef(avatarZoom);
   avatarZoomRef.current = avatarZoom;
+  const [avatarArms, setAvatarArms] = useState(readAvatarArms);
+  const avatarArmsRef = useRef(avatarArms);
+  avatarArmsRef.current = avatarArms;
   const [backgrounds, setBackgrounds] = useState(listCameraBackgrounds);
   const [uploadError, setUploadError] = useState<string | null>(null);
   // The preview through the effect, so what you see is what the call will see.
@@ -177,7 +183,11 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
             readAvatar(chosen.id),
             chosen.backgroundSrc ? decodeCameraBackground(chosen.backgroundSrc) : undefined,
           ]).then(([{ startAvatarCamera }, model, image]) =>
-            startAvatarCamera(clone, 30, model, image, avatarZoomRef.current),
+            startAvatarCamera(clone, 30, model, {
+              image,
+              zoom: avatarZoomRef.current,
+              arms: avatarArmsRef.current,
+            }),
           )
         : Promise.all([
             import("@/lib/backgroundBlur"),
@@ -286,10 +296,14 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
     stopPreview();
     saveCameraEffect(effect);
     saveCameraAvatar(avatarId);
-    if (avatarId) saveAvatarZoom(avatarId, avatarZoom);
+    if (avatarId) {
+      saveAvatarZoom(avatarId, avatarZoom);
+      saveAvatarArms(avatarArms);
+    }
     // Segmenting every frame twice as often is more than most machines can
     // keep up with, so an effect sends at 30.
-    const sent: CameraEffect = chosen.kind === "avatar" ? { ...chosen, zoom: avatarZoom } : chosen;
+    const sent: CameraEffect =
+      chosen.kind === "avatar" ? { ...chosen, zoom: avatarZoom, arms: avatarArms } : chosen;
     onStart(selectedDeviceId, supports60 && !hasEffect ? fps : 30, hasEffect ? sent : { kind: "none" });
     onClose();
   }
@@ -440,6 +454,22 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                       <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">
                         {Math.round(avatarZoom * 100)}%
                       </span>
+                    </div>
+                  )}
+                  {avatarId && (
+                    <div className="flex items-center justify-between gap-3">
+                      <label htmlFor="avatar-arms" className="text-xs font-medium text-muted-foreground">
+                        Track arms
+                        <span className="block font-normal">Uses more CPU; arms rest when off or out of view.</span>
+                      </label>
+                      <Switch
+                        id="avatar-arms"
+                        checked={avatarArms}
+                        onCheckedChange={(on) => {
+                          setAvatarArms(on);
+                          if (blurredPreview && "setArmTracking" in blurredPreview) blurredPreview.setArmTracking(on);
+                        }}
+                      />
                     </div>
                   )}
                   <p

@@ -283,6 +283,17 @@ function makeRig(vrm: VRM) {
 export interface AvatarCamera extends BlurredCamera {
   /** Moves the camera in (above 1) or out (below), from the next frame. */
   setZoom: (zoom: number) => void;
+  /** Starts or stops following the arms; stopped, they ease back to rest. */
+  setArmTracking: (on: boolean) => void;
+}
+
+export interface AvatarOptions {
+  /** Drawn behind the avatar, and closed once it has been. */
+  image?: ImageBitmap;
+  /** How close the camera is (`AVATAR_ZOOM`). */
+  zoom?: number;
+  /** Follow the arms as well as the face; on unless turned off. */
+  arms?: boolean;
 }
 
 /**
@@ -329,17 +340,17 @@ function backdropTexture(image: ImageBitmap): THREE.CanvasTexture {
 }
 
 /**
- * The avatar's scene: `draw` reads the face (and every other frame, the
- * arms) off a camera frame, poses the avatar from them and renders it onto
+ * The avatar's scene: `draw` reads the face (and while arm tracking is on,
+ * every other frame, the arms) off a camera frame, poses the avatar from them and renders it onto
  * `canvas`. Owns everything it is given;
  * `dispose` lets it all go.
  */
 function makeScene(
   landmarker: FaceLandmarker,
-  poseLandmarker: PoseLandmarker | null,
   vrm: VRM,
   backdrop: THREE.CanvasTexture | null,
   zoom: number,
+  arms: boolean,
 ) {
   const canvas = document.createElement("canvas");
   canvas.width = WIDTH;
@@ -376,6 +387,18 @@ function makeScene(
   const rig = makeRig(vrm);
   let frames = 0;
   let pose: Landmark[] | null = null;
+  // Loaded the first time arm tracking is on, so it costs nothing while off;
+  // the face goes ahead meanwhile, with the arms at rest.
+  let poseLandmarker: PoseLandmarker | null = null;
+  let armsOn = false;
+  const setArmTracking = (on: boolean) => {
+    armsOn = on;
+    pose = null;
+    if (on && !poseLandmarker) {
+      void loadPoseLandmarker().then((loaded) => (poseLandmarker = loaded));
+    }
+  };
+  setArmTracking(arms);
 
   const draw = (frame: VideoFrame | HTMLVideoElement, deltaS: number) => {
     const nowMs = performance.now();
@@ -387,7 +410,7 @@ function makeScene(
       // No reading this frame; the avatar carries on as if the face were lost.
     }
     // In between, the arms keep heading for the last reading.
-    if (poseLandmarker && frames++ % POSE_EVERY === 0) {
+    if (armsOn && poseLandmarker && frames++ % POSE_EVERY === 0) {
       try {
         pose = poseLandmarker.detectForVideo(frame, lastTimestamp).worldLandmarks[0] ?? null;
       } catch {
@@ -398,7 +421,7 @@ function makeScene(
     renderer.render(scene, camera);
   };
 
-  return { canvas, draw, dispose, setZoom };
+  return { canvas, draw, dispose, setZoom, setArmTracking };
 }
 
 type AvatarScene = ReturnType<typeof makeScene>;
@@ -443,6 +466,7 @@ function avatarWithBreakoutBox(
   return {
     track: generator,
     setZoom: avatar.setZoom,
+    setArmTracking: avatar.setArmTracking,
     stop: () => {
       if (stopped) return;
       stopped = true;
@@ -492,6 +516,7 @@ async function avatarWithCanvasStream(
   return {
     track,
     setZoom: avatar.setZoom,
+    setArmTracking: avatar.setArmTracking,
     stop: () => {
       if (stopped) return;
       stopped = true;
@@ -508,26 +533,21 @@ async function avatarWithCanvasStream(
 /**
  * Draw the VRM avatar in `model`, following the face in `source`, at up to
  * `fps` frames a second, in front of `image` (closed once drawn) or a plain
- * backdrop, with the camera at `zoom` (`AVATAR_ZOOM`). A camera unplugged
- * or revoked ends `source`, not the returned track: whoever holds the source
- * watches it and calls `stop`.
+ * backdrop (see `AvatarOptions`). A camera unplugged or revoked ends
+ * `source`, not the returned track: whoever holds the source watches it and
+ * calls `stop`.
  */
 export async function startAvatarCamera(
   source: MediaStreamTrack,
   fps: number,
   model: ArrayBuffer,
-  image?: ImageBitmap,
-  zoom: number = AVATAR_ZOOM.default,
+  { image, zoom = AVATAR_ZOOM.default, arms = true }: AvatarOptions = {},
 ): Promise<AvatarCamera> {
   let backdrop: THREE.CanvasTexture | null = null;
   try {
     if (image) backdrop = backdropTexture(image);
-    const [landmarker, poseLandmarker, vrm] = await Promise.all([
-      loadLandmarker(),
-      loadPoseLandmarker(),
-      loadVrm(model),
-    ]);
-    const avatar = makeScene(landmarker, poseLandmarker, vrm, backdrop, zoom);
+    const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
+    const avatar = makeScene(landmarker, vrm, backdrop, zoom, arms);
     const box = globalThis as unknown as BreakoutBox;
     if (box.MediaStreamTrackProcessor && box.MediaStreamTrackGenerator && typeof VideoFrame !== "undefined") {
       return avatarWithBreakoutBox(box as Required<BreakoutBox>, avatar, source, fps);

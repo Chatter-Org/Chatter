@@ -423,13 +423,11 @@ export function useWebRTCWebcam() {
           readAvatar(effect.id),
           effect.backgroundSrc ? decodeCameraBackground(effect.backgroundSrc) : undefined,
         ]);
-        blurRef.current = await startAvatarCamera(
-          stream.getVideoTracks()[0],
-          profile.targetFps,
-          model,
+        blurRef.current = await startAvatarCamera(stream.getVideoTracks()[0], profile.targetFps, model, {
           image,
-          effect.zoom,
-        );
+          zoom: effect.zoom,
+          arms: effect.arms,
+        });
         sent = new MediaStream([blurRef.current.track]);
       } else if (effect.kind !== "none") {
         try {
