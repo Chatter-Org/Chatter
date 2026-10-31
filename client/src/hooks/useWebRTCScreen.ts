@@ -17,11 +17,19 @@ import type { PeerStats, ScreenSharePublishProfile } from "@/lib/webrtc";
 import { useScreenShareFps } from "./useScreenShareFps";
 import { useScreenShareBitrate } from "./useScreenShareBitrate";
 import { useScreenContentMode } from "./useScreenContentMode";
+import { useStreamerMode } from "./useStreamerMode";
 import { toast } from "sonner";
 import { selectDisplayCapture } from "@/lib/media";
 import { playSound, type SoundPack } from "@/lib/sounds";
 import { apiPutScreenThumbnail } from "@/lib/api";
 import { captureScreenThumbnail, releaseScreenThumbnailCapture } from "@/lib/screenThumbnail";
+import { readAvatarArms, readAvatarZoom } from "@/lib/cameraBackgrounds";
+import {
+  startStreamerShare,
+  streamerAvatarId,
+  streamerModeSupported,
+  type StreamerShare,
+} from "@/lib/streamerMode";
 
 /** How often the sharer posts a still of its own screen, so a member outside
  *  the call can hover a name and see what is on screen. Slow on purpose: it is
@@ -86,6 +94,9 @@ export function useWebRTCScreen() {
   const { screenFps } = useScreenShareFps();
   const { screenBitrate } = useScreenShareBitrate();
   const { screenContent } = useScreenContentMode();
+  const { streamer } = useStreamerMode();
+  // Streamer mode's avatar over the share, while it has one.
+  const streamerShareRef = useRef<StreamerShare | null>(null);
   const screenShareStartingRef = useRef(false);
 
   // Ref for frozen detection external stats
@@ -236,6 +247,8 @@ export function useWebRTCScreen() {
       window.dispatchEvent(new CustomEvent("screen-stream-update"));
     }
     if (screenPubPcRef.current) { screenPubPcRef.current.close(); screenPubPcRef.current = null; }
+    streamerShareRef.current?.stop();
+    streamerShareRef.current = null;
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach((t) => { t.onended = null; t.stop(); });
       screenStreamRef.current = null;
@@ -471,7 +484,8 @@ export function useWebRTCScreen() {
     const roomId = state.voiceRoomId;
     const userId = state.userId;
     const timer = setInterval(() => {
-      const stream = screenStreamRef.current;
+      // What is sent, so it has streamer mode's avatar on it too.
+      const stream = screenStreamsMap.get(userId) ?? screenStreamRef.current;
       if (!stream) return;
       const thumbnail = captureScreenThumbnail(stream);
       if (thumbnail) void apiPutScreenThumbnail(roomId, userId, thumbnail);
@@ -524,6 +538,10 @@ export function useWebRTCScreen() {
         }
       }
       const videoSender = pc.getSenders().find((s) => s.track?.kind === "video");
+      // Streamer mode sends its own track, not the capture's.
+      if (videoSender?.track && "contentHint" in videoSender.track) {
+        videoSender.track.contentHint = profile.contentHint;
+      }
       if (videoSender) await tuneScreenVideoSender(videoSender, profile);
       toast.success(announce);
     },
@@ -567,6 +585,17 @@ export function useWebRTCScreen() {
     );
   }, [screenFps, screenBitrate, screenContent, applyScreenProfileToActiveShare]);
 
+  // Moving or resizing the avatar lands on the share in progress. Turning
+  // streamer mode on or off waits for the next share.
+  useEffect(() => {
+    const share = streamerShareRef.current;
+    if (!share) return;
+    share.setPlacement(streamer.placement);
+    const avatarId = streamerAvatarId(streamer);
+    if (avatarId) share.setZoom(readAvatarZoom(avatarId));
+    share.setArmTracking(readAvatarArms());
+  }, [streamer]);
+
   // ─── Screen share publish/stop ─────────────────────────────────────────────
   const startScreenShare = useCallback(async () => {
     if (!state.inVoiceChannel || !canSignal(wsRef)) return;
@@ -582,7 +611,24 @@ export function useWebRTCScreen() {
         audio: audioConstraints,
       });
       screenStreamRef.current = stream;
-      screenStreamsMap.set(state.userId!, stream);
+      const capturedTrack = stream.getVideoTracks()[0];
+      // `stream` stays the capture — what is stopped, and what says when the
+      // share is ended from the browser's own bar. `sent` is what the call sees.
+      let sent = stream;
+      if (streamer.on && streamerModeSupported()) {
+        try {
+          streamerShareRef.current = await startStreamerShare(capturedTrack, streamer);
+          sent = new MediaStream([streamerShareRef.current.track, ...stream.getAudioTracks()]);
+        } catch (err) {
+          console.warn("[screen-share] streamer mode unavailable:", err);
+          const message = err instanceof Error ? err.message : "";
+          toast.error(`Your avatar couldn't be added, so your screen is shared without it. ${message}`.trim());
+        }
+        // Ended from the browser's own bar while the avatar loaded: given up
+        // quietly below, as if the picker had been cancelled.
+        if (capturedTrack.readyState === "ended") throw new DOMException("Share ended", "NotAllowedError");
+      }
+      screenStreamsMap.set(state.userId!, sent);
       window.dispatchEvent(new CustomEvent("screen-stream-update"));
       dispatch({ type: "SET_VOICE_STATE", payload: { isScreenSharing: true } });
       dispatch({ type: "SCREEN_SHARE_STARTED", payload: state.userId! });
@@ -609,18 +655,18 @@ export function useWebRTCScreen() {
         wsRef.current!.send(JSON.stringify(screenStartMsg));
       }
 
-      const screenTrack = stream.getVideoTracks()[0];
-      if ("contentHint" in screenTrack) {
-        screenTrack.contentHint = profile.contentHint;
+      const screenTrack = sent.getVideoTracks()[0];
+      for (const track of new Set([capturedTrack, screenTrack])) {
+        if ("contentHint" in track) track.contentHint = profile.contentHint;
       }
       // Guard: only stop if this is still the active stream
-      screenTrack.onended = () => {
+      capturedTrack.onended = () => {
         if (screenStreamRef.current === stream) stopScreenShare();
       };
 
       const pc = new RTCPeerConnection(getWebRTCConfig());
       screenPubPcRef.current = pc;
-      const videoSender = pc.addTrack(screenTrack, stream);
+      const videoSender = pc.addTrack(screenTrack, sent);
       // Before createOffer, which is the only point codec preferences are read.
       preferScreenVideoCodecs(
         pc.getTransceivers().find((t) => t.sender === videoSender),
@@ -683,6 +729,8 @@ export function useWebRTCScreen() {
       }
     } catch (err: unknown) {
       dispatch({ type: "SET_VOICE_STATE", payload: { isScreenSharing: false } });
+      streamerShareRef.current?.stop();
+      streamerShareRef.current = null;
       // Clean up stream if it was acquired but signaling failed
       if (screenStreamRef.current) {
         screenStreamRef.current.getTracks().forEach((t) => { t.onended = null; t.stop(); });
@@ -696,7 +744,7 @@ export function useWebRTCScreen() {
     } finally {
       screenShareStartingRef.current = false;
     }
-  }, [state.inVoiceChannel, state.currentRoomId, screenFps, screenBitrate, screenContent, state.userId, dispatch, stopScreenShare, wsRef]);
+  }, [state.inVoiceChannel, state.currentRoomId, screenFps, screenBitrate, screenContent, streamer, state.userId, dispatch, stopScreenShare, wsRef]);
 
   const watchUser = useCallback(async (sharerId: string, joinVoice: () => Promise<void>) => {
     if (state.selectedScreenSharer === sharerId && state.screenViewerOpen) {

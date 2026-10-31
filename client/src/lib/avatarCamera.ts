@@ -32,6 +32,17 @@ import { AVATAR_ZOOM } from "@/lib/cameraBackgrounds";
 const WIDTH = 1280;
 const HEIGHT = 720;
 const BACKGROUND = "#30343c";
+/** Streamer mode's avatar, square and on nothing, to go over a screen share. */
+const OVERLAY_SIZE = 720;
+
+/** What the avatar is drawn onto: a camera's frame in front of a backdrop, or
+ *  streamer mode's square with nothing behind it. */
+interface Frame {
+  width: number;
+  height: number;
+  transparent: boolean;
+}
+const CAMERA_FRAME: Frame = { width: WIDTH, height: HEIGHT, transparent: false };
 
 /** How far each frame moves toward what the face says, 0–1: lower is
  *  smoother but lags. Blinks are quick, so they follow more closely. */
@@ -351,26 +362,32 @@ function makeScene(
   backdrop: THREE.CanvasTexture | null,
   zoom: number,
   arms: boolean,
+  frame: Frame = CAMERA_FRAME,
 ) {
   const canvas = document.createElement("canvas");
-  canvas.width = WIDTH;
-  canvas.height = HEIGHT;
+  canvas.width = frame.width;
+  canvas.height = frame.height;
   let renderer: THREE.WebGLRenderer;
   try {
     // Kept after each draw, so the frame copied from it is the one just drawn.
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+    renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      preserveDrawingBuffer: true,
+      alpha: frame.transparent,
+    });
   } catch {
     VRMUtils.deepDispose(vrm.scene);
     throw new Error("This device can't draw the avatar (no WebGL).");
   }
   renderer.setPixelRatio(1);
-  renderer.setSize(WIDTH, HEIGHT, false);
+  renderer.setSize(frame.width, frame.height, false);
   const scene = new THREE.Scene();
-  scene.background = backdrop ?? new THREE.Color(BACKGROUND);
+  scene.background = frame.transparent ? null : (backdrop ?? new THREE.Color(BACKGROUND));
   const light = new THREE.DirectionalLight(0xffffff, Math.PI);
   light.position.set(0.5, 1, 2);
   scene.add(light, vrm.scene);
-  const camera = new THREE.PerspectiveCamera(30, WIDTH / HEIGHT, 0.05, 20);
+  const camera = new THREE.PerspectiveCamera(30, frame.width / frame.height, 0.05, 20);
   const dispose = () => {
     VRMUtils.deepDispose(vrm.scene);
     backdrop?.dispose();
@@ -560,4 +577,73 @@ export async function startAvatarCamera(
     // Copied onto the backdrop's own canvas by now, so it is done with.
     image?.close();
   }
+}
+
+export interface AvatarOverlay {
+  /** The avatar on a clear background, redrawn as the face moves. */
+  canvas: HTMLCanvasElement;
+  /** Called after each redraw, for whoever copies `canvas` onwards. */
+  onDraw: (() => void) | null;
+  setZoom: (zoom: number) => void;
+  setArmTracking: (on: boolean) => void;
+  /** Stops the avatar and `source` with it. */
+  stop: () => void;
+}
+
+/**
+ * Streamer mode's avatar: the VRM in `model` following the face in `source`
+ * at up to `fps`, drawn square on a clear `canvas` rather than sent as a
+ * camera. Chromium only — it reads the camera through the breakout box, so it
+ * keeps going while the sharer's tab is hidden, which it always is mid-share.
+ */
+export async function startAvatarOverlay(
+  source: MediaStreamTrack,
+  fps: number,
+  model: ArrayBuffer,
+  { zoom = AVATAR_ZOOM.default, arms = true }: Omit<AvatarOptions, "image"> = {},
+): Promise<AvatarOverlay> {
+  const box = globalThis as unknown as BreakoutBox;
+  if (!box.MediaStreamTrackProcessor) throw new Error("Streamer mode needs Chrome, Edge or the desktop app.");
+  const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
+  const avatar = makeScene(landmarker, vrm, null, zoom, arms, {
+    width: OVERLAY_SIZE,
+    height: OVERLAY_SIZE,
+    transparent: true,
+  });
+  const reader = new box.MediaStreamTrackProcessor({ track: source, maxBufferSize: 1 }).readable.getReader();
+  const minGapUs = (1_000_000 / fps) * 0.9;
+  let lastUs = -Infinity;
+  let stopped = false;
+  const overlay: AvatarOverlay = {
+    canvas: avatar.canvas,
+    onDraw: null,
+    setZoom: avatar.setZoom,
+    setArmTracking: avatar.setArmTracking,
+    stop: () => {
+      if (stopped) return;
+      stopped = true;
+      overlay.onDraw = null;
+      reader.cancel().catch(() => {});
+      source.stop();
+    },
+  };
+
+  void (async () => {
+    while (!stopped) {
+      const { value: frame, done } = await reader.read().catch(() => ({ value: undefined, done: true }));
+      if (done || !frame) break;
+      try {
+        if (stopped || frame.timestamp - lastUs < minGapUs) continue;
+        const deltaS = lastUs === -Infinity ? 0 : (frame.timestamp - lastUs) / 1_000_000;
+        lastUs = frame.timestamp;
+        avatar.draw(frame, deltaS);
+        overlay.onDraw?.();
+      } finally {
+        frame.close();
+      }
+    }
+    avatar.dispose();
+  })();
+
+  return overlay;
 }
