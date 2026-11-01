@@ -131,6 +131,7 @@ interface ChannelListProps {
   onToggleScreenShare?: () => void;
   isScreenSharing?: boolean;
   onToggleWebcam?: () => void;
+  onCameraSettings?: () => void;
   isWebcamActive?: boolean;
   connQualityRef?: React.MutableRefObject<ConnQualityData>;
   setUserVolumeRef?: React.MutableRefObject<((userId: string, vol: number) => void) | null>;
@@ -156,7 +157,7 @@ function VoiceTimer({ since }: { since: number }) {
   return <span className="text-success text-3xs font-mono ml-1 shrink-0">{str}</span>;
 }
 
-export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceChannel, onLeaveVoice, onToggleMute, onToggleDeafen, onToggleScreenShare, isScreenSharing, onToggleWebcam, isWebcamActive, connQualityRef, setUserVolumeRef, speakingUsersRef, onCollapsedChange }: ChannelListProps) {
+export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceChannel, onLeaveVoice, onToggleMute, onToggleDeafen, onToggleScreenShare, isScreenSharing, onToggleWebcam, onCameraSettings, isWebcamActive, connQualityRef, setUserVolumeRef, speakingUsersRef, onCollapsedChange }: ChannelListProps) {
   const confirm = useConfirm();
   const { state, dispatch, selectRoom, selectChannel, createChannel, updateChannel, deleteChannel, moderateVoice, setVoiceChannelStatus, openThread } = useAppContext();
   const channelLinkText = useChannelLinkText();
@@ -1087,6 +1088,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
           onToggleMute={onToggleMute}
           onToggleDeafen={onToggleDeafen}
           onToggleWebcam={onToggleWebcam}
+          onCameraSettings={onCameraSettings}
           onToggleScreenShare={onToggleScreenShare}
           onLeaveVoice={onLeaveVoice}
           onNavigate={

@@ -36,12 +36,25 @@ import {
   type CameraEffect,
 } from "@/lib/cameraBackgrounds";
 import { avatarStore, type StoredAvatar } from "@/lib/avatarStore";
+import { useAppContext, webcamStreamsMap } from "@/lib/store";
 import { Ban, Droplets, FolderOpen, ImagePlus, Plus, UserRound, X } from "lucide-react";
+
+/** The camera that is on, for changing its avatar and background live. */
+export interface LiveCamera {
+  /** Swaps the effect on the running camera: false if a later change (or
+   *  the camera going off) took over first. Throws, leaving the old one on,
+   *  if the new one cannot start. */
+  applyEffect: (effect: CameraEffect) => Promise<boolean>;
+  liveAvatar: () => AvatarCamera | null;
+}
 
 interface CameraSelectModalProps {
   open: boolean;
   onClose: () => void;
   onStart: (deviceId: string, fps: 30 | 60, effect: CameraEffect) => void;
+  /** Set while the camera is on: the picker then changes it as you choose,
+   *  with no device or frame rate to pick and nothing to start. */
+  live?: LiveCamera | null;
 }
 
 const FPS_OPTIONS: Array<30 | 60> = [30, 60];
@@ -49,7 +62,8 @@ const FPS_OPTIONS: Array<30 | 60> = [30, 60];
 const TILE =
   "relative flex aspect-video items-center justify-center overflow-hidden rounded-md border-2 bg-muted text-muted-foreground transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50";
 
-export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalProps) {
+export function CameraSelectModal({ open, onClose, onStart, live = null }: CameraSelectModalProps) {
+  const { state } = useAppContext();
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   const [fps, setFps] = useState<30 | 60>(30);
@@ -108,7 +122,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
 
   // When modal opens, request permission then enumerate devices
   useEffect(() => {
-    if (!open) {
+    if (!open || live) {
       stopPreview();
       return;
     }
@@ -130,7 +144,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
         setPermissionError(true);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, live]);
 
   // The avatars, kept current while the folder changes under us.
   useEffect(() => {
@@ -157,7 +171,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
 
   // Start/restart preview when selected device changes
   useEffect(() => {
-    if (!open || !selectedDeviceId) return;
+    if (!open || live || !selectedDeviceId) return;
     stopPreview();
 
     const constraints: MediaStreamConstraints = {
@@ -176,7 +190,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
         setMaxDeviceFps(null);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDeviceId, open]);
+  }, [selectedDeviceId, open, live]);
 
   // Run the preview through the effect while one is on. It works on a
   // clone, so turning the effect off (which stops what it was given) leaves
@@ -237,9 +251,76 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
     () => (blurredPreview ? new MediaStream([blurredPreview.track]) : null),
     [blurredPreview],
   );
+  // Live, the preview is what the call is seeing, kept current as effects swap.
+  const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
+  useEffect(() => {
+    if (!open || !live || !state.userId) return;
+    const userId = state.userId;
+    const read = () => setLiveStream(webcamStreamsMap.get(userId) ?? null);
+    read();
+    window.addEventListener("webcam-stream-update", read);
+    return () => window.removeEventListener("webcam-stream-update", read);
+  }, [open, live, state.userId]);
+
+  // Live, each choice of avatar or background goes straight onto the camera.
+  // What it last took is kept, to go back to if a new one cannot start.
+  const [applying, setApplying] = useState(false);
+  const appliedRef = useRef<{ effect: CameraBackgroundEffect; avatarId: string | null } | null>(null);
+  useEffect(() => {
+    if (!open || !live) {
+      appliedRef.current = null;
+      return;
+    }
+    const applied = appliedRef.current;
+    // Opening shows what the camera was started with: nothing to change yet.
+    if (!applied) {
+      appliedRef.current = { effect, avatarId };
+      return;
+    }
+    if (applied.effect === effect && applied.avatarId === avatarId) return;
+    let current = true;
+    setApplying(true);
+    setAvatarError(null);
+    const sent: CameraEffect =
+      chosen.kind === "avatar"
+        ? { ...chosen, zoom: avatarZoomRef.current, arms: avatarArmsRef.current, look: avatarLookRef.current }
+        : chosen;
+    live
+      .applyEffect(sent)
+      .then((took) => {
+        // A later choice took over while this loaded, and the hook dropped it.
+        if (!took) return;
+        // Kept even if the picker was closed meanwhile: it is what is on.
+        saveCameraEffect(effect);
+        saveCameraAvatar(avatarId);
+        if (current) appliedRef.current = { effect, avatarId };
+      })
+      .catch((err) => {
+        console.warn("[camera] couldn't change the camera's effect:", err);
+        if (!current) return;
+        const message =
+          err instanceof Error ? err.message : avatarId ? "That avatar couldn't be loaded." : "That background couldn't be used.";
+        setAvatarError(`${message} Your camera kept what it had.`);
+        setEffect(applied.effect);
+        setAvatarId(applied.avatarId);
+        setAvatarZoom(applied.avatarId ? readAvatarZoom(applied.avatarId) : AVATAR_ZOOM.default);
+        setAvatarLook(applied.avatarId ? readAvatarLook(applied.avatarId) : DEFAULT_AVATAR_LOOK);
+      })
+      .finally(() => current && setApplying(false));
+    return () => {
+      current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, live, effect, avatarId]);
+
+  /** Where a change of zoom, look or arms goes: the running camera's avatar
+   *  live, else the preview's. Live, it is kept straight away too. */
+  const avatarTarget = (): AvatarCamera | null =>
+    live ? live.liveAvatar() : blurredPreview && "setLook" in blurredPreview ? blurredPreview : null;
+
   // While an effect loads there is nothing to show rather than the bare
   // camera — it is on precisely because the room behind is not for sharing.
-  const shownStream = hasEffect ? blurredStream : previewStream;
+  const shownStream = live ? liveStream : hasEffect ? blurredStream : previewStream;
 
   // Attach stream to video element
   useEffect(() => {
@@ -332,7 +413,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Select Camera</DialogTitle>
+          <DialogTitle>{live ? "Camera Settings" : "Select Camera"}</DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-col gap-3">
@@ -342,7 +423,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
             </p>
           ) : (
             <>
-              {devices.length > 1 && (
+              {!live && devices.length > 1 && (
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium text-muted-foreground">Camera device</label>
                   <select
@@ -359,6 +440,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                 </div>
               )}
 
+              {!live && (
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-muted-foreground">Frame rate</label>
                 <div className="flex gap-2">
@@ -389,6 +471,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                       : "60 FPS is smoother but uses more bandwidth."}
                 </p>
               </div>
+              )}
 
               {avatarStore && (
                 <div className="flex flex-col gap-1">
@@ -461,7 +544,8 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                         value={[avatarZoom]}
                         onValueChange={([zoom]) => {
                           setAvatarZoom(zoom);
-                          if (blurredPreview && "setZoom" in blurredPreview) blurredPreview.setZoom(zoom);
+                          avatarTarget()?.setZoom(zoom);
+                          if (live) saveAvatarZoom(avatarId, zoom);
                         }}
                         className="flex-1"
                         aria-label="Avatar zoom"
@@ -477,7 +561,8 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                       labelClassName="w-16"
                       onChange={(look) => {
                         setAvatarLook(look);
-                        if (blurredPreview && "setLook" in blurredPreview) blurredPreview.setLook(look);
+                        avatarTarget()?.setLook(look);
+                        if (live) saveAvatarLook(avatarId, look);
                       }}
                     />
                   )}
@@ -492,7 +577,8 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                         checked={avatarArms}
                         onCheckedChange={(on) => {
                           setAvatarArms(on);
-                          if (blurredPreview && "setArmTracking" in blurredPreview) blurredPreview.setArmTracking(on);
+                          avatarTarget()?.setArmTracking(on);
+                          if (live) saveAvatarArms(on);
                         }}
                       />
                     </div>
@@ -606,7 +692,9 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                   />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
-                    {!selectedDeviceId
+                    {live
+                      ? "Your camera is off"
+                      : !selectedDeviceId
                       ? "No camera found"
                       : previewStream && avatarId
                         ? avatarError
@@ -621,6 +709,14 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
             </>
           )}
 
+          {live ? (
+          <div className="flex items-center gap-2 justify-end">
+            {applying && <span className="mr-auto text-xs text-muted-foreground">Switching...</span>}
+            <Button size="sm" onClick={handleClose}>
+              Done
+            </Button>
+          </div>
+          ) : (
           <div className="flex gap-2 justify-end">
             <Button variant="outline" size="sm" onClick={handleClose}>
               Cancel
@@ -633,6 +729,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
               Start Camera
             </Button>
           </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

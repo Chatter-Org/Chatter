@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useMemo, useState } from "react";
 import { useAppContext } from "@/lib/store";
 import { useWebRTCVoice } from "@/hooks/useWebRTCVoice";
 import { useWebRTCScreen } from "@/hooks/useWebRTCScreen";
@@ -24,6 +24,8 @@ interface VoiceControlsProps {
   stopScreenShareRef?: React.MutableRefObject<(() => void) | null>;
   startWebcamRef?: React.MutableRefObject<(() => void) | null>;
   stopWebcamRef?: React.MutableRefObject<(() => void) | null>;
+  /** Opens the camera picker on the camera that is on, to change it live. */
+  cameraSettingsRef?: React.MutableRefObject<(() => void) | null>;
   connQualityRef?: React.MutableRefObject<ConnQualityData>;
   setUserVolumeRef?: React.MutableRefObject<((userId: string, vol: number) => void) | null>;
   speakingUsersRef?: React.MutableRefObject<Set<string>>;
@@ -35,9 +37,11 @@ function computeQuality(connStats: Record<string, import("@/lib/webrtc").PeerSta
   return scoreCallQuality(pub && { connectionState: pub.connectionState, rtt: pub.rtt, audioJitter: pub.audioJitter, audioPacketsLost: pub.audioPacketsLost });
 }
 
-export function VoiceControls({ joinVoiceRef, leaveVoiceRef, releaseVoiceRef, toggleMuteRef, toggleDeafenRef, startScreenShareRef, stopScreenShareRef, startWebcamRef, stopWebcamRef, connQualityRef, setUserVolumeRef, speakingUsersRef }: VoiceControlsProps) {
+export function VoiceControls({ joinVoiceRef, leaveVoiceRef, releaseVoiceRef, toggleMuteRef, toggleDeafenRef, startScreenShareRef, stopScreenShareRef, startWebcamRef, stopWebcamRef, cameraSettingsRef, connQualityRef, setUserVolumeRef, speakingUsersRef }: VoiceControlsProps) {
   const { state } = useAppContext();
   const [cameraModalOpen, setCameraModalOpen] = useState(false);
+  // Whether the picker is changing the camera that is on rather than starting one.
+  const [cameraModalLive, setCameraModalLive] = useState(false);
 
   // Cross-hook cleanup coordination
   const cleanupScreenRef = useRef(async () => {});
@@ -83,9 +87,24 @@ export function VoiceControls({ joinVoiceRef, leaveVoiceRef, releaseVoiceRef, to
   }, [stopScreenShareRef, screen.stopScreenShare]);
 
   useEffect(() => {
-    if (startWebcamRef) startWebcamRef.current = () => setCameraModalOpen(true);
+    if (startWebcamRef) startWebcamRef.current = () => { setCameraModalLive(false); setCameraModalOpen(true); };
     return () => { if (startWebcamRef) startWebcamRef.current = null; };
   }, [startWebcamRef]);
+
+  useEffect(() => {
+    if (cameraSettingsRef) cameraSettingsRef.current = () => { setCameraModalLive(true); setCameraModalOpen(true); };
+    return () => { if (cameraSettingsRef) cameraSettingsRef.current = null; };
+  }, [cameraSettingsRef]);
+
+  // The camera going off (unplugged, call left) ends live settings with it.
+  useEffect(() => {
+    if (cameraModalLive && !state.isWebcamActive) setCameraModalOpen(false);
+  }, [cameraModalLive, state.isWebcamActive]);
+
+  const liveCamera = useMemo(
+    () => ({ applyEffect: webcam.applyEffect, liveAvatar: webcam.liveAvatar }),
+    [webcam.applyEffect, webcam.liveAvatar],
+  );
 
   useEffect(() => {
     if (stopWebcamRef) stopWebcamRef.current = webcam.stopWebcam;
@@ -145,6 +164,7 @@ export function VoiceControls({ joinVoiceRef, leaveVoiceRef, releaseVoiceRef, to
       open={cameraModalOpen}
       onClose={() => setCameraModalOpen(false)}
       onStart={(deviceId, fps, effect) => webcam.startWebcam(deviceId, fps, effect)}
+      live={cameraModalLive ? liveCamera : null}
     />
   );
 }

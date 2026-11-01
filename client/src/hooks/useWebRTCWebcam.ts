@@ -14,6 +14,7 @@ import {
 import type { WebcamPublishProfile, WebcamQuality } from "@/lib/webrtc";
 import { toast } from "sonner";
 import type { BlurredCamera } from "@/lib/backgroundBlur";
+import type { AvatarCamera } from "@/lib/avatarCamera";
 import { decodeCameraBackground, readAvatar, type CameraEffect } from "@/lib/cameraBackgrounds";
 
 function buildWebcamVideoConstraints(
@@ -64,6 +65,43 @@ async function tuneWebcamVideoSender(
  * it moves a viewer between the two. A browser that refuses simulcast gets
  * the camera as one encoding, which every viewer is then given.
  */
+/**
+ * The effect running on `camera`, or null for none. It is given a clone, so
+ * stopping it (which stops what it was given) leaves the camera on for the
+ * next one. Throws if it cannot start.
+ */
+async function startCameraEffect(
+  camera: MediaStreamTrack,
+  fps: number,
+  effect: CameraEffect,
+): Promise<BlurredCamera | AvatarCamera | null> {
+  if (effect.kind === "none") return null;
+  const source = camera.clone();
+  try {
+    if (effect.kind === "avatar") {
+      const [{ startAvatarCamera }, model, image] = await Promise.all([
+        import("@/lib/avatarCamera"),
+        readAvatar(effect.id),
+        effect.backgroundSrc ? decodeCameraBackground(effect.backgroundSrc) : undefined,
+      ]);
+      return await startAvatarCamera(source, fps, model, {
+        image,
+        zoom: effect.zoom,
+        arms: effect.arms,
+        look: effect.look,
+      });
+    }
+    const [{ blurBackground }, image] = await Promise.all([
+      import("@/lib/backgroundBlur"),
+      effect.kind === "image" ? decodeCameraBackground(effect.src) : undefined,
+    ]);
+    return await blurBackground(source, fps, image);
+  } catch (err) {
+    source.stop();
+    throw err;
+  }
+}
+
 function addCameraSender(
   pc: RTCPeerConnection,
   track: MediaStreamTrack,
@@ -100,7 +138,12 @@ export function useWebRTCWebcam() {
 
   const webcamStreamRef = useRef<MediaStream | null>(null);
   // The blur, background image or avatar between the camera and the call, when one is on.
-  const blurRef = useRef<BlurredCamera | null>(null);
+  const blurRef = useRef<BlurredCamera | AvatarCamera | null>(null);
+  // What the camera's track is sent through, for swapping the effect live.
+  const videoSenderRef = useRef<RTCRtpSender | null>(null);
+  // Bumped by each live change of effect, so one that finishes loading after
+  // a later one was asked for is thrown away.
+  const effectChangeRef = useRef(0);
   const webcamPubPcRef = useRef<RTCPeerConnection | null>(null);
   const webcamSubPcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const webcamRetryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -250,6 +293,8 @@ export function useWebRTCWebcam() {
     }
     blurRef.current?.stop();
     blurRef.current = null;
+    videoSenderRef.current = null;
+    effectChangeRef.current++;
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       const msg: any = { type: "webcam_share_stop", room_id: callRoomId() };
       if (state.voiceChannelId) msg.channel_id = state.voiceChannelId;
@@ -418,26 +463,12 @@ export function useWebRTCWebcam() {
       if (effect.kind === "avatar") {
         // Unlike the background effects, an avatar that fails stops the
         // camera here (the catch below): the face is not for sharing.
-        const [{ startAvatarCamera }, model, image] = await Promise.all([
-          import("@/lib/avatarCamera"),
-          readAvatar(effect.id),
-          effect.backgroundSrc ? decodeCameraBackground(effect.backgroundSrc) : undefined,
-        ]);
-        blurRef.current = await startAvatarCamera(stream.getVideoTracks()[0], profile.targetFps, model, {
-          image,
-          zoom: effect.zoom,
-          arms: effect.arms,
-          look: effect.look,
-        });
-        sent = new MediaStream([blurRef.current.track]);
+        blurRef.current = await startCameraEffect(stream.getVideoTracks()[0], profile.targetFps, effect);
+        if (blurRef.current) sent = new MediaStream([blurRef.current.track]);
       } else if (effect.kind !== "none") {
         try {
-          const [{ blurBackground }, image] = await Promise.all([
-            import("@/lib/backgroundBlur"),
-            effect.kind === "image" ? decodeCameraBackground(effect.src) : undefined,
-          ]);
-          blurRef.current = await blurBackground(stream.getVideoTracks()[0], profile.targetFps, image);
-          sent = new MediaStream([blurRef.current.track]);
+          blurRef.current = await startCameraEffect(stream.getVideoTracks()[0], profile.targetFps, effect);
+          if (blurRef.current) sent = new MediaStream([blurRef.current.track]);
         } catch (err) {
           console.warn("[webcam] background effect unavailable:", err);
           toast.error("Background effects aren't available here, so your camera is on without one.");
@@ -468,6 +499,7 @@ export function useWebRTCWebcam() {
       const pc = new RTCPeerConnection(getWebRTCConfig());
       webcamPubPcRef.current = pc;
       const videoSender = addCameraSender(pc, videoTrack, sent, profile);
+      videoSenderRef.current = videoSender;
       await tuneWebcamVideoSender(videoSender, profile);
 
       // None before the offer; see `candidatesAfterOffer`.
@@ -522,6 +554,7 @@ export function useWebRTCWebcam() {
       }
       blurRef.current?.stop();
       blurRef.current = null;
+      videoSenderRef.current = null;
       if (webcamPubPcRef.current) { webcamPubPcRef.current.close(); webcamPubPcRef.current = null; }
       if (!(err instanceof DOMException && err.name === "NotAllowedError")) {
         const message = err instanceof Error ? err.message : "Unknown error";
@@ -531,6 +564,51 @@ export function useWebRTCWebcam() {
       webcamStartingRef.current = false;
     }
   }, [state.inVoiceChannel, state.currentRoomId, state.userId, state.voiceChannelId, dispatch, stopWebcam, wsRef]);
+
+  /**
+   * Puts a different effect on the camera that is on, without turning it off
+   * or renegotiating: the new effect starts on the same camera, its track
+   * takes the old one's place on the sender, and only then does the old
+   * effect stop — so viewers see one picture, then the other, and an avatar
+   * is never swapped for the bare camera by a load that failed. False if the
+   * camera went off or another change was asked for while it loaded; throws
+   * if the new effect cannot start, leaving the old one on.
+   */
+  const applyEffect = useCallback(async (effect: CameraEffect): Promise<boolean> => {
+    const camera = webcamStreamRef.current?.getVideoTracks()[0];
+    if (!camera || !state.userId) return false;
+    const change = ++effectChangeRef.current;
+    // A camera turned on at 60 with no effect still runs one at 30, as the
+    // picker does: segmenting or posing every frame twice as often is more
+    // than most machines keep up with.
+    const next = await startCameraEffect(camera, Math.min(30, webcamProfileRef.current.targetFps), effect);
+    // Turned off, or another change asked for, while this one loaded.
+    if (change !== effectChangeRef.current || webcamStreamRef.current?.getVideoTracks()[0] !== camera) {
+      next?.stop();
+      return false;
+    }
+    const track = next?.track ?? camera;
+    if ("contentHint" in track) track.contentHint = webcamProfileRef.current.contentHint;
+    try {
+      await videoSenderRef.current?.replaceTrack(track);
+    } catch (err) {
+      next?.stop();
+      throw err;
+    }
+    const previous = blurRef.current;
+    blurRef.current = next;
+    webcamStreamsMap.set(state.userId, next ? new MediaStream([next.track]) : webcamStreamRef.current!);
+    window.dispatchEvent(new CustomEvent("webcam-stream-update"));
+    previous?.stop();
+    return true;
+  }, [state.userId]);
+
+  /** The avatar on the camera that is on, for moving its settings live. */
+  const liveAvatar = useCallback(
+    (): AvatarCamera | null =>
+      blurRef.current && "setLook" in blurRef.current ? blurRef.current : null,
+    [],
+  );
 
   const fullCleanup = useCallback(async () => {
     if (state.isWebcamActive) await stopWebcam();
@@ -548,6 +626,8 @@ export function useWebRTCWebcam() {
     webcamSubPcsRef,
     startWebcam,
     stopWebcam,
+    applyEffect,
+    liveAvatar,
     fullCleanup,
   };
 }

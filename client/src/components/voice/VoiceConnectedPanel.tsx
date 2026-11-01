@@ -18,6 +18,8 @@ interface VoiceConnectedPanelProps {
   onToggleMute?: () => void;
   onToggleDeafen?: () => void;
   onToggleWebcam?: () => void;
+  /** Opens the camera's settings, to change its avatar or background live. */
+  onCameraSettings?: () => void;
   onToggleScreenShare?: () => void;
   onLeaveVoice?: () => void;
   /** Set while the call is in a room other than the one on screen: the
@@ -62,6 +64,7 @@ export function VoiceConnectedPanel({
   onToggleMute,
   onToggleDeafen,
   onToggleWebcam,
+  onCameraSettings,
   onToggleScreenShare,
   onLeaveVoice,
   onNavigate,
@@ -157,17 +160,31 @@ export function VoiceConnectedPanel({
           {isDeafened ? <HeadphoneOff className="h-4 w-4" /> : <Headphones className="h-4 w-4" />}
         </button>
         {onToggleWebcam && (
-          <button
-            onClick={onToggleWebcam}
-            className={`${TILE} flex-1 rounded-md ${
-              isWebcamActive ? "bg-success/15 text-success hover:bg-success/25" : TILE_IDLE
-            }`}
-            title={isWebcamActive ? "Turn off camera" : "Turn on camera"}
-            aria-label={isWebcamActive ? "Turn off camera" : "Turn on camera"}
-            aria-pressed={!!isWebcamActive}
-          >
-            <Video className="h-4 w-4" />
-          </button>
+          // Split while the camera is on, like the screen share tile: the
+          // narrow edge opens its settings, to change them without stopping it.
+          <div className="flex flex-1">
+            <button
+              onClick={onToggleWebcam}
+              className={`${TILE} flex-1 ${isWebcamActive && onCameraSettings ? "rounded-l-md" : "rounded-md"} ${
+                isWebcamActive ? "bg-success/15 text-success hover:bg-success/25" : TILE_IDLE
+              }`}
+              title={isWebcamActive ? "Turn off camera" : "Turn on camera"}
+              aria-label={isWebcamActive ? "Turn off camera" : "Turn on camera"}
+              aria-pressed={!!isWebcamActive}
+            >
+              <Video className="h-4 w-4" />
+            </button>
+            {isWebcamActive && onCameraSettings && (
+              <button
+                onClick={onCameraSettings}
+                className={`${TILE} w-4 shrink-0 rounded-r-md border-l border-background/50 bg-success/15 text-success hover:bg-success/25`}
+                title="Camera settings"
+                aria-label="Camera settings"
+              >
+                <ChevronUp className="h-3 w-3" />
+              </button>
+            )}
+          </div>
         )}
         {showScreen && (
           // A split tile: the face starts or stops the share, the narrow edge

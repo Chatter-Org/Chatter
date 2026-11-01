@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { useState, useEffect, useRef, useCallback, Suspense } from "react";
-import { WifiOff, Menu, Users, Hash, Mic, MicOff, Headphones, HeadphoneOff, MonitorUp, PhoneOff, Camera } from "lucide-react";
+import { WifiOff, Menu, Users, Hash, Mic, MicOff, Headphones, HeadphoneOff, MonitorUp, PhoneOff, Camera, Settings2 } from "lucide-react";
 import { useAppContext, screenStreamsMap } from "@/lib/store";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -172,6 +172,7 @@ export function ChatLayout() {
   const stopScreenShareRef = useRef<(() => void) | null>(null);
   const startWebcamRef = useRef<(() => void) | null>(null);
   const stopWebcamRef = useRef<(() => void) | null>(null);
+  const cameraSettingsRef = useRef<(() => void) | null>(null);
   const setUserVolumeRef = useRef<((userId: string, vol: number) => void) | null>(null);
   const speakingUsersRef = useRef<Set<string>>(new Set());
   const [isPiP, setIsPiP] = useState(false);
@@ -641,6 +642,7 @@ export function ChatLayout() {
         if (state.isWebcamActive) stopWebcamRef.current?.();
         else startWebcamRef.current?.();
       }}
+      onCameraSettings={() => cameraSettingsRef.current?.()}
       isWebcamActive={state.isWebcamActive}
       connQualityRef={connQualityRef}
       setUserVolumeRef={setUserVolumeRef}
@@ -767,6 +769,7 @@ export function ChatLayout() {
                   stopScreenShareRef={stopScreenShareRef}
                   startWebcamRef={startWebcamRef}
                   stopWebcamRef={stopWebcamRef}
+                  cameraSettingsRef={cameraSettingsRef}
                   connQualityRef={connQualityRef}
                   setUserVolumeRef={setUserVolumeRef}
                   speakingUsersRef={speakingUsersRef}
@@ -939,6 +942,7 @@ export function ChatLayout() {
                   if (state.isWebcamActive) stopWebcamRef.current?.();
                   else startWebcamRef.current?.();
                 }}
+                onCameraSettings={() => cameraSettingsRef.current?.()}
                 onHangUp={() => leaveVoiceRef.current?.()}
               />
               )
@@ -1033,13 +1037,14 @@ interface VoiceBarProps {
   onToggleDeafen: () => void;
   onToggleScreenShare: () => void;
   onToggleWebcam: () => void;
+  onCameraSettings: () => void;
   onHangUp: () => void;
 }
 
 function VoiceBar({
   channelName, roomName, occupiedSince,
   isMuted, isDeafened, isScreenSharing, isWebcamActive,
-  onNavigate, onToggleMute, onToggleDeafen, onToggleScreenShare, onToggleWebcam, onHangUp,
+  onNavigate, onToggleMute, onToggleDeafen, onToggleScreenShare, onToggleWebcam, onCameraSettings, onHangUp,
 }: VoiceBarProps) {
   return (
     <div className="flex items-center gap-3 shrink-0 bg-card border-t border-border px-4 py-2">
@@ -1085,6 +1090,15 @@ function VoiceBar({
         >
           <Camera className="w-4 h-4" />
         </button>
+        {isWebcamActive && (
+          <button
+            onClick={onCameraSettings}
+            className="p-1.5 rounded-md transition-colors text-muted-foreground hover:bg-accent hover:text-foreground"
+            title="Camera settings"
+          >
+            <Settings2 className="w-4 h-4" />
+          </button>
+        )}
         <button
           onClick={onToggleScreenShare}
           className={`p-1.5 rounded-md transition-colors ${isScreenSharing ? "text-success bg-success/10 hover:bg-success/20" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}
