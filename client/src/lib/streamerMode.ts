@@ -13,7 +13,14 @@
 import { avatarStore } from "@/lib/avatarStore";
 import type { BreakoutBox } from "@/lib/backgroundBlur";
 import type { AvatarOverlay } from "@/lib/avatarCamera";
-import { readAvatar, readAvatarArms, readAvatarZoom, readCameraAvatar } from "@/lib/cameraBackgrounds";
+import {
+  readAvatar,
+  readAvatarArms,
+  readAvatarLook,
+  readAvatarZoom,
+  readCameraAvatar,
+  type AvatarLook,
+} from "@/lib/cameraBackgrounds";
 
 const STORAGE_KEY = "chatter_streamer_mode";
 export const STREAMER_MODE_CHANGE_EVENT = "chatter-streamer-mode-change";
@@ -103,6 +110,7 @@ export interface StreamerShare {
   setPlacement: (placement: StreamerPlacement) => void;
   setZoom: (zoom: number) => void;
   setArmTracking: (on: boolean) => void;
+  setLook: (look: AvatarLook) => void;
   /** Stops the avatar and its camera. The capture is the caller's to stop. */
   stop: () => void;
 }
@@ -177,6 +185,7 @@ function composite(
     setPlacement: (next) => (placement = next),
     setZoom: avatar.setZoom,
     setArmTracking: avatar.setArmTracking,
+    setLook: avatar.setLook,
     stop: () => {
       if (stopped) return;
       stopped = true;
@@ -219,6 +228,7 @@ export async function startStreamerShare(
     const avatar = await startAvatarOverlay(source, AVATAR_FPS, model, {
       zoom: readAvatarZoom(avatarId),
       arms: readAvatarArms(),
+      look: readAvatarLook(avatarId),
     });
     try {
       return composite(box as Required<BreakoutBox>, screen, avatar, settings.placement);

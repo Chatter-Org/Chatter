@@ -17,7 +17,21 @@ export type CameraEffect =
   | { kind: "image"; id: string; src: string }
   /** A VRM file kept on this device (`avatarStore`), by its id, drawn
    *  in front of one of the images (a data URL) or a plain backdrop. */
-  | { kind: "avatar"; id: string; backgroundSrc?: string; zoom?: number; arms?: boolean };
+  | { kind: "avatar"; id: string; backgroundSrc?: string; zoom?: number; arms?: boolean; look?: AvatarLook };
+
+/** Where the avatar's light comes from, as the viewer sees it. */
+export type AvatarLightFrom = "front" | "left" | "right" | "above";
+
+/** How the avatar is lit and outlined; models are made for different
+ *  lighting, so it is kept per avatar, as the zoom is. */
+export interface AvatarLook {
+  /** The light's strength, 1 as the avatar was first drawn. */
+  brightness: number;
+  lightFrom: AvatarLightFrom;
+  /** An outline drawn round the model, 0 for none and 1 the thickest. Any
+   *  outline the model has of its own is drawn either way. */
+  outline: number;
+}
 
 /** What can be chosen as the background; an avatar is chosen separately. */
 export type CameraBackgroundEffect = Exclude<CameraEffect, { kind: "avatar" }>;
@@ -35,6 +49,8 @@ const EFFECT_KEY = "chatter_camera_effect";
 const AVATAR_KEY = "chatter_camera_avatar";
 /** Each avatar's zoom, by id: models differ in size. */
 const AVATAR_ZOOM_KEY = "chatter_camera_avatar_zoom";
+/** Each avatar's `AvatarLook`, by id. */
+const AVATAR_LOOK_KEY = "chatter_camera_avatar_look";
 /** "0" when arm tracking is off; it costs this device, so it is one setting
  *  for every avatar. */
 const AVATAR_ARMS_KEY = "chatter_camera_avatar_arms";
@@ -43,6 +59,9 @@ const AVATAR_ARMS_KEY = "chatter_camera_avatar_arms";
  *  and shoulders. Here rather than in `avatarCamera.ts` so the picker can
  *  use it without loading three.js. */
 export const AVATAR_ZOOM = { min: 0.4, max: 2, default: 1 } as const;
+export const AVATAR_BRIGHTNESS = { min: 0.4, max: 2 } as const;
+export const AVATAR_LIGHTS: AvatarLightFrom[] = ["front", "left", "right", "above"];
+export const DEFAULT_AVATAR_LOOK: AvatarLook = { brightness: 1, lightFrom: "front", outline: 0 };
 const BACKGROUNDS_KEY = "chatter_camera_backgrounds";
 
 /** Enough to choose between without filling the browser's storage. */
@@ -179,6 +198,43 @@ export function saveAvatarZoom(id: string, zoom: number | null) {
   else zooms[id] = zoom;
   try {
     localStorage.setItem(AVATAR_ZOOM_KEY, JSON.stringify(zooms));
+  } catch {
+    // Not remembered; it starts from the default next time.
+  }
+}
+
+function readAvatarLooks(): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(AVATAR_LOOK_KEY) ?? "{}");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function readAvatarLook(id: string): AvatarLook {
+  const saved = readAvatarLooks()[id];
+  if (!saved || typeof saved !== "object") return DEFAULT_AVATAR_LOOK;
+  const { brightness, lightFrom, outline } = saved as Partial<Record<keyof AvatarLook, unknown>>;
+  return {
+    brightness:
+      typeof brightness === "number" && brightness >= AVATAR_BRIGHTNESS.min && brightness <= AVATAR_BRIGHTNESS.max
+        ? brightness
+        : DEFAULT_AVATAR_LOOK.brightness,
+    lightFrom: AVATAR_LIGHTS.includes(lightFrom as AvatarLightFrom)
+      ? (lightFrom as AvatarLightFrom)
+      : DEFAULT_AVATAR_LOOK.lightFrom,
+    outline: typeof outline === "number" && outline >= 0 && outline <= 1 ? outline : DEFAULT_AVATAR_LOOK.outline,
+  };
+}
+
+/** Remembers an avatar's look; null forgets it (the avatar was removed). */
+export function saveAvatarLook(id: string, look: AvatarLook | null) {
+  const looks = readAvatarLooks();
+  if (look === null) delete looks[id];
+  else looks[id] = look;
+  try {
+    localStorage.setItem(AVATAR_LOOK_KEY, JSON.stringify(looks));
   } catch {
     // Not remembered; it starts from the default next time.
   }

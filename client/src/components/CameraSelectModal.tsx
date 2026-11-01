@@ -8,26 +8,31 @@ import {
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { AvatarLookControls } from "@/components/AvatarLookControls";
 import { cn } from "@/lib/utils";
 import type { AvatarCamera } from "@/lib/avatarCamera";
 import type { BlurredCamera } from "@/lib/backgroundBlur";
 import {
   AVATAR_ZOOM,
+  DEFAULT_AVATAR_LOOK,
   addCameraBackground,
   decodeCameraBackground,
   listCameraBackgrounds,
   MAX_CAMERA_BACKGROUNDS,
   readAvatar,
   readAvatarArms,
+  readAvatarLook,
   readAvatarZoom,
   readCameraAvatar,
   readCameraEffect,
   removeCameraBackground,
   saveAvatarArms,
+  saveAvatarLook,
   saveAvatarZoom,
   saveCameraAvatar,
   saveCameraEffect,
   type CameraBackgroundEffect,
+  type AvatarLook,
   type CameraEffect,
 } from "@/lib/cameraBackgrounds";
 import { avatarStore, type StoredAvatar } from "@/lib/avatarStore";
@@ -68,6 +73,12 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
   const [avatarArms, setAvatarArms] = useState(readAvatarArms);
   const avatarArmsRef = useRef(avatarArms);
   avatarArmsRef.current = avatarArms;
+  const [avatarLook, setAvatarLook] = useState<AvatarLook>(() => {
+    const id = readCameraAvatar();
+    return id ? readAvatarLook(id) : DEFAULT_AVATAR_LOOK;
+  });
+  const avatarLookRef = useRef(avatarLook);
+  avatarLookRef.current = avatarLook;
   const [backgrounds, setBackgrounds] = useState(listCameraBackgrounds);
   const [uploadError, setUploadError] = useState<string | null>(null);
   // The preview through the effect, so what you see is what the call will see.
@@ -187,6 +198,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
               image,
               zoom: avatarZoomRef.current,
               arms: avatarArmsRef.current,
+              look: avatarLookRef.current,
             }),
           )
         : Promise.all([
@@ -274,6 +286,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
     try {
       await avatarStore.remove(id);
       saveAvatarZoom(id, null);
+      saveAvatarLook(id, null);
       setAvatars(await avatarStore.list());
     } catch (err) {
       setAvatarFileError(err instanceof Error ? err.message : "That avatar couldn't be removed.");
@@ -283,6 +296,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
   function selectAvatar(id: string | null) {
     setAvatarId(id);
     setAvatarZoom(id ? readAvatarZoom(id) : AVATAR_ZOOM.default);
+    setAvatarLook(id ? readAvatarLook(id) : DEFAULT_AVATAR_LOOK);
     if (id && effect.kind === "blur") setEffect({ kind: "none" });
   }
 
@@ -299,11 +313,12 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
     if (avatarId) {
       saveAvatarZoom(avatarId, avatarZoom);
       saveAvatarArms(avatarArms);
+      saveAvatarLook(avatarId, avatarLook);
     }
     // Segmenting every frame twice as often is more than most machines can
     // keep up with, so an effect sends at 30.
     const sent: CameraEffect =
-      chosen.kind === "avatar" ? { ...chosen, zoom: avatarZoom, arms: avatarArms } : chosen;
+      chosen.kind === "avatar" ? { ...chosen, zoom: avatarZoom, arms: avatarArms, look: avatarLook } : chosen;
     onStart(selectedDeviceId, supports60 && !hasEffect ? fps : 30, hasEffect ? sent : { kind: "none" });
     onClose();
   }
@@ -438,7 +453,7 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                   </div>
                   {avatarId && (
                     <div className="flex items-center gap-3 pt-1">
-                      <label className="text-xs font-medium text-muted-foreground">Zoom</label>
+                      <label className="w-16 text-xs font-medium text-muted-foreground">Zoom</label>
                       <Slider
                         min={AVATAR_ZOOM.min}
                         max={AVATAR_ZOOM.max}
@@ -455,6 +470,16 @@ export function CameraSelectModal({ open, onClose, onStart }: CameraSelectModalP
                         {Math.round(avatarZoom * 100)}%
                       </span>
                     </div>
+                  )}
+                  {avatarId && (
+                    <AvatarLookControls
+                      look={avatarLook}
+                      labelClassName="w-16"
+                      onChange={(look) => {
+                        setAvatarLook(look);
+                        if (blurredPreview && "setLook" in blurredPreview) blurredPreview.setLook(look);
+                      }}
+                    />
                   )}
                   {avatarId && (
                     <div className="flex items-center justify-between gap-3">

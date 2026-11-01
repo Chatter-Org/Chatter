@@ -2,15 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { AvatarLookControls } from "@/components/AvatarLookControls";
 import { useAppContext, screenStreamsMap } from "@/lib/store";
 import { useStreamerMode } from "@/hooks/useStreamerMode";
 import { avatarStore, type StoredAvatar } from "@/lib/avatarStore";
 import {
   AVATAR_ZOOM,
+  DEFAULT_AVATAR_LOOK,
   readAvatarArms,
+  readAvatarLook,
   readAvatarZoom,
   saveAvatarArms,
+  saveAvatarLook,
   saveAvatarZoom,
+  type AvatarLook,
 } from "@/lib/cameraBackgrounds";
 import {
   STREAMER_MODE_CHANGE_EVENT,
@@ -52,6 +57,10 @@ export function StreamerModeDialog({ open, onOpenChange }: StreamerModeDialogPro
   const [zoomed, setZoomed] = useState<{ id: string; zoom: number } | null>(null);
   const zoom =
     zoomed && zoomed.id === avatarId ? zoomed.zoom : avatarId ? readAvatarZoom(avatarId) : AVATAR_ZOOM.default;
+  // Likewise its light and outline.
+  const [looked, setLooked] = useState<{ id: string; look: AvatarLook } | null>(null);
+  const look =
+    looked && looked.id === avatarId ? looked.look : avatarId ? readAvatarLook(avatarId) : DEFAULT_AVATAR_LOOK;
   const [arms, setArms] = useState(readAvatarArms);
   // Bumped as the streams change, to read your own share again.
   const [, setStreamsChanged] = useState(0);
@@ -265,7 +274,7 @@ export function StreamerModeDialog({ open, onOpenChange }: StreamerModeDialogPro
             </div>
 
             <div className="flex items-center gap-3">
-              <label className="w-10 text-xs font-medium text-muted-foreground">Size</label>
+              <label className="w-16 text-xs font-medium text-muted-foreground">Size</label>
               <Slider
                 min={STREAMER_SIZE.min}
                 max={STREAMER_SIZE.max}
@@ -282,7 +291,7 @@ export function StreamerModeDialog({ open, onOpenChange }: StreamerModeDialogPro
 
             {avatarId && (
               <div className="flex items-center gap-3">
-                <label className="w-10 text-xs font-medium text-muted-foreground">Zoom</label>
+                <label className="w-16 text-xs font-medium text-muted-foreground">Zoom</label>
                 <Slider
                   min={AVATAR_ZOOM.min}
                   max={AVATAR_ZOOM.max}
@@ -302,6 +311,18 @@ export function StreamerModeDialog({ open, onOpenChange }: StreamerModeDialogPro
                   {Math.round(zoom * 100)}%
                 </span>
               </div>
+            )}
+
+            {avatarId && (
+              <AvatarLookControls
+                look={look}
+                labelClassName="w-16"
+                onChange={(next) => {
+                  setLooked({ id: avatarId, look: next });
+                  saveAvatarLook(avatarId, next);
+                  window.dispatchEvent(new CustomEvent(STREAMER_MODE_CHANGE_EVENT));
+                }}
+              />
             )}
 
             <div className="flex items-center justify-between gap-3">

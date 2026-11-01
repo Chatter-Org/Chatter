@@ -23,7 +23,7 @@ import { selectDisplayCapture } from "@/lib/media";
 import { playSound, type SoundPack } from "@/lib/sounds";
 import { apiPutScreenThumbnail } from "@/lib/api";
 import { captureScreenThumbnail, releaseScreenThumbnailCapture } from "@/lib/screenThumbnail";
-import { readAvatarArms, readAvatarZoom } from "@/lib/cameraBackgrounds";
+import { readAvatarArms, readAvatarLook, readAvatarZoom } from "@/lib/cameraBackgrounds";
 import {
   startStreamerShare,
   streamerAvatarId,
@@ -592,7 +592,10 @@ export function useWebRTCScreen() {
     if (!share) return;
     share.setPlacement(streamer.placement);
     const avatarId = streamerAvatarId(streamer);
-    if (avatarId) share.setZoom(readAvatarZoom(avatarId));
+    if (avatarId) {
+      share.setZoom(readAvatarZoom(avatarId));
+      share.setLook(readAvatarLook(avatarId));
+    }
     share.setArmTracking(readAvatarArms());
   }, [streamer]);
 

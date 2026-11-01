@@ -427,6 +427,7 @@ export function useWebRTCWebcam() {
           image,
           zoom: effect.zoom,
           arms: effect.arms,
+          look: effect.look,
         });
         sent = new MediaStream([blurRef.current.track]);
       } else if (effect.kind !== "none") {

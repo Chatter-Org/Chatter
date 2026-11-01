@@ -26,7 +26,12 @@ import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import type { BlurredCamera, BreakoutBox } from "@/lib/backgroundBlur";
-import { AVATAR_ZOOM } from "@/lib/cameraBackgrounds";
+import {
+  AVATAR_ZOOM,
+  DEFAULT_AVATAR_LOOK,
+  type AvatarLightFrom,
+  type AvatarLook,
+} from "@/lib/cameraBackgrounds";
 
 /** The avatar is drawn at this size whatever the camera's. */
 const WIDTH = 1280;
@@ -43,6 +48,19 @@ interface Frame {
   transparent: boolean;
 }
 const CAMERA_FRAME: Frame = { width: WIDTH, height: HEIGHT, transparent: false };
+
+/** Where the light is, for each choice: the viewer's left is the scene's -X,
+ *  as the camera looks down -Z at the model. Only its direction counts. */
+const LIGHT_POSITIONS: Record<AvatarLightFrom, [number, number, number]> = {
+  front: [0.5, 1, 2],
+  left: [-2, 1, 1],
+  right: [2, 1, 1],
+  above: [0, 3, 0.8],
+};
+/** The outline's width in metres at its thickest: about four pixels with the
+ *  head framed at 100% zoom. */
+const OUTLINE_MAX_WIDTH = 0.005;
+const OUTLINE_COLOR = 0x111111;
 
 /** How far each frame moves toward what the face says, 0–1: lower is
  *  smoother but lags. Blinks are quick, so they follow more closely. */
@@ -344,6 +362,8 @@ export interface AvatarCamera extends BlurredCamera {
   setZoom: (zoom: number) => void;
   /** Starts or stops following the arms; stopped, they ease back to rest. */
   setArmTracking: (on: boolean) => void;
+  /** Relights and outlines the avatar, from the next frame. */
+  setLook: (look: AvatarLook) => void;
 }
 
 export interface AvatarOptions {
@@ -353,6 +373,8 @@ export interface AvatarOptions {
   zoom?: number;
   /** Follow the arms as well as the face; on unless turned off. */
   arms?: boolean;
+  /** How it is lit and outlined. */
+  look?: AvatarLook;
 }
 
 /**
@@ -379,6 +401,59 @@ function poseAndFrame(vrm: VRM, camera: THREE.PerspectiveCamera): (zoom: number)
     const z = Math.min(AVATAR_ZOOM.max, Math.max(AVATAR_ZOOM.min, zoom));
     camera.position.set(at.x, at.y - 0.02, at.z + 1.6 / z);
     camera.lookAt(at.x, at.y - 0.08, at.z);
+  };
+}
+
+/**
+ * An outline round the model, drawn the old way: each opaque mesh again,
+ * pushed out along its normals and showing only its back faces, so it peeks
+ * out round the edges. The copies share the meshes' geometry, skeleton and
+ * expression weights, so they move with them. Made the first time an outline
+ * is asked for; returns what sets its width (0 hides it).
+ */
+function makeOutline(vrm: VRM): (width: number) => void {
+  const width = { value: 0 };
+  const material = new THREE.MeshBasicMaterial({ color: OUTLINE_COLOR, side: THREE.BackSide });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.outlineWidth = width;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nuniform float outlineWidth;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\ntransformed += normalize(normal) * outlineWidth;");
+  };
+  // Cut-out and see-through materials (hair cards, lashes, glasses) would be
+  // outlined as the whole flat shape, so they are left alone, as is the
+  // model's own outline.
+  const isOwnOutline = (m: THREE.Material) => (m as THREE.Material & { isOutline?: boolean }).isOutline === true;
+  const seeThrough = (m: THREE.Material) => !isOwnOutline(m) && (m.transparent || m.alphaTest > 0);
+  const meshes: THREE.Mesh[] = [];
+  vrm.scene.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry.getAttribute("normal")) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    if (!materials.some(seeThrough)) meshes.push(mesh);
+  });
+  const hulls = meshes.map((mesh) => {
+    let hull: THREE.Mesh;
+    if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+      const skinned = mesh as THREE.SkinnedMesh;
+      const copy = new THREE.SkinnedMesh(skinned.geometry, material);
+      copy.bind(skinned.skeleton, skinned.bindMatrix);
+      copy.bindMode = skinned.bindMode;
+      hull = copy;
+    } else {
+      hull = new THREE.Mesh(mesh.geometry, material);
+    }
+    // The same array, so the face's expressions move the outline too.
+    hull.morphTargetInfluences = mesh.morphTargetInfluences;
+    hull.morphTargetDictionary = mesh.morphTargetDictionary;
+    hull.frustumCulled = false;
+    // As a child it is where the mesh is.
+    mesh.add(hull);
+    return hull;
+  });
+  return (w) => {
+    width.value = w;
+    for (const hull of hulls) hull.visible = w > 0;
   };
 }
 
@@ -410,6 +485,7 @@ function makeScene(
   backdrop: THREE.CanvasTexture | null,
   zoom: number,
   arms: boolean,
+  look: AvatarLook,
   frame: Frame = CAMERA_FRAME,
 ) {
   const canvas = document.createElement("canvas");
@@ -433,7 +509,6 @@ function makeScene(
   const scene = new THREE.Scene();
   scene.background = frame.transparent ? null : (backdrop ?? new THREE.Color(BACKGROUND));
   const light = new THREE.DirectionalLight(0xffffff, Math.PI);
-  light.position.set(0.5, 1, 2);
   scene.add(light, vrm.scene);
   const camera = new THREE.PerspectiveCamera(30, frame.width / frame.height, 0.05, 20);
   const dispose = () => {
@@ -464,6 +539,14 @@ function makeScene(
     }
   };
   setArmTracking(arms);
+  let setOutline: ((width: number) => void) | null = null;
+  const setLook = ({ brightness, lightFrom, outline }: AvatarLook) => {
+    light.intensity = Math.PI * brightness;
+    light.position.set(...LIGHT_POSITIONS[lightFrom]);
+    if (outline > 0) setOutline ??= makeOutline(vrm);
+    setOutline?.(outline * OUTLINE_MAX_WIDTH);
+  };
+  setLook(look);
 
   const draw = (frame: VideoFrame | HTMLVideoElement, deltaS: number) => {
     const nowMs = performance.now();
@@ -486,7 +569,7 @@ function makeScene(
     renderer.render(scene, camera);
   };
 
-  return { canvas, draw, dispose, setZoom, setArmTracking };
+  return { canvas, draw, dispose, setZoom, setArmTracking, setLook };
 }
 
 type AvatarScene = ReturnType<typeof makeScene>;
@@ -532,6 +615,7 @@ function avatarWithBreakoutBox(
     track: generator,
     setZoom: avatar.setZoom,
     setArmTracking: avatar.setArmTracking,
+    setLook: avatar.setLook,
     stop: () => {
       if (stopped) return;
       stopped = true;
@@ -582,6 +666,7 @@ async function avatarWithCanvasStream(
     track,
     setZoom: avatar.setZoom,
     setArmTracking: avatar.setArmTracking,
+    setLook: avatar.setLook,
     stop: () => {
       if (stopped) return;
       stopped = true;
@@ -606,13 +691,13 @@ export async function startAvatarCamera(
   source: MediaStreamTrack,
   fps: number,
   model: ArrayBuffer,
-  { image, zoom = AVATAR_ZOOM.default, arms = true }: AvatarOptions = {},
+  { image, zoom = AVATAR_ZOOM.default, arms = true, look = DEFAULT_AVATAR_LOOK }: AvatarOptions = {},
 ): Promise<AvatarCamera> {
   let backdrop: THREE.CanvasTexture | null = null;
   try {
     if (image) backdrop = backdropTexture(image);
     const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
-    const avatar = makeScene(landmarker, vrm, backdrop, zoom, arms);
+    const avatar = makeScene(landmarker, vrm, backdrop, zoom, arms, look);
     const box = globalThis as unknown as BreakoutBox;
     if (box.MediaStreamTrackProcessor && box.MediaStreamTrackGenerator && typeof VideoFrame !== "undefined") {
       return avatarWithBreakoutBox(box as Required<BreakoutBox>, avatar, source, fps);
@@ -634,6 +719,7 @@ export interface AvatarOverlay {
   onDraw: (() => void) | null;
   setZoom: (zoom: number) => void;
   setArmTracking: (on: boolean) => void;
+  setLook: (look: AvatarLook) => void;
   /** Stops the avatar and `source` with it. */
   stop: () => void;
 }
@@ -648,12 +734,12 @@ export async function startAvatarOverlay(
   source: MediaStreamTrack,
   fps: number,
   model: ArrayBuffer,
-  { zoom = AVATAR_ZOOM.default, arms = true }: Omit<AvatarOptions, "image"> = {},
+  { zoom = AVATAR_ZOOM.default, arms = true, look = DEFAULT_AVATAR_LOOK }: Omit<AvatarOptions, "image"> = {},
 ): Promise<AvatarOverlay> {
   const box = globalThis as unknown as BreakoutBox;
   if (!box.MediaStreamTrackProcessor) throw new Error("Streamer mode needs Chrome, Edge or the desktop app.");
   const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
-  const avatar = makeScene(landmarker, vrm, null, zoom, arms, {
+  const avatar = makeScene(landmarker, vrm, null, zoom, arms, look, {
     width: OVERLAY_SIZE,
     height: OVERLAY_SIZE,
     transparent: true,
@@ -667,6 +753,7 @@ export async function startAvatarOverlay(
     onDraw: null,
     setZoom: avatar.setZoom,
     setArmTracking: avatar.setArmTracking,
+    setLook: avatar.setLook,
     stop: () => {
       if (stopped) return;
       stopped = true;
