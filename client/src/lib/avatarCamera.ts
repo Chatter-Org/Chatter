@@ -69,6 +69,16 @@ const ARM_DEPTH = 0.5;
 /** The pose is read on every this many frames, to keep its cost down. */
 const POSE_EVERY = 2;
 
+/** How far the eyes turn, in degrees, when the face says they are as far
+ *  over as they go. The model's own range maps on from there. */
+const GAZE_YAW = 35;
+const GAZE_PITCH = 25;
+/** The eyes are rarely reported looking all the way over; this stretches
+ *  the scores, and readings under `GAZE_DEADZONE` are taken as ahead, so the
+ *  eyes do not twitch while the person looks at their screen. */
+const GAZE_GAIN = 1.6;
+const GAZE_DEADZONE = 0.08;
+
 /** VRM's own expression names; three-vrm maps a VRM 0.x model's onto them. */
 const EXPRESSIONS = ["blinkLeft", "blinkRight", "aa", "ee", "oh", "ou", "happy", "surprised"] as const;
 type Expressions = Record<(typeof EXPRESSIONS)[number], number>;
@@ -170,6 +180,31 @@ function expressionsFrom(categories: Category[]): Expressions {
   };
 }
 
+/** Where the eyes look, as `VRMLookAt` takes it: degrees, yaw toward the
+ *  model's own left and pitch downward. */
+interface Gaze {
+  yaw: number;
+  pitch: number;
+}
+
+const gazeScore = (v: number) => {
+  const stretched = Math.max(-1, Math.min(1, v * GAZE_GAIN));
+  return Math.abs(stretched) < GAZE_DEADZONE ? 0 : stretched;
+};
+
+/** Where the face's eyes look, from the same expression scores. */
+function gazeFrom(categories: Category[]): Gaze {
+  const scores = new Map(categories.map((c) => [c.categoryName, c.score]));
+  const s = (name: string) => scores.get(name) ?? 0;
+  // Toward MediaPipe's "Left", which (as for the blinks) is the person's own
+  // right: that eye looking out, the other looking in toward the nose.
+  const towardRight = (s("eyeLookOutLeft") - s("eyeLookInLeft") + s("eyeLookInRight") - s("eyeLookOutRight")) / 2;
+  const up = (s("eyeLookUpLeft") + s("eyeLookUpRight") - s("eyeLookDownLeft") - s("eyeLookDownRight")) / 2;
+  // Closing eyes read as looking down; a blink should not roll them.
+  const open = 1 - Math.max(eyeClosed(s("eyeBlinkLeft")), eyeClosed(s("eyeBlinkRight")));
+  return { yaw: -gazeScore(towardRight) * GAZE_YAW, pitch: -gazeScore(up) * open * GAZE_PITCH };
+}
+
 /**
  * A VRM 0.x model faces -Z in its own space (three-vrm turns its scene round
  * to face the camera, but its bones keep their axes), so a turn about X or Z
@@ -179,7 +214,7 @@ const isVrm0 = (vrm: VRM) => vrm.meta?.metaVersion === "0";
 
 /**
  * Moves the avatar toward what each reading says: the head (shared with the
- * neck, so it does not turn on a stick), the face, and the arms while they
+ * neck, so it does not turn on a stick), the face and eyes, and the arms while they
  * are in view. Called once a frame, after `poseAndFrame` has put the arms at
  * rest.
  */
@@ -194,6 +229,11 @@ function makeRig(vrm: VRM) {
   const scale = new THREE.Vector3();
   const values = Object.fromEntries(EXPRESSIONS.map((name) => [name, 0])) as Expressions;
   const vrm0 = isVrm0(vrm);
+  // The eyes, through the model's own look-at (bones or expressions, and its
+  // ranges); its yaw and pitch mean the same on a 0.x model.
+  const lookAt = vrm.lookAt;
+  if (lookAt) lookAt.target = null;
+  const gaze: Gaze = { yaw: 0, pitch: 0 };
   let nextBlinkAt = performance.now() + IDLE_BLINK_GAP_MS[0];
 
   const arms = ARMS.map(({ upper, lower, points }) => {
@@ -261,6 +301,7 @@ function makeRig(vrm: VRM) {
     const face = result?.faceBlendshapes?.[0];
     const transform = result?.facialTransformationMatrixes?.[0];
     let target: Expressions;
+    let gazeTarget: Gaze = { yaw: 0, pitch: 0 };
     if (face && transform) {
       // The face's pose in the camera's space, where it looks back along +Z
       // as a VRM 1.0 model does at its own camera, so it applies as it is.
@@ -271,6 +312,7 @@ function makeRig(vrm: VRM) {
         headTarget.z = -headTarget.z;
       }
       target = expressionsFrom(face.categories);
+      gazeTarget = gazeFrom(face.categories);
     } else {
       // Lost the face: settle back to looking ahead.
       headTarget.identity();
@@ -283,6 +325,12 @@ function makeRig(vrm: VRM) {
       const k = name.startsWith("blink") ? BLINK_SMOOTHING : SMOOTHING;
       values[name] += (target[name] - values[name]) * k;
       vrm.expressionManager?.setValue(name, values[name]);
+    }
+    if (lookAt) {
+      gaze.yaw += (gazeTarget.yaw - gaze.yaw) * SMOOTHING;
+      gaze.pitch += (gazeTarget.pitch - gaze.pitch) * SMOOTHING;
+      lookAt.yaw = gaze.yaw;
+      lookAt.pitch = gaze.pitch;
     }
     poseArms(pose);
     // Also runs the hair and clothes' spring bones; a long gap (a stalled
