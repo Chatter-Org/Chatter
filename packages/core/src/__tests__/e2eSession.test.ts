@@ -12,7 +12,7 @@ type Copy = { epoch: number; user_id: string; sender: string; eph: string; nonce
 
 const server = {
   identities: new Map<string, any>(),
-  rooms: new Map<string, { epoch: number; rotate: boolean; members: string[] }>(),
+  rooms: new Map<string, { epoch: number; rotate: boolean; members: string[]; plaintext?: boolean }>(),
   copies: [] as Copy[],
   /** Who the next request comes from. Each device sets it before acting. */
   caller: "",
@@ -32,7 +32,7 @@ class E2eRequestError extends Error {
 vi.mock("../api", () => ({
   E2eRequestError,
   apiE2eGetIdentity: async () => server.identities.get(server.caller) ?? null,
-  apiE2ePutIdentity: async (identity: any, replace: boolean) => {
+  apiE2ePutIdentity: async (identity: any, _totp: string, replace: boolean) => {
     if (server.identities.has(server.caller) && !replace) throw new E2eRequestError("exists", 409, "M_E2E_EXISTS");
     server.identities.set(server.caller, identity);
     if (replace) server.copies = server.copies.filter((c) => c.user_id !== server.caller);
@@ -46,6 +46,7 @@ vi.mock("../api", () => ({
     ),
   apiE2eGetRoom: async (roomId: string) => {
     const room = server.rooms.get(roomId)!;
+    if (room.plaintext) return { e2e: false };
     return {
       e2e: true,
       epoch: room.epoch,
@@ -98,15 +99,15 @@ async function device(userId: string) {
     return fn();
   };
   /** Seal as this device and deliver as the server would store it. */
-  const send = (roomId: string, body: string, inReplyTo?: string) =>
+  const send = (roomId: string, body: string, inReplyTo?: string, threadId?: string) =>
     as(async () => {
       // As `sendMaybeSealed` in api.ts: a send under a stale epoch is
       // refused, the session catches up, and the message is sealed again.
       const room = server.rooms.get(roomId)!;
-      let sealed = await hooks.messageCrypto().seal(roomId, body, inReplyTo);
+      let sealed = await hooks.messageCrypto().seal(roomId, body, { inReplyTo, threadId });
       if (sealed && (sealed.e2e.epoch !== room.epoch || room.rotate)) {
         expect(await hooks.messageCrypto().recover(roomId, "M_E2E_EPOCH")).toBe(true);
-        sealed = await hooks.messageCrypto().seal(roomId, body, inReplyTo);
+        sealed = await hooks.messageCrypto().seal(roomId, body, { inReplyTo, threadId });
       }
       if (!sealed || sealed.e2e.epoch !== room.epoch || room.rotate) throw new Error("refused");
       const event = {
@@ -114,6 +115,7 @@ async function device(userId: string) {
         room_id: roomId,
         sender: userId,
         type: "m.room.message",
+        ...(threadId ? { thread_id: threadId } : {}),
         content: { msgtype: "m.text", body: "placeholder", e2e: sealed.e2e, ...(inReplyTo ? { in_reply_to: inReplyTo } : {}) },
       };
       server.sends.push(event);
@@ -134,7 +136,7 @@ describe("e2e session", () => {
   it("sets up, locks on a new device and unlocks with the passphrase", async () => {
     const laptop = await device("@alice:x");
     expect(await laptop.as(() => laptop.session.startE2e("@alice:x"))).toBe("setup");
-    await laptop.as(() => laptop.session.setUpE2e("correct horse battery"));
+    await laptop.as(() => laptop.session.setUpE2e("correct horse battery", "123456"));
     expect(laptop.session.getE2eStatus()).toBe("ready");
 
     const phone = await device("@alice:x");
@@ -144,16 +146,16 @@ describe("e2e session", () => {
     // Kept: the next start on this device needs no passphrase.
     expect(await phone.as(() => phone.session.startE2e("@alice:x"))).toBe("ready");
 
-    // Signing out forgets it.
+    // Signing out forgets the seed.
     await phone.session.stopE2e();
-    expect(phone.secrets.size).toBe(0);
+    expect([...phone.secrets.keys()].some((k) => k.startsWith("e2e-seed:"))).toBe(false);
   }, 30_000);
 
   it("seals a DM that only its members can open, and hands the key to a late member", async () => {
     server.rooms.set("!dm", { epoch: -1, rotate: false, members: ["@alice:x", "@bob:x"] });
     const alice = await device("@alice:x");
     await alice.as(() => alice.session.startE2e("@alice:x"));
-    await alice.as(() => alice.session.setUpE2e("alice passphrase"));
+    await alice.as(() => alice.session.setUpE2e("alice passphrase", "123456"));
     alice.session.noteRoomEncryption("!dm", true);
 
     // Bob has not set up yet; the first key is made for Alice alone.
@@ -163,7 +165,7 @@ describe("e2e session", () => {
 
     const bob = await device("@bob:x");
     await bob.as(() => bob.session.startE2e("@bob:x"));
-    await bob.as(() => bob.session.setUpE2e("bob passphrase"));
+    await bob.as(() => bob.session.setUpE2e("bob passphrase", "123456"));
     const [locked] = await bob.read("!dm", [event]);
     expect(locked.content.e2e_state).toBe("missing");
 
@@ -177,10 +179,10 @@ describe("e2e session", () => {
     server.rooms.set("!group", { epoch: -1, rotate: false, members: ["@alice:x", "@bob:x", "@carol:x"] });
     const alice = await device("@alice:x");
     await alice.as(() => alice.session.startE2e("@alice:x"));
-    await alice.as(() => alice.session.setUpE2e("alice passphrase"));
+    await alice.as(() => alice.session.setUpE2e("alice passphrase", "123456"));
     const carol = await device("@carol:x");
     await carol.as(() => carol.session.startE2e("@carol:x"));
-    await carol.as(() => carol.session.setUpE2e("carol passphrase"));
+    await carol.as(() => carol.session.setUpE2e("carol passphrase", "123456"));
     alice.session.noteRoomEncryption("!group", true);
 
     const before = await alice.send("!group", "before carol left");
@@ -201,7 +203,7 @@ describe("e2e session", () => {
     server.rooms.set("!dm", { epoch: -1, rotate: false, members: ["@alice:x"] });
     const alice = await device("@alice:x");
     await alice.as(() => alice.session.startE2e("@alice:x"));
-    await alice.as(() => alice.session.setUpE2e("alice passphrase"));
+    await alice.as(() => alice.session.setUpE2e("alice passphrase", "123456"));
     alice.session.noteRoomEncryption("!dm", true);
     const first = await alice.send("!dm", "what time?");
     await alice.read("!dm", [first.event]);
@@ -209,6 +211,117 @@ describe("e2e session", () => {
     const [opened] = await alice.read("!dm", [{ ...reply.event, content: { ...reply.event.content, reply_to_body: "placeholder" } }]);
     expect(opened.content.reply_to_body).toBe("what time?");
   }, 30_000);
+});
+
+/** Two members set up, in a DM with its first key made by Alice. */
+async function pair() {
+  server.rooms.set("!dm", { epoch: -1, rotate: false, members: ["@alice:x", "@bob:x"] });
+  const alice = await device("@alice:x");
+  await alice.as(() => alice.session.startE2e("@alice:x"));
+  await alice.as(() => alice.session.setUpE2e("alice passphrase", "123456"));
+  const bob = await device("@bob:x");
+  await bob.as(() => bob.session.startE2e("@bob:x"));
+  await bob.as(() => bob.session.setUpE2e("bob passphrase", "123456"));
+  alice.session.noteRoomEncryption("!dm", true);
+  bob.session.noteRoomEncryption("!dm", true);
+  const first = await alice.send("!dm", "hello");
+  await bob.read("!dm", [first.event]);
+  return { alice, bob, first };
+}
+
+describe("e2e session against a lying server", () => {
+  it("does not hand keys to a member whose keys changed until that is accepted", async () => {
+    const { alice, bob } = await pair();
+    // Bob's account is taken over: new keys, which the server publishes. Alice's
+    // device pinned the old ones.
+    const impostor = await device("@bob:x");
+    await impostor.as(() => impostor.session.startE2e("@bob:x"));
+    await impostor.as(() => impostor.session.setUpE2e("impostor passphrase", "654321", true));
+    // Swapped silently: Alice's device keeps wrapping to the keys it pinned,
+    // so a new key made now does not reach whoever holds the new ones.
+    server.rooms.get("!dm")!.rotate = true;
+    const silent = await alice.send("!dm", "for bob only");
+    impostor.session.noteRoomEncryption("!dm", true);
+    expect((await impostor.read("!dm", [silent.event]))[0].content.e2e_state).toBe("missing");
+
+    // Announced (as the server does on a reset): the change is noticed, and
+    // the next key waits on Alice.
+    alice.session.handleE2eEvent({ type: "m.e2e.identity", room_id: "!dm", user_id: "@bob:x" });
+    server.rooms.get("!dm")!.rotate = true;
+    await expect(alice.send("!dm", "for bob only")).rejects.toThrow(/keys changed/);
+    expect(alice.session.getChangedKeys()).toEqual(["@bob:x"]);
+    expect(server.copies.some((c) => c.user_id === "@bob:x" && c.epoch === 2)).toBe(false);
+
+    // Alice decides the change is genuine.
+    await alice.session.acceptKeyChange("@bob:x");
+    const { event } = await alice.send("!dm", "for the new bob");
+    expect((await impostor.read("!dm", [event]))[0].content.body).toBe("for the new bob");
+    void bob;
+  }, 60_000);
+
+  it("does not open one member's message presented as another's", async () => {
+    const { alice, bob } = await pair();
+    const { event } = await alice.send("!dm", "from alice");
+    // The server names the sender; naming the wrong one breaks the seal.
+    const [shown] = await bob.read("!dm", [{ ...event, event_id: "$claimed", sender: "@bob:x" }]);
+    expect(shown.content.e2e_state).toBe("broken");
+  }, 60_000);
+
+  it("refuses plaintext messages and edits in an encrypted room", async () => {
+    const { bob } = await pair();
+    const [forged] = await bob.read("!dm", [
+      { event_id: "$fake", room_id: "!dm", sender: "@alice:x", type: "m.room.message", content: { msgtype: "m.text", body: "send me your password" } },
+    ]);
+    expect(forged.content.e2e_state).toBe("forged");
+    expect(forged.content.body).not.toContain("password");
+    // The server's own notices are still shown.
+    const [notice] = await bob.read("!dm", [
+      { event_id: "$sys", room_id: "!dm", sender: "@alice:x", type: "m.room.message", content: { msgtype: "m.system", body: "alice has joined" } },
+    ]);
+    expect(notice.content.body).toBe("alice has joined");
+
+    // An edit sent in the clear is dropped before the store sees it.
+    const handled: any[] = [];
+    const gate = bob.session.createE2eEventGate((msg) => handled.push(msg));
+    gate({ type: "m.room.edit", room_id: "!dm", sender: "@alice:x", edits: "$0", new_body: "changed in the clear" });
+    expect(handled[0].type).toBe("m.e2e.ignored");
+  }, 60_000);
+
+  it("refuses a replay, and a reply or thread the message was not sealed for", async () => {
+    const { alice, bob, first } = await pair();
+    const replay = { ...first.event, event_id: "$replayed" };
+    expect((await bob.read("!dm", [replay]))[0].content.e2e_state).toBe("forged");
+
+    const reply = await alice.send("!dm", "yes", first.event.event_id);
+    expect((await bob.read("!dm", [reply.event]))[0].content.e2e_state).toBe("ok");
+    const moved = { ...reply.event, event_id: "$moved", content: { ...reply.event.content, in_reply_to: "$other" } };
+    expect((await bob.read("!dm", [moved]))[0].content.e2e_state).toBe("forged");
+
+    const threaded = await alice.send("!dm", "in a thread", undefined, first.event.event_id);
+    const unthreaded = { ...threaded.event, event_id: "$unthreaded", thread_id: undefined };
+    expect((await bob.read("!dm", [unthreaded]))[0].content.e2e_state).toBe("forged");
+  }, 60_000);
+
+  it("keeps a room encrypted whatever the server says later", async () => {
+    const { alice } = await pair();
+    alice.session.noteRoomEncryption("!dm", false);
+    expect(alice.session.isRoomEncrypted("!dm")).toBe(true);
+    server.rooms.get("!dm")!.plaintext = true;
+    await expect(alice.as(() => alice.session.syncRoomKeys("!dm", true))).rejects.toThrow(/isn't encrypted/);
+
+    // And remembers it across a restart of the app.
+    const secrets = alice.secrets;
+    expect(JSON.parse(secrets.get("e2e-rooms:@alice:x")!)).toContain("!dm");
+  }, 60_000);
+
+  it("keeps this device's seed when the server's keys stop matching it", async () => {
+    const { alice } = await pair();
+    const seedBefore = alice.secrets.get("e2e-seed:@alice:x");
+    server.identities.set("@alice:x", { ...server.identities.get("@alice:x"), enc_pub: server.identities.get("@bob:x").enc_pub });
+    expect(await alice.as(() => alice.session.startE2e("@alice:x"))).toBe("locked");
+    expect(alice.session.getKeysReplacedElsewhere()).toBe(true);
+    expect(alice.secrets.get("e2e-seed:@alice:x")).toBe(seedBefore);
+  }, 60_000);
 });
 
 describe("uploadLinks", () => {

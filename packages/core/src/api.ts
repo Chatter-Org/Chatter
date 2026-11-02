@@ -22,7 +22,7 @@ import {
 } from "./uploadStore";
 import { host } from "./platform";
 import type { IdentityBackup, PublicIdentity, SealedMessage, WrappedRoomKey } from "./e2e/crypto";
-import { messageCrypto, type E2eMessageState } from "./e2e/hooks";
+import { messageCrypto, type E2eMessageState, type SealMeta } from "./e2e/hooks";
 
 // Access token lives only in memory — never persisted to localStorage.
 // In the browser the refresh token is stored exclusively in an HttpOnly cookie
@@ -677,12 +677,12 @@ export async function apiGetMessages(
 async function sendMaybeSealed(
   roomId: string,
   body: string,
-  inReplyTo: string | undefined,
+  meta: SealMeta,
   payload: Record<string, unknown>,
   send: (payload: Record<string, unknown>) => Promise<Response>,
 ): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
-    const sealed = await messageCrypto().seal(roomId, body, inReplyTo);
+    const sealed = await messageCrypto().seal(roomId, body, meta);
     const res = await send(sealed ? { ...payload, body: "", e2e: sealed.e2e, attachments: sealed.attachments } : payload);
     if (res.ok || attempt > 0) return res;
     const refusal = await res.clone().json().catch(() => null);
@@ -705,7 +705,7 @@ export async function apiSendMessage(roomId: string, body: string, inReplyTo?: s
   if (showcasePane) {
     payload.showcase_pane = showcasePane;
   }
-  const res = await sendMaybeSealed(roomId, body, inReplyTo, payload, (sealed) =>
+  const res = await sendMaybeSealed(roomId, body, { inReplyTo, spoiler }, payload, (sealed) =>
     authenticatedFetch(`/_matrix/client/r0/rooms/${roomId}/send/m.room.message/${txnId}`, {
       method: "PUT",
       body: JSON.stringify(sealed),
@@ -767,7 +767,7 @@ export async function apiHardDeleteNotification(roomId: string, eventId: string)
 
 export async function apiEditMessage(roomId: string, eventId: string, newBody: string) {
   const txnId = Date.now();
-  const res = await sendMaybeSealed(roomId, newBody, undefined, { body: newBody }, (sealed) =>
+  const res = await sendMaybeSealed(roomId, newBody, { edits: eventId }, { body: newBody }, (sealed) =>
     authenticatedFetch(`/_matrix/client/r0/rooms/${roomId}/edit/${eventId}/${txnId}`, {
       method: "PUT",
       body: JSON.stringify(sealed),
@@ -942,7 +942,7 @@ export async function apiSendThreadMessage(
   const txnId = Date.now();
   const payload: Record<string, string> = { msgtype: "m.text", body };
   if (inReplyTo) payload.in_reply_to = inReplyTo;
-  const res = await sendMaybeSealed(roomId, body, inReplyTo, payload, (sealed) =>
+  const res = await sendMaybeSealed(roomId, body, { inReplyTo, threadId: threadEventId }, payload, (sealed) =>
     authenticatedFetch(`/api/rooms/${roomId}/threads/${threadEventId}/${txnId}`, {
       method: "PUT",
       body: JSON.stringify(sealed),
@@ -2524,10 +2524,12 @@ export async function apiE2eGetIdentity(): Promise<E2eIdentityRecord | null> {
   return data.identity ?? null;
 }
 
-export async function apiE2ePutIdentity(identity: E2eIdentityRecord, replace = false): Promise<void> {
+/** `totpCode` is a current authenticator or recovery code: a session alone
+ *  cannot change an account's keys. */
+export async function apiE2ePutIdentity(identity: E2eIdentityRecord, totpCode: string, replace = false): Promise<void> {
   const res = await authenticatedFetch("/api/e2e/identity", {
     method: "PUT",
-    body: JSON.stringify({ ...identity, replace }),
+    body: JSON.stringify({ ...identity, replace, totp_code: totpCode }),
   });
   if (!res.ok) throw await e2eFailure(res, "Failed to save encryption keys");
 }

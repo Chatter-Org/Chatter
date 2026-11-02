@@ -69,6 +69,10 @@ pub(crate) async fn get_continuity(
     let user_id = get_user_from_token(&state, &token)
         .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Invalid token"))?;
 
+    // Drafts saved in end-to-end encrypted rooms before they were refused
+    // there: removed rather than handed back.
+    super::e2e::purge_encrypted_drafts(&state, &user_id).await;
+
     let mut drafts: Vec<Value> = Vec::new();
     if let Ok(mut cursor) = state
         .db
@@ -146,6 +150,13 @@ pub(crate) async fn set_draft(
     let channel_id = req.channel_id.unwrap_or_default();
     let id = draft_id(&user_id, &room_id, &channel_id);
     let coll = state.db.collection::<Document>("drafts");
+
+    // A draft is the text of a message not sent yet. In an end-to-end
+    // encrypted room the server must never hold it, whatever a client sends.
+    if super::e2e::is_encrypted(&state, &room_id).await {
+        let _ = coll.delete_one(doc! { "_id": &id }).await;
+        return Ok(Json(json!({ "saved": false })));
+    }
 
     let text = req.text.trim_end();
     if text.trim().is_empty() {

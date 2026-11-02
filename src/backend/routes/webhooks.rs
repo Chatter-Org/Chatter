@@ -68,6 +68,15 @@ pub(crate) async fn create_webhook(
         .flatten()
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Room not found"))?;
 
+    // A webhook posts plaintext, unsigned, under any name it likes: in an
+    // end-to-end encrypted conversation that is a forged message.
+    if room.e2e {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "Webhooks can't post in end-to-end encrypted conversations",
+        ));
+    }
+
     if !effective_permissions(&state, &room.room_id, &user_id)
         .await
         .manage_webhooks
@@ -369,6 +378,14 @@ pub(crate) async fn execute_webhook(
                 ));
             }
         }
+    }
+
+    // Refused at creation too; checked here for any made before that.
+    if super::e2e::is_encrypted(&state, &webhook.room_id).await {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            "Webhooks can't post in end-to-end encrypted conversations",
+        ));
     }
 
     let event_id = generate_id("$");

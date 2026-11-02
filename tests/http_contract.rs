@@ -2307,9 +2307,10 @@ async fn unreads_count_replies_and_dms_as_mentions_and_skip_deleted_messages() {
     let server = spawn_server().await;
     let client = Client::new();
 
-    let (alice_user_id, alice_token) =
-        register_user(&client, &server.base_url, "alice", PASSWORD).await;
-    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
+    let (alice_user_id, alice_token, alice_secret) =
+        register_user_with_secret(&client, &server.base_url, "alice", PASSWORD).await;
+    let (bob_user_id, bob_token, bob_secret) =
+        register_user_with_secret(&client, &server.base_url, "bob", PASSWORD).await;
     let room_id = create_room(
         &client,
         &server.base_url,
@@ -2398,8 +2399,15 @@ async fn unreads_count_replies_and_dms_as_mentions_and_skip_deleted_messages() {
     )
     .await;
     // A new DM is end-to-end encrypted: keys first, then sealed messages.
-    put_e2e_identity(&client, &server.base_url, &alice_token).await;
-    put_e2e_identity(&client, &server.base_url, &bob_token).await;
+    put_e2e_identity(
+        &client,
+        &server.base_url,
+        &alice_token,
+        "alice",
+        &alice_secret,
+    )
+    .await;
+    put_e2e_identity(&client, &server.base_url, &bob_token, "bob", &bob_secret).await;
     let started = post_room_keys(
         &client,
         &server.base_url,
@@ -3447,9 +3455,12 @@ async fn e2e_dms_take_sealed_messages_under_the_current_key() {
     let client = Client::new();
     let base = server.base_url.clone();
 
-    let (alice_id, alice) = register_user(&client, &base, "alice", PASSWORD).await;
-    let (bob_id, bob) = register_user(&client, &base, "bob", PASSWORD).await;
-    let (carol_id, carol) = register_user(&client, &base, "carol", PASSWORD).await;
+    let (alice_id, alice, alice_secret) =
+        register_user_with_secret(&client, &base, "alice", PASSWORD).await;
+    let (bob_id, bob, bob_secret) =
+        register_user_with_secret(&client, &base, "bob", PASSWORD).await;
+    let (carol_id, carol, carol_secret) =
+        register_user_with_secret(&client, &base, "carol", PASSWORD).await;
 
     // Identity: none, then published, then refused a second time unless replaced.
     let get = |token: String| {
@@ -3468,20 +3479,38 @@ async fn e2e_dms_take_sealed_messages_under_the_current_key() {
         }
     };
     assert!(get(alice.clone()).await["identity"].is_null());
-    put_e2e_identity(&client, &base, &alice).await;
+    // A session token alone cannot set keys: it takes a TOTP code too.
+    let mut identity = json!({
+        "enc_pub": common::B64_32,
+        "sign_pub": common::B64_32,
+        "backup": {
+            "kdf": "scrypt", "log_n": 15, "r": 8, "p": 1,
+            "salt": common::B64_16, "nonce": common::B64_24, "ct": common::B64_48,
+        },
+    });
+    let unconfirmed = client
+        .put(format!("{base}/api/e2e/identity"))
+        .header("authorization", bearer(&alice))
+        .json(&identity)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unconfirmed.status(), StatusCode::FORBIDDEN);
+    put_e2e_identity(&client, &base, &alice, "alice", &alice_secret).await;
     assert_eq!(
         get(alice.clone()).await["identity"]["backup"]["kdf"],
         "scrypt"
     );
+    identity["totp_code"] = json!(totp_code(&alice_secret, "alice"));
     let again = client
         .put(format!("{base}/api/e2e/identity"))
         .header("authorization", bearer(&alice))
-        .json(&get(alice.clone()).await["identity"])
+        .json(&identity)
         .send()
         .await
         .unwrap();
     assert_eq!(again.status(), StatusCode::CONFLICT);
-    put_e2e_identity(&client, &base, &bob).await;
+    put_e2e_identity(&client, &base, &bob, "bob", &bob_secret).await;
 
     let keys: Value = client
         .post(format!("{base}/api/e2e/keys/query"))
@@ -3637,7 +3666,7 @@ async fn e2e_dms_take_sealed_messages_under_the_current_key() {
     );
 
     // Once Carol has keys she is owed the current one, and is handed it.
-    put_e2e_identity(&client, &base, &carol).await;
+    put_e2e_identity(&client, &base, &carol, "carol", &carol_secret).await;
     let carol_state = room_state(carol.clone()).await;
     let carol_row = carol_state["members"]
         .as_array()
@@ -3658,6 +3687,67 @@ async fn e2e_dms_take_sealed_messages_under_the_current_key() {
         .map(|k| k["epoch"].as_i64().unwrap())
         .collect();
     assert_eq!(epochs, vec![1], "nothing from before she joined");
+
+    // The server keeps no drafts and runs no webhooks in an encrypted DM.
+    let draft = client
+        .put(format!("{base}/api/rooms/{}/draft", esc(&dm)))
+        .header("authorization", bearer(&alice))
+        .json(&json!({ "text": "half a secret" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(draft.json::<Value>().await.unwrap()["saved"], false);
+    let continuity: Value = client
+        .get(format!("{base}/api/continuity"))
+        .header("authorization", bearer(&alice))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!continuity.to_string().contains("half a secret"));
+    let webhook = client
+        .post(format!("{base}/api/rooms/{}/webhooks", esc(&dm)))
+        .header("authorization", bearer(&alice))
+        .json(&json!({ "name": "Impostor" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(webhook.status(), StatusCode::BAD_REQUEST);
+
+    // Replacing keys is said in the conversation, for everyone to see.
+    let mut replacement = identity.clone();
+    replacement["replace"] = json!(true);
+    replacement["totp_code"] = json!(totp_code(&carol_secret, "carol"));
+    let replaced = client
+        .put(format!("{base}/api/e2e/identity"))
+        .header("authorization", bearer(&carol))
+        .json(&replacement)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(replaced.status(), StatusCode::OK);
+    let page: Value = client
+        .get(format!(
+            "{base}/_matrix/client/r0/rooms/{}/messages?limit=20",
+            esc(&dm)
+        ))
+        .header("authorization", bearer(&alice))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(page["chunk"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["content"]["body"] == "carol reset their encryption keys"));
+    // And her copy of the current key went with her old keys.
+    let carol_state = room_state(carol.clone()).await;
+    assert!(carol_state["keys"].as_array().unwrap().is_empty());
 
     // Plaintext rooms are untouched, and refuse a seal.
     let room = create_room(&client, &base, &alice, "Plain", None, false).await;

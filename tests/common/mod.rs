@@ -242,9 +242,16 @@ pub const B64_48: &str = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw
 pub const B64_64: &str =
     "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw==";
 
-/// Publish an identity for the account behind `token`.
+/// Publish an identity for the account behind `token`, confirmed with a
+/// code from its TOTP `secret` as the server requires.
 #[allow(dead_code)]
-pub async fn put_e2e_identity(client: &Client, base_url: &str, token: &str) {
+pub async fn put_e2e_identity(
+    client: &Client,
+    base_url: &str,
+    token: &str,
+    username: &str,
+    secret: &str,
+) {
     let response = client
         .put(format!("{base_url}/api/e2e/identity"))
         .header("authorization", bearer(token))
@@ -255,6 +262,7 @@ pub async fn put_e2e_identity(client: &Client, base_url: &str, token: &str) {
                 "kdf": "scrypt", "log_n": 15, "r": 8, "p": 1,
                 "salt": B64_16, "nonce": B64_24, "ct": B64_48,
             },
+            "totp_code": totp_code(secret, username),
         }))
         .send()
         .await

@@ -113,13 +113,25 @@ export interface IdentityBackup {
   ct: string;
 }
 
-/** 32 MiB and about a second on a laptop: costly to guess at, still quick
- *  enough to unlock on a phone. Stored with the backup, so it can be raised
- *  for new backups without stranding old ones. */
-export const BACKUP_KDF = { log_n: 15, r: 8, p: 1 } as const;
+/** 128 MiB and a few seconds on a laptop. The backup sits on the server, so
+ *  whoever holds the database can guess at it offline for as long as they
+ *  like; this is what each guess costs them. Stored with the backup, so it
+ *  can be raised for new backups without stranding old ones. */
+export const BACKUP_KDF = { log_n: 17, r: 8, p: 1 } as const;
 
 /** A passphrase shorter than this is refused before it is ever used. */
-export const MIN_PASSPHRASE_LENGTH = 8;
+export const MIN_PASSPHRASE_LENGTH = 12;
+
+/** Why a passphrase is too weak to protect a backup anyone with the database
+ *  can attack offline, or null when it will do. Length matters most; this
+ *  also turns away the shapes a guesser tries first. */
+export function passphraseProblem(passphrase: string): string | null {
+  if (passphrase.length < MIN_PASSPHRASE_LENGTH) return `Use at least ${MIN_PASSPHRASE_LENGTH} characters`;
+  if (new Set(passphrase.toLowerCase()).size < 6) return "Use more different characters";
+  if (/^(.+?)\1+$/.test(passphrase)) return "Don't repeat the same thing over and over";
+  if (/^[0-9]+$/.test(passphrase)) return "Use words or letters, not only numbers";
+  return null;
+}
 
 async function passphraseKey(passphrase: string, salt: Uint8Array, params: { log_n: number; r: number; p: number }) {
   return scryptAsync(passphrase.normalize("NFKC"), salt, {
@@ -236,11 +248,21 @@ export interface SealedMessage {
   sig: string;
 }
 
-/** What is sealed: the text, and what the server would otherwise have quoted
- *  from the message it replies to. */
+/**
+ * What is sealed: the text, what the server would otherwise have quoted from
+ * the message it replies to, and everything about the message the server
+ * could otherwise rearrange — which message it answers, which thread it is
+ * in, whether it is a spoiler — next to an id of its own (`mid`), kept by its
+ * edits, so the server cannot replay it as another message or pass one
+ * message off as an edit of another.
+ */
 export interface MessagePlaintext {
   body: string;
   reply_to_body?: string;
+  mid?: string;
+  in_reply_to?: string;
+  thread_id?: string;
+  spoiler?: boolean;
 }
 
 export interface MessageContext {
@@ -288,7 +310,10 @@ export function openMessage(
     const parsed = JSON.parse(bytesToUtf8(raw));
     if (typeof parsed?.body !== "string") return { ok: false };
     const plaintext: MessagePlaintext = { body: parsed.body };
-    if (typeof parsed.reply_to_body === "string") plaintext.reply_to_body = parsed.reply_to_body;
+    for (const field of ["reply_to_body", "mid", "in_reply_to", "thread_id"] as const) {
+      if (typeof parsed[field] === "string") plaintext[field] = parsed[field];
+    }
+    if (parsed.spoiler === true) plaintext.spoiler = true;
     let verified = false;
     if (senderSignPub) {
       try {
@@ -299,6 +324,11 @@ export function openMessage(
   } catch {
     return { ok: false };
   }
+}
+
+/** A fresh id for a message, sealed inside it. */
+export function newMessageId(): string {
+  return toB64(randomBytes(16));
 }
 
 export function sameBytes(a: Uint8Array, b: Uint8Array): boolean {

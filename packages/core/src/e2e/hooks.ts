@@ -20,8 +20,21 @@ import type { SealedMessage } from "./crypto";
  * - `missing`: no key for it here — sent before this account joined, or the
  *   key has not reached this device yet.
  * - `broken`: the key is here and it still does not open.
+ * - `forged`: not what it claims to be — sent in the clear into an encrypted
+ *   conversation, a copy of another message, or sealed for a different reply
+ *   or thread than the server says. Its text is not shown.
  */
-export type E2eMessageState = "ok" | "unverified" | "locked" | "missing" | "broken";
+export type E2eMessageState = "ok" | "unverified" | "locked" | "missing" | "broken" | "forged";
+
+/** What a send says about itself besides its text. Sealed with it, so the
+ *  server cannot change any of it. */
+export interface SealMeta {
+  inReplyTo?: string;
+  threadId?: string;
+  spoiler?: boolean;
+  /** The message this edits: an edit keeps the original's sealed id. */
+  edits?: string;
+}
 
 export interface SealedSend {
   e2e: SealedMessage;
@@ -32,7 +45,7 @@ export interface SealedSend {
 
 export interface MessageCrypto {
   /** The sealed form of `body` for this room, or null to send it as it is. */
-  seal(roomId: string, body: string, inReplyTo?: string): Promise<SealedSend | null>;
+  seal(roomId: string, body: string, meta?: SealMeta): Promise<SealedSend | null>;
   /** The server refused a send with `errcode`. Whether something has been
    *  done about it (a new key fetched or made) that makes a retry worth it. */
   recover(roomId: string, errcode: string | undefined): Promise<boolean>;

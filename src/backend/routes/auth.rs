@@ -66,7 +66,7 @@ fn generate_recovery_codes(count: usize) -> (Vec<String>, Vec<String>) {
 }
 
 /// Try TOTP first, then recovery codes. Returns Ok(true) if recovery code was used (and consumed).
-async fn verify_totp_or_recovery(
+pub(crate) async fn verify_totp_or_recovery(
     code: &str,
     user: &UserRecord,
     username: &str,

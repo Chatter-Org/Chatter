@@ -314,6 +314,9 @@ export function createStoreActions(ctx: StoreContext) {
     // Optimistic, and deliberately not awaited by the composer: typing must
     // never wait on a round trip.
     dispatch({ type: "SET_DRAFT", payload: { roomId, channelId, text } });
+    // A draft in an encrypted DM is the text of a message not yet sealed: it
+    // stays on this device and never reaches the server.
+    if (isRoomEncrypted(roomId)) return;
     try {
       await apiSetDraft(roomId, channelId, text);
     } catch {

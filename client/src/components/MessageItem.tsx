@@ -863,7 +863,7 @@ function EmbedCard({ embed, eventId }: { embed: Embed; eventId?: string }) {
 /** Memoized media preview — React preserves these DOM nodes across parent re-renders */
 const gifUrlPattern = /\.gif(\?.*)?$/i;
 
-const MediaPreview = memo(function MediaPreview({ body, media, hiddenBySpoiler, onReveal }: { body: string; media?: Record<string, { w: number; h: number }>; hiddenBySpoiler?: boolean; onReveal?: () => void }) {
+const MediaPreview = memo(function MediaPreview({ body, media, hiddenBySpoiler, onReveal, encrypted }: { body: string; media?: Record<string, { w: number; h: number }>; hiddenBySpoiler?: boolean; onReveal?: () => void; encrypted?: boolean }) {
   const { state } = useAppContext();
   const { images, videos, audios, files, links, youtubeIds } = useMemo(() => extractMediaUrls(body), [body]);
   const [lightbox, setLightbox] = useState<{ url: string; type: "image" | "video" } | null>(null);
@@ -954,7 +954,9 @@ const MediaPreview = memo(function MediaPreview({ body, media, hiddenBySpoiler, 
       {files.map((url) => (
         <FileAttachmentCard key={url} url={url} />
       ))}
-      {links.length > 0 && <LinkPreviewCard url={links[0]} />}
+      {/* A preview is fetched by the server, which would learn the link: not
+          for an end-to-end encrypted message. */}
+      {links.length > 0 && !encrypted && <LinkPreviewCard url={links[0]} />}
 
       <Dialog open={lightbox !== null} onOpenChange={(open) => { if (!open) setLightbox(null); }}>
         <DialogContent className="max-w-[90vw] max-h-[90vh] p-0 border-none bg-transparent shadow-none flex items-center justify-center [&>button]:text-white [&>button]:bg-black/50 [&>button]:rounded-full [&>button]:p-1">
@@ -1686,7 +1688,7 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
           )}
 
           {/* Media rendered as stable React elements — not inside innerHTML */}
-          {!isDeleted && <MediaPreview body={message.content.body} media={message.media} hiddenBySpoiler={showSpoilerMask} onReveal={() => setSpoilerRevealed(true)} />}
+          {!isDeleted && <MediaPreview body={message.content.body} media={message.media} hiddenBySpoiler={showSpoilerMask} onReveal={() => setSpoilerRevealed(true)} encrypted={!!message.content.e2e} />}
 
           {/* Rich embeds */}
           {!isDeleted && message.content.embeds?.map((embed, i) => (

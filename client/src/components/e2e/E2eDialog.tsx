@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MIN_PASSPHRASE_LENGTH } from "@chatter/core/e2e/crypto";
+import { passphraseProblem } from "@chatter/core/e2e/crypto";
 import { setUpE2e, unlockE2e } from "@chatter/core/e2e/session";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,7 @@ export function E2eDialog({ open, onOpenChange }: E2eDialogProps) {
   const [resetting, setResetting] = useState(false);
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,6 +36,7 @@ export function E2eDialog({ open, onOpenChange }: E2eDialogProps) {
     if (!next) {
       setPassphrase("");
       setConfirm("");
+      setTotpCode("");
       setError(null);
       setResetting(false);
     }
@@ -46,12 +48,17 @@ export function E2eDialog({ open, onOpenChange }: E2eDialogProps) {
     if (busy) return;
     setError(null);
     if (choosing) {
-      if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
-        setError(`Use at least ${MIN_PASSPHRASE_LENGTH} characters`);
+      const problem = passphraseProblem(passphrase);
+      if (problem) {
+        setError(problem);
         return;
       }
       if (passphrase !== confirm) {
         setError("The passphrases don't match");
+        return;
+      }
+      if (!totpCode.trim()) {
+        setError("Enter the code from your authenticator app");
         return;
       }
     }
@@ -63,7 +70,7 @@ export function E2eDialog({ open, onOpenChange }: E2eDialogProps) {
           return;
         }
       } else {
-        await setUpE2e(passphrase, mode === "reset");
+        await setUpE2e(passphrase, totpCode.trim(), mode === "reset");
       }
       handleOpenChange(false);
     } catch (err) {
@@ -86,10 +93,10 @@ export function E2eDialog({ open, onOpenChange }: E2eDialogProps) {
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {mode === "setup" &&
-              "Direct messages are end-to-end encrypted: only the people in the conversation can read them. Choose a passphrase to protect your keys. You'll need it to read your messages on a new device, and it can't be recovered if you forget it."}
+              "Direct messages are end-to-end encrypted: only the people in the conversation can read them. Choose a long passphrase to protect your keys — a few unrelated words works well. You'll need it to read your messages on a new device, and it can't be recovered if you forget it."}
             {mode === "unlock" && "Enter your encryption passphrase to read your direct messages on this device."}
             {mode === "reset" &&
-              "New keys mean you won't be able to read any encrypted message sent before now, on any device. The people you talk to are given your new keys automatically."}
+              "New keys mean you won't be able to read any encrypted message sent before now, on any device. The people you talk to are told your keys changed, and you'll get new messages once they accept it."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
@@ -108,6 +115,17 @@ export function E2eDialog({ open, onOpenChange }: E2eDialogProps) {
               placeholder="Confirm passphrase"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
+            />
+          )}
+          {choosing && (
+            // Changing who can read the account's messages takes more than
+            // being signed in.
+            <Input
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="Authenticator code (or a recovery code)"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
             />
           )}
           <p className="text-xs text-muted-foreground">

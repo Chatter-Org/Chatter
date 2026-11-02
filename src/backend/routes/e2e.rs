@@ -20,10 +20,10 @@
 
 use super::super::{
     helpers::{
-        broadcast_to_room, error_response, extract_token, get_user_from_token, now_millis,
-        send_to_user,
+        broadcast_to_room, error_response, extract_token, generate_id, get_user_from_token,
+        now_millis, send_to_user,
     },
-    state::{AppState, RoomRecord},
+    state::{AppState, RoomRecord, UserRecord},
 };
 use axum::{
     extract::{Path, State},
@@ -288,6 +288,11 @@ pub(crate) struct PutIdentityRequest {
     /// cannot silently overwrite each other.
     #[serde(default)]
     pub(crate) replace: bool,
+    /// A current TOTP code or a recovery code. Keys decide who can read the
+    /// account's conversations, so a session token alone — stolen, or left
+    /// signed in somewhere — must not be enough to change them.
+    #[serde(default)]
+    pub(crate) totp_code: String,
 }
 
 /// GET /api/e2e/identity — the caller's own identity and backup, or null.
@@ -332,6 +337,21 @@ pub(crate) async fn put_identity(
         return Err(error_response(StatusCode::BAD_REQUEST, "Malformed keys"));
     }
 
+    let user = state
+        .db
+        .collection::<UserRecord>("users")
+        .find_one(doc! { "_id": &user_id })
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "User not found"))?;
+    let username = user_id
+        .split(':')
+        .next()
+        .unwrap_or(&user_id)
+        .trim_start_matches('@');
+    super::auth::verify_totp_or_recovery(req.totp_code.trim(), &user, username, &state).await?;
+
     let coll = state.db.collection::<IdentityRecord>(IDENTITIES);
     let record = IdentityRecord {
         user_id: user_id.clone(),
@@ -359,14 +379,64 @@ pub(crate) async fn put_identity(
     }
 
     // Every encrypted room the caller is in has a member who can now be
-    // handed the current key.
-    let event = json!({ "type": "m.e2e.identity", "user_id": user_id });
+    // handed the current key. A replacement is also said in the conversation
+    // itself, where everyone sees it: new keys are exactly what someone
+    // impersonating the account would bring.
+    let event = json!({ "type": "m.e2e.identity", "user_id": user_id, "replaced": req.replace });
+    let display = username.to_string();
     for room_id in encrypted_rooms_of(&state, &user_id).await {
         let mut event = event.clone();
         event["room_id"] = json!(room_id);
         broadcast_to_room(&state, &room_id, &event).await;
+        if req.replace {
+            let notice = json!({
+                "type": "m.room.message",
+                "room_id": room_id,
+                "sender": user_id,
+                "content": {
+                    "msgtype": "m.system",
+                    "body": format!("{display} reset their encryption keys"),
+                },
+                "event_id": generate_id("$"),
+                "origin_server_ts": now_millis(),
+            });
+            if let Ok(doc) = mongodb::bson::to_document(&notice) {
+                let _ = state
+                    .db
+                    .collection::<mongodb::bson::Document>("messages")
+                    .insert_one(doc)
+                    .await;
+            }
+            broadcast_to_room(&state, &room_id, &notice).await;
+        }
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Whether this room is end-to-end encrypted.
+pub(crate) async fn is_encrypted(state: &AppState, room_id: &str) -> bool {
+    state
+        .db
+        .collection::<RoomRecord>("rooms")
+        .find_one(doc! { "_id": room_id, "e2e": true })
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+/// Drop any drafts this account has in encrypted rooms. Drafts are refused
+/// there now; these are ones saved before that.
+pub(crate) async fn purge_encrypted_drafts(state: &AppState, user_id: &str) {
+    let rooms = encrypted_rooms_of(state, user_id).await;
+    if rooms.is_empty() {
+        return;
+    }
+    let _ = state
+        .db
+        .collection::<mongodb::bson::Document>("drafts")
+        .delete_many(doc! { "user_id": user_id, "room_id": { "$in": &rooms } })
+        .await;
 }
 
 async fn encrypted_rooms_of(state: &AppState, user_id: &str) -> Vec<String> {

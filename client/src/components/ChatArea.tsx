@@ -43,7 +43,7 @@ import { usePendingFiles, MAX_ATTACHMENTS } from "@/hooks/usePendingFiles";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { VoiceRecordButton, VoiceRecordingBar } from "@/components/VoiceRecorderBar";
 import { useInterruptedUploads } from "@/hooks/useInterruptedUploads";
-import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, UserPlus, Pencil, Pin, Smile, Phone, PhoneOff, Video, Paperclip, Plus, SendHorizontal, Lock } from "lucide-react";
+import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, UserPlus, Pencil, Pin, Smile, Phone, PhoneOff, Video, Paperclip, Plus, SendHorizontal, Lock, LockOpen } from "lucide-react";
 import { CommandBar } from "./CommandBar";
 import { AddToDMDialog } from "./AddToDMDialog";
 import { PollDialog } from "./PollDialog";
@@ -78,6 +78,7 @@ import { oldestUnreadEventId } from "@/lib/unreads";
 import { RestrictionNotice } from "@/components/moderation/RestrictionNotice";
 import { showRoomRules } from "@/components/moderation/moderationUtils";
 import { E2eBanner } from "@/components/e2e/E2eBanner";
+import { isRoomEncrypted } from "@chatter/core/e2e/session";
 
 // Opening a channel holds the newest message while the page settles: avatars,
 // images and embeds all resolve their heights after the first render, and each
@@ -1573,11 +1574,17 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
               {state.currentChannelId && state.channels.length > 0
                 ? `# ${state.channels.find((c) => c.channel_id === state.currentChannelId)?.name || "channel"}`
                 : roomInfo?.name || "Unnamed Room"}
-              {roomInfo?.e2e && (
+              {roomInfo?.is_direct && state.currentRoomId && (isRoomEncrypted(state.currentRoomId) || roomInfo.e2e) ? (
                 <span title="End-to-end encrypted. Files and images are not encrypted yet." className="inline-flex shrink-0">
                   <Lock className="h-3 w-3 text-muted-foreground" aria-label="End-to-end encrypted" />
                 </span>
-              )}
+              ) : roomInfo?.is_direct ? (
+                // A DM from before encryption: say so, rather than leave it
+                // looking like the encrypted ones.
+                <span title="Not end-to-end encrypted. This conversation started before encryption, so the server can read it." className="inline-flex shrink-0">
+                  <LockOpen className="h-3 w-3 text-muted-foreground" aria-label="Not end-to-end encrypted" />
+                </span>
+              ) : null}
               {roomInfo?.is_direct && (
                 <Pencil className="h-3 w-3 text-muted-foreground can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity shrink-0" />
               )}
@@ -1780,7 +1787,7 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
         />
       )}
 
-      {roomInfo?.e2e && <E2eBanner />}
+      {roomInfo?.is_direct && state.currentRoomId && (isRoomEncrypted(state.currentRoomId) || roomInfo.e2e) && <E2eBanner />}
 
       {state.currentRoomId && (
         <AddToDMDialog
