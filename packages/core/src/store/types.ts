@@ -449,6 +449,8 @@ export type Action =
   | { type: "APPLY_READ_MARKER"; payload: ReadMarkerUpdate }
   | { type: "CLEAR_CHANNEL_UNREAD"; payload: string }
   | { type: "UPDATE_DM_STREAK"; payload: { roomId: string; streakCount: number; lastMessageTs: number } }
+  /** A message arrived in a room: moves its `last_activity_ts` forward. */
+  | { type: "NOTE_ROOM_ACTIVITY"; payload: { roomId: string; ts: number } }
   | { type: "INCREMENT_ROOM_UNREAD"; payload: string }
   | { type: "CLEAR_ROOM_UNREAD"; payload: string }
   | { type: "REMOVE_MESSAGE"; payload: string };

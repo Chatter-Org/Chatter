@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Check, DoorOpen, Lock, LogOut, MoreVertical, Plus, SquarePen } from "lucide-react";
 import { useAppContext } from "@/lib/store";
 import { resolveNotificationLevel, type NotificationLevel } from "@/lib/notifications";
+import { sortDmsByActivity } from "@/lib/sidebarOrder";
 import { NewDMDialog } from "@/components/NewDMDialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AuthAvatarImage, AuthImage } from "@/components/AuthImage";
@@ -35,7 +36,10 @@ export function DmList({ onSelect }: { onSelect?: () => void }) {
   // passing while it is open is picked up on the next mount.
   const [now] = useState(Date.now);
 
-  const dmRoomIds = state.joinedRoomIds.filter((id) => state.roomInfoMap[id]?.is_direct);
+  const dmRoomIds = sortDmsByActivity(
+    state.joinedRoomIds.filter((id) => state.roomInfoMap[id]?.is_direct),
+    (id) => state.roomInfoMap[id]?.last_activity_ts,
+  );
 
   // Head-counts per room from the live voice state; the room's own
   // `dm_voice_count` answers until the socket has said anything.

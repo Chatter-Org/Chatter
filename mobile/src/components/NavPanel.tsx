@@ -31,6 +31,7 @@ import {
 } from "lucide-react-native";
 import type { Channel, RoomInfo } from "@chatter/core/api";
 import type { VoiceChannelMember } from "@chatter/core/store/types";
+import { sortDmsByActivity } from "@chatter/core/sidebarOrder";
 import { displayUserId } from "@chatter/core/utils";
 import { useChatter, useChatterActions } from "@/state/ChatterProvider";
 import { useTheme } from "@/theme/ThemeProvider";
@@ -74,7 +75,10 @@ export function NavPanel({ rail, onRail }: { rail: RailSelection; onRail(selecti
 
   const { servers, dms } = useMemo(() => {
     const all = state.joinedRoomIds.map((id) => state.roomInfoMap[id]).filter(Boolean) as RoomInfo[];
-    return { servers: all.filter((r) => !r.is_direct), dms: all.filter((r) => r.is_direct) };
+    return {
+      servers: all.filter((r) => !r.is_direct),
+      dms: sortDmsByActivity(all.filter((r) => r.is_direct), (r) => r.last_activity_ts),
+    };
   }, [state.joinedRoomIds, state.roomInfoMap]);
 
   // Who is in a call in each room, from the voice picture the socket keeps

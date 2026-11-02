@@ -100,7 +100,10 @@ export interface StoreContext {
 /** Throttle on typing notices: one a second is plenty for "is typing…". */
 const TYPING_THROTTLE_MS = 1000;
 
-type SyncRoom = { state: { events: { type?: string; sender?: string; state_key?: string; content?: any }[] } };
+type SyncRoom = {
+  state: { events: { type?: string; sender?: string; state_key?: string; content?: any }[] };
+  timeline?: { events?: { origin_server_ts?: number }[] };
+};
 
 /**
  * A room's sidebar facts, read out of its `/sync` state events.
@@ -160,6 +163,12 @@ export function roomInfoFromSync(roomId: string, roomData: SyncRoom | undefined)
       : events.filter((e) => e.type === "m.room.member" && !!e.state_key).map((e) => e.state_key as string),
     dm_avatars: directEvent?.content?.dm_avatars || {},
     dm_voice_count: directEvent?.content?.dm_voice_count || 0,
+    // The sync's timeline is the room's latest messages, so its newest is the
+    // room's last activity.
+    last_activity_ts: (roomData.timeline?.events ?? []).reduce(
+      (latest, e) => Math.max(latest, e.origin_server_ts || 0),
+      0,
+    ),
     sounds: soundsEvent?.content?.sounds || {},
     // Rooms that predate the field, and any room whose state event is
     // missing, keep entrance sounds on — the field's default.

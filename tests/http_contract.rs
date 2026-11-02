@@ -2448,6 +2448,73 @@ async fn unreads_count_replies_and_dms_as_mentions_and_skip_deleted_messages() {
     assert_eq!(totals(&room_id), (2, 1));
     // Every DM message is addressed to her.
     assert_eq!(totals(&dm_id), (2, 2));
+
+    // Each DM keeps its own read marker. They used to share one, keyed by
+    // their empty channel_id, so reading one DM marked every DM read.
+    let (carol_user_id, carol_token, carol_secret) =
+        register_user_with_secret(&client, &server.base_url, "carol", PASSWORD).await;
+    let other_dm = create_room(
+        &client,
+        &server.base_url,
+        &carol_token,
+        "",
+        Some(vec![alice_user_id.clone()]),
+        true,
+    )
+    .await;
+    put_e2e_identity(
+        &client,
+        &server.base_url,
+        &carol_token,
+        "carol",
+        &carol_secret,
+    )
+    .await;
+    let started = post_room_keys(
+        &client,
+        &server.base_url,
+        &carol_token,
+        &other_dm,
+        0,
+        &[&alice_user_id, &carol_user_id],
+    )
+    .await;
+    assert_eq!(started.status(), StatusCode::OK);
+    send(
+        carol_token.clone(),
+        other_dm.clone(),
+        "c1",
+        sealed_message(0),
+    )
+    .await;
+
+    let read = client
+        .post(format!("{}/api/rooms/{}/read", server.base_url, dm_id))
+        .header("authorization", bearer(&alice_token))
+        .json(&json!({ "channel_id": "" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(read.status(), StatusCode::OK);
+
+    let body: Value = client
+        .get(format!("{}/api/unreads", server.base_url))
+        .header("authorization", bearer(&alice_token))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let rows = body["unreads"].as_array().unwrap();
+    let count_in = |room: &str| {
+        rows.iter()
+            .filter(|row| row["room_id"] == room)
+            .map(|row| row["count"].as_i64().unwrap())
+            .sum::<i64>()
+    };
+    assert_eq!(count_in(&dm_id), 0);
+    assert_eq!(count_in(&other_dm), 1);
 }
 
 #[tokio::test]

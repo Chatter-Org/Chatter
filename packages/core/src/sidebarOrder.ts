@@ -140,6 +140,14 @@ export function groupRoomsWithDrop(
   return orderWithMove(roomIds, movedId, targetId, side);
 }
 
+/**
+ * DMs, most recently active first. Sorted stably, so DMs with no known
+ * activity keep the order they were given in, after the rest.
+ */
+export function sortDmsByActivity<T>(dms: T[], activityOf: (dm: T) => number | undefined): T[] {
+  return [...dms].sort((a, b) => (activityOf(b) ?? 0) - (activityOf(a) ?? 0));
+}
+
 /** Unread state for a folder, which stands for rooms it is hiding. */
 export function folderUnread(
   roomIds: string[],

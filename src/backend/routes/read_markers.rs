@@ -79,10 +79,15 @@ pub(crate) async fn mark_read(
         String::new()
     };
     let ts = req.ts.unwrap_or_else(now_millis);
-    let id = if thread_id.is_empty() {
-        marker_id(&user_id, &channel_id)
-    } else {
+    let id = if !thread_id.is_empty() {
         marker_id(&user_id, &thread_id)
+    } else if channel_id.is_empty() {
+        // A room with no channels (a DM) is keyed by the room. Keyed by its
+        // empty channel_id, every DM shared one marker, and reading any of
+        // them marked all of them read.
+        marker_id(&user_id, &room_id)
+    } else {
+        marker_id(&user_id, &channel_id)
     };
 
     let coll = state.db.collection::<Document>("read_markers");
@@ -372,11 +377,23 @@ pub(crate) async fn get_unreads(
     let mut markers: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     let mut thread_markers: std::collections::HashMap<String, i64> =
         std::collections::HashMap::new();
+    // Channel-less rooms' markers, by room. The one shared marker every DM
+    // used to write (`marker_id(user, "")`) is still read, as a floor, so
+    // nothing already read comes back unread.
+    let mut room_markers: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut shared_marker: i64 = 0;
+    let shared_marker_id = marker_id(&user_id, "");
     if let Ok(mut cursor) = markers_coll.find(doc! { "user_id": &user_id }).await {
         while let Ok(Some(d)) = cursor.try_next().await {
             let last_read_ts = d.get_i64("last_read_ts").unwrap_or(0);
             if let Some(thread_id) = d.get_str("thread_id").ok().map(String::from) {
                 thread_markers.insert(thread_id, last_read_ts);
+            } else if d.get_str("channel_id").unwrap_or("").is_empty() {
+                if d.get_str("_id").unwrap_or("") == shared_marker_id {
+                    shared_marker = last_read_ts;
+                } else if let Ok(room_id) = d.get_str("room_id") {
+                    room_markers.insert(room_id.to_string(), last_read_ts);
+                }
             } else {
                 let channel_id = d.get_str("channel_id").unwrap_or("").to_string();
                 markers.insert(channel_id, last_read_ts);
@@ -442,7 +459,15 @@ pub(crate) async fn get_unreads(
         }
 
         for channel_id in channel_ids {
-            let since = markers.get(&channel_id).copied().unwrap_or(0);
+            let since = if channel_id.is_empty() {
+                room_markers
+                    .get(room_id)
+                    .copied()
+                    .unwrap_or(0)
+                    .max(shared_marker)
+            } else {
+                markers.get(&channel_id).copied().unwrap_or(0)
+            };
             let tally = channel_tally(
                 &messages_coll,
                 room_id,

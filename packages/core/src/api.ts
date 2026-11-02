@@ -1190,6 +1190,9 @@ export interface RoomInfo {
   /** How many are in this DM's call. Seeded on load, then kept current by
    *  voice join and leave events, which reach every member of the room. */
   dm_voice_count?: number;
+  /** When the room last saw a message, for ordering the DM list. Read off
+   *  the sync timeline and moved forward by live messages; 0 when unknown. */
+  last_activity_ts?: number;
   /** Room sound pack: event name -> `/external/...` URL. A missing entry means
    *  the client's built-in sound for that event. */
   sounds?: Record<string, string>;

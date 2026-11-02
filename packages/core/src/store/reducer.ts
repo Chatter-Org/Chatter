@@ -1277,6 +1277,17 @@ export function reducer(state: AppState, action: Action): AppState {
         roomLooseUnreads: { ...state.roomLooseUnreads, [action.payload]: 0 },
         roomLooseMentions: { ...state.roomLooseMentions, [action.payload]: 0 },
       });
+    case "NOTE_ROOM_ACTIVITY": {
+      const existing = state.roomInfoMap[action.payload.roomId];
+      if (!existing || (existing.last_activity_ts ?? 0) >= action.payload.ts) return state;
+      return {
+        ...state,
+        roomInfoMap: {
+          ...state.roomInfoMap,
+          [action.payload.roomId]: { ...existing, last_activity_ts: action.payload.ts },
+        },
+      };
+    }
     case "UPDATE_DM_STREAK": {
       const existing = state.roomInfoMap[action.payload.roomId];
       if (!existing) return state;

@@ -480,6 +480,11 @@ export function createWsMessageHandler(
     if (msg.type === "m.room.message") {
       maybeNotify(msg);
       const cur = stateRef.current;
+      // The DM list is ordered by this. Only DMs, so a busy room does not
+      // rewrite the room map on every message.
+      if (cur.roomInfoMap[msg.room_id]?.is_direct && msg.origin_server_ts) {
+        dispatch({ type: "NOTE_ROOM_ACTIVITY", payload: { roomId: msg.room_id, ts: msg.origin_server_ts } });
+      }
       const msgChannelId: string = msg.channel_id || msg.content?.channel_id || "";
       const inCurrentRoom = msg.room_id === cur.currentRoomId;
       // Only add to displayed messages if it belongs to the current channel
