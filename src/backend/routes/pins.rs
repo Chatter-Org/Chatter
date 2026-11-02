@@ -1,8 +1,8 @@
 use super::super::{
     dto::PinsQuery,
     helpers::{
-        broadcast_to_room, can_manage_messages, error_response, extract_token,
-        get_allowed_channel_ids, get_user_from_token, now_millis,
+        broadcast_to_channel, broadcast_to_room, can_manage_messages, error_response,
+        extract_token, get_allowed_channel_ids, get_user_from_token, now_millis,
     },
     state::{AppState, PinRecord, RoomRecord},
 };
@@ -192,7 +192,8 @@ pub(crate) async fn pin_message(
         "pinned_at": pinned_at,
         "message": pinned_message,
     });
-    broadcast_to_room(&state, &room_id, &event).await;
+    // It carries the whole message, so it goes where the message went.
+    broadcast_to_channel(&state, &room_id, &channel_id, &event).await;
 
     Ok(Json(json!({ "pinned": true, "pinned_at": pinned_at })))
 }

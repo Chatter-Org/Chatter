@@ -15,7 +15,7 @@
 use super::super::{
     dto::{CreatePollRequest, PollVoteRequest},
     helpers::{
-        broadcast_to_room, can_manage_messages, channel_permissions, effective_permissions,
+        broadcast_to_channel, can_manage_messages, channel_permissions, effective_permissions,
         error_response, extract_token, generate_id, get_user_from_token, is_blocked_between,
         now_millis, rate_limited,
     },
@@ -322,7 +322,7 @@ pub(crate) async fn create_poll(
     // absent one would have every client fetch the state it could have been
     // handed.
     broadcast["poll"] = poll_state_value(&record, &[]);
-    broadcast_to_room(&state, &room_id, &broadcast).await;
+    broadcast_to_channel(&state, &room_id, &channel_id, &broadcast).await;
 
     let channel_name = channel_name_for(&state, &channel_id).await;
     spawn_message_push(
@@ -456,7 +456,7 @@ pub(crate) async fn vote_poll(
     if !record.channel_id.is_empty() {
         broadcast["channel_id"] = json!(record.channel_id);
     }
-    broadcast_to_room(&state, &room_id, &broadcast).await;
+    broadcast_to_channel(&state, &room_id, &record.channel_id, &broadcast).await;
 
     Ok(Json(json!({ "poll": state_value })))
 }
@@ -654,8 +654,8 @@ async fn close_and_announce(state: &Arc<AppState>, record: &PollRecord, now: i64
     if !record.channel_id.is_empty() {
         update["channel_id"] = json!(record.channel_id);
     }
-    broadcast_to_room(state, &record.room_id, &update).await;
-    broadcast_to_room(state, &record.room_id, &event).await;
+    broadcast_to_channel(state, &record.room_id, &record.channel_id, &update).await;
+    broadcast_to_channel(state, &record.room_id, &record.channel_id, &event).await;
 
     state_value
 }

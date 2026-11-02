@@ -5,8 +5,9 @@ use super::super::{
         EditForumPostRequest, ForumPostsQuery, ForumSearchQuery, SetForumTagsRequest,
     },
     helpers::{
-        broadcast_to_room, channel_permissions, effective_permissions, error_response,
-        extract_token, generate_id, get_user_from_token, now_millis, valid_profile_color,
+        broadcast_to_channel, broadcast_to_room, channel_permissions, effective_permissions,
+        error_response, extract_token, generate_id, get_user_from_token, now_millis,
+        valid_profile_color,
     },
     moderation::{automod_refusal, participation_refusal},
     push::{added_mentions, spawn_message_push, MessageNotification},
@@ -653,7 +654,7 @@ pub(crate) async fn create_post(
         "post": post_json,
         "suppress_role_mentions": suppress_role_mentions,
     });
-    broadcast_to_room(&state, &room_id, &broadcast_msg).await;
+    broadcast_to_channel(&state, &room_id, &channel_id, &broadcast_msg).await;
     push_forum_mentions(
         &state,
         &post,
@@ -977,7 +978,7 @@ pub(crate) async fn create_comment(
         "comment": comment_json,
         "suppress_role_mentions": suppress_role_mentions,
     });
-    broadcast_to_room(&state, &room_id, &broadcast_msg).await;
+    broadcast_to_channel(&state, &room_id, &post.channel_id, &broadcast_msg).await;
     push_forum_mentions(
         &state,
         &post,
@@ -1184,7 +1185,7 @@ pub(crate) async fn edit_post(
         "added_mentions": added,
         "suppress_role_mentions": suppress_role_mentions,
     });
-    broadcast_to_room(&state, &room_id, &broadcast_msg).await;
+    broadcast_to_channel(&state, &room_id, &post.channel_id, &broadcast_msg).await;
     if !added.is_empty() {
         let edited = ForumPostRecord {
             title: new_title.clone(),
@@ -1274,7 +1275,11 @@ pub(crate) async fn edit_comment(
         "added_mentions": added,
         "suppress_role_mentions": suppress_role_mentions,
     });
-    broadcast_to_room(&state, &room_id, &broadcast_msg).await;
+    let channel_id = post
+        .as_ref()
+        .map(|p| p.channel_id.as_str())
+        .unwrap_or_default();
+    broadcast_to_channel(&state, &room_id, channel_id, &broadcast_msg).await;
     if let Some(post) = post {
         push_forum_mentions(
             &state,
@@ -1532,7 +1537,7 @@ pub(crate) async fn pin_post(
         "pinned_by": user_id,
         "pinned_at": pinned_at,
     });
-    broadcast_to_room(&state, &room_id, &event).await;
+    broadcast_to_channel(&state, &room_id, &post.channel_id, &event).await;
 
     Ok(Json(json!({ "pinned": true, "pinned_at": pinned_at })))
 }

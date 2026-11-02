@@ -5,12 +5,12 @@ use super::super::{
         SetThreadNameRequest, ThreadListQuery, ThreadMessagesQuery,
     },
     helpers::{
-        broadcast_to_room, can_manage_messages, channel_permissions, effective_permissions,
-        error_response, extract_token, generate_id, get_allowed_channel_ids, get_bot_from_token,
-        get_media_dimensions_for_urls, get_reactions_for_events, get_thread_counts_for_events,
-        get_user_custom_role_ids, get_user_from_token, get_user_role, is_blocked_between,
-        is_moderator_or_owner, media_urls_in_body, now_millis, rate_limited, regex_escape,
-        send_to_user, visible_message_arms, visible_thread_ids,
+        broadcast_to_channel, broadcast_to_room, can_manage_messages, channel_permissions,
+        effective_permissions, error_response, extract_token, generate_id, get_allowed_channel_ids,
+        get_bot_from_token, get_media_dimensions_for_urls, get_reactions_for_events,
+        get_thread_counts_for_events, get_user_custom_role_ids, get_user_from_token, get_user_role,
+        is_blocked_between, is_moderator_or_owner, media_urls_in_body, now_millis, rate_limited,
+        regex_escape, send_to_user, visible_message_arms, visible_thread_ids,
     },
     moderation::{automod_refusal, participation_refusal},
     push::{spawn_message_push, MessageNotification},
@@ -459,7 +459,7 @@ pub(crate) async fn send_message(
     // being told matters most.
     let mut broadcast = event.clone();
     broadcast["is_dm"] = json!(room.is_dm);
-    broadcast_to_room(&state, &room_id, &broadcast).await;
+    broadcast_to_channel(&state, &room_id, &channel_id, &broadcast).await;
 
     // Anyone connected has just been handed the event and raises their own
     // notification from it; push covers only the members that reached nobody.
@@ -1213,6 +1213,29 @@ pub(crate) async fn delete_notification(
     Ok(Json(json!({ "deleted": true })))
 }
 
+/// The channel a stored message belongs to, for deciding who may hear about
+/// it. A thread reply carries none of its own; it is as private as the
+/// channel of the thread's root. Empty for a message in no channel.
+async fn channel_of_message(state: &AppState, msg: &mongodb::bson::Document) -> String {
+    if let Ok(channel_id) = msg.get_str("channel_id") {
+        return channel_id.to_string();
+    }
+    let Ok(thread_id) = msg.get_str("thread_id") else {
+        return String::new();
+    };
+    // Read off the root rather than the thread's record, which threads from
+    // before records existed do not have.
+    state
+        .db
+        .collection::<mongodb::bson::Document>("messages")
+        .find_one(doc! { "event_id": thread_id })
+        .await
+        .ok()
+        .flatten()
+        .and_then(|root| root.get_str("channel_id").ok().map(String::from))
+        .unwrap_or_default()
+}
+
 pub(crate) async fn edit_message(
     State(state): State<Arc<AppState>>,
     Path((room_id, event_id, txn_id)): Path<(String, String, String)>,
@@ -1370,7 +1393,8 @@ pub(crate) async fn edit_message(
         edit_event["new_e2e"] = json!(surface.sealed);
     }
 
-    broadcast_to_room(&state, &room_id, &edit_event).await;
+    let channel_id = channel_of_message(&state, &msg).await;
+    broadcast_to_channel(&state, &room_id, &channel_id, &edit_event).await;
     Ok(Json(json!({"event_id": edit_event_id})))
 }
 
@@ -1837,7 +1861,7 @@ pub(crate) async fn send_thread_message(
         "added_participants": added_participants
     });
 
-    broadcast_to_room(&state, &room_id, &broadcast_event).await;
+    broadcast_to_channel(&state, &room_id, &root_channel_id, &broadcast_event).await;
 
     // A reply in a thread reaches the people in that thread, wherever they
     // are. Before this it reached nobody at all: the client only handled the
@@ -1906,14 +1930,21 @@ pub(crate) async fn set_thread_name(
 
     let msg_coll = state.db.collection::<mongodb::bson::Document>("messages");
 
-    let exists = msg_coll
+    let root = msg_coll
         .find_one(doc! { "event_id": &thread_event_id, "room_id": &room_id })
         .await
         .ok()
-        .flatten()
-        .is_some();
-
-    if !exists {
+        .flatten();
+    // A thread in a channel the caller cannot see is answered as missing.
+    let root_channel_id = match &root {
+        Some(root) => channel_of_message(&state, root).await,
+        None => String::new(),
+    };
+    let visible = root_channel_id.is_empty()
+        || channel_permissions(&state, &room_id, &root_channel_id, &user_id)
+            .await
+            .view_channel;
+    if root.is_none() || !visible {
         return Err(error_response(
             StatusCode::NOT_FOUND,
             "Thread root message not found",
@@ -1946,7 +1977,7 @@ pub(crate) async fn set_thread_name(
         "name": name,
         "sender": user_id,
     });
-    broadcast_to_room(&state, &room_id, &broadcast).await;
+    broadcast_to_channel(&state, &room_id, &root_channel_id, &broadcast).await;
 
     Ok(Json(json!({ "ok": true })))
 }

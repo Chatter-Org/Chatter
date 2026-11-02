@@ -1181,6 +1181,77 @@ pub(crate) async fn broadcast_to_room(state: &AppState, room_id: &str, message: 
     }
 }
 
+/// Broadcast something said in `channel_id` to the members who can read it.
+///
+/// `broadcast_to_room` goes to every member, which is right for the room's
+/// own news and wrong for what is written in a channel: a private channel's
+/// messages went out live to the whole room, and anyone could join the room.
+/// Every REST read already filters by channel; this is the same rule for the
+/// socket.
+///
+/// A channel nobody is shut out of — the common case — costs one lookup and
+/// goes to the room as before. Only a private one is judged per member, and
+/// only for members with a socket open. Bots are the owner's and see what the
+/// owner sees. No channel (a DM, a room without channels) is the room.
+pub(crate) async fn broadcast_to_channel(
+    state: &AppState,
+    room_id: &str,
+    channel_id: &str,
+    message: &Value,
+) {
+    if channel_id.is_empty() {
+        return broadcast_to_room(state, room_id, message).await;
+    }
+    let channel = state
+        .db
+        .collection::<ChannelRecord>("channels")
+        .find_one(mongodb::bson::doc! { "_id": channel_id, "room_id": room_id })
+        .await
+        .ok()
+        .flatten();
+    let Some(channel) = channel else {
+        return broadcast_to_room(state, room_id, message).await;
+    };
+    if channel_is_public(&category_overwrites(state, &channel).await, &channel) {
+        return broadcast_to_room(state, room_id, message).await;
+    }
+
+    let connected: Vec<String> = {
+        let members = state
+            .room_members
+            .read()
+            .await
+            .get(room_id)
+            .cloned()
+            .unwrap_or_default();
+        let ws_map = state.active_websockets.read().await;
+        members
+            .into_iter()
+            .filter(|uid| ws_map.contains_key(uid))
+            .collect()
+    };
+    let mut readers = Vec::with_capacity(connected.len());
+    for uid in connected {
+        if uid.starts_with("bot:")
+            || channel_permissions(state, room_id, channel_id, &uid)
+                .await
+                .view_channel
+        {
+            readers.push(uid);
+        }
+    }
+
+    let text = message.to_string();
+    let ws_map = state.active_websockets.read().await;
+    for uid in &readers {
+        if let Some(conns) = ws_map.get(uid) {
+            for tx in conns.values() {
+                let _ = tx.send(Message::Text(text.clone().into()));
+            }
+        }
+    }
+}
+
 /// Broadcast a JSON value only to WebSocket-connected users currently in a
 /// specific voice channel. Used to scope events like publisher_ready so
 /// users in other channels are not mistakenly notified.

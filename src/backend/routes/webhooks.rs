@@ -1,7 +1,7 @@
 use super::super::{
     dto::CreateWebhookRequest,
     helpers::{
-        broadcast_to_room, effective_permissions, error_response, extract_token, generate_id,
+        broadcast_to_channel, effective_permissions, error_response, extract_token, generate_id,
         get_user_from_token, now_millis,
     },
     push::{spawn_message_push, MessageNotification},
@@ -423,7 +423,7 @@ pub(crate) async fn execute_webhook(
         let _ = msg_coll.insert_one(doc).await;
     }
 
-    broadcast_to_room(&state, &webhook.room_id, &event).await;
+    broadcast_to_channel(&state, &webhook.room_id, &webhook.channel_id, &event).await;
 
     // A webhook message is an `m.room.message` like any other, so it must reach
     // members with no tab open the same way one typed by a person does.
