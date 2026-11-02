@@ -284,16 +284,15 @@ export function ActivityPage({
     <ScrollArea className="flex-1 min-w-0">
       <div className="mx-auto max-w-5xl px-4 md:px-6 py-6 md:py-8 space-y-6 md:space-y-8">
         {/* Header */}
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Activity</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Your rooms and recent conversations
-          </p>
-        </div>
-
-        <div className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Activity</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Your rooms and recent conversations
+            </p>
+          </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={onCreateRoom} title="Create a new room">
+            <Button size="sm" onClick={onCreateRoom} title="Create a new room">
               <Plus className="h-4 w-4" />
               Create room
             </Button>
@@ -302,8 +301,9 @@ export function ActivityPage({
               Join room
             </Button>
           </div>
-          <CrossRoomSearch onSelectRoom={selectRoom} />
         </div>
+
+        <CrossRoomSearch onSelectRoom={selectRoom} />
 
         {/* Two-column layout: Rooms left, Friends right */}
         <div className="flex flex-col md:flex-row gap-6 md:gap-8 items-start">
