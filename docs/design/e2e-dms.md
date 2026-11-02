@@ -4,7 +4,8 @@ Identity keys, room keys and epochs, sealed messages, and what the server can an
 
 ## What is encrypted
 
-- **Every DM and group DM created since this shipped** (`RoomRecord.e2e`, set in all three DM paths of `create_room`). DMs from before stay plaintext: there is no migration, and a 1:1 DM that already exists is reused as it was.
+- **Every DM and group DM created since this shipped, unless its maker turned encryption off** (`RoomRecord.e2e`, set in all three DM paths of `create_room` from the request's `e2e`, which defaults to `true`; the web client's New DM dialog has the switch). DMs from before stay plaintext: there is no migration.
+- **A pair has at most two 1:1 DMs, one of each kind.** `dm_rooms` keeps the first under the bare pair and the other, once asked for, under `pair#e2e` or `pair#plain`. A request naming a kind reuses that kind's DM; one naming none (older apps, profile and friend buttons) reuses the first, whatever it is. Both share one streak (`DmRoomRecord::pair`). The DM list marks the encrypted one with a lock.
 - **The text of messages, edits and thread replies, plus the quote of the message replied to.** Nothing else. The server still sees who is in a DM, who sent what and when, message sizes, reactions, pins, read markers, thread names, polls, and voice and video (the SFU terminates them).
 - **Uploads are not encrypted yet.** An encrypted message's upload links travel beside the ciphertext in `attachments`. The server checks that each is a bare upload link, so the field cannot carry text. The UI says so on the lock icon and in the setup dialog.
 

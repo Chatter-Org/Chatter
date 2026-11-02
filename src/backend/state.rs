@@ -665,8 +665,18 @@ pub(crate) struct ForumPinRecord {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct DmRoomRecord {
     #[serde(rename = "_id")]
-    pub(crate) user_pair: String, // sorted "user1|user2"
+    pub(crate) user_pair: String, // sorted "user1|user2", plus "#e2e" or "#plain" for a pair's second DM
     pub(crate) room_id: String,
+}
+
+impl DmRoomRecord {
+    /// The pair without the suffix a second DM between them carries, so both
+    /// of a pair's DMs share one streak.
+    pub(crate) fn pair(&self) -> &str {
+        self.user_pair
+            .split_once('#')
+            .map_or(&self.user_pair, |(pair, _)| pair)
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]

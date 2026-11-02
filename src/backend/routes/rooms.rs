@@ -37,6 +37,7 @@ pub(crate) async fn create_room(
         .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Invalid token"))?;
 
     let is_dm = req.is_direct.unwrap_or(false);
+    let e2e = req.e2e.unwrap_or(true);
 
     // If it's a DM, check if one already exists
     if is_dm {
@@ -106,7 +107,7 @@ pub(crate) async fn create_room(
                     entrance_sounds_enabled: true,
                     suggested_theme: String::new(),
                     moderation: Default::default(),
-                    e2e: true,
+                    e2e,
                     e2e_epoch: -1,
                     e2e_rotate: false,
                 };
@@ -156,7 +157,7 @@ pub(crate) async fn create_room(
                     "type": "m.room.created",
                     "room_id": room_id,
                     "sender": user_id,
-                    "content": { "is_direct": true, "e2e": true }
+                    "content": { "is_direct": true, "e2e": e2e }
                 });
                 broadcast_to_room(&state, &room_id, &event).await;
 
@@ -183,15 +184,42 @@ pub(crate) async fn create_room(
                     ));
                 }
 
-                let dm_key = if user_id < *other_user {
+                let pair_key = if user_id < *other_user {
                     format!("{}|{}", user_id, other_user)
                 } else {
                     format!("{}|{}", other_user, user_id)
                 };
 
-                // Check MongoDB for existing DM
+                // A pair has at most two DMs, one encrypted and one not. The
+                // first made sits under the bare pair; the other, if asked
+                // for, under the pair plus its kind. Without a choice in the
+                // request, the first is reused whatever it is.
                 let dm_coll = state.db.collection::<DmRoomRecord>("dm_rooms");
-                if let Ok(Some(existing)) = dm_coll.find_one(doc! { "_id": &dm_key }).await {
+                let rooms_coll = state.db.collection::<RoomRecord>("rooms");
+                let mut dm_key = pair_key.clone();
+                let mut existing = dm_coll
+                    .find_one(doc! { "_id": &pair_key })
+                    .await
+                    .ok()
+                    .flatten();
+                if let (Some(found), Some(wanted)) = (&existing, req.e2e) {
+                    let found_e2e = rooms_coll
+                        .find_one(doc! { "_id": &found.room_id })
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|r| r.e2e);
+                    if found_e2e != Some(wanted) {
+                        dm_key = format!("{}#{}", pair_key, if wanted { "e2e" } else { "plain" });
+                        existing = dm_coll
+                            .find_one(doc! { "_id": &dm_key })
+                            .await
+                            .ok()
+                            .flatten();
+                    }
+                }
+
+                if let Some(existing) = existing {
                     let existing_room_id = existing.room_id;
 
                     // Re-add the user if they left
@@ -240,11 +268,10 @@ pub(crate) async fn create_room(
                     entrance_sounds_enabled: true,
                     suggested_theme: String::new(),
                     moderation: Default::default(),
-                    e2e: true,
+                    e2e,
                     e2e_epoch: -1,
                     e2e_rotate: false,
                 };
-                let rooms_coll = state.db.collection::<RoomRecord>("rooms");
                 let _ = rooms_coll.insert_one(room_record).await;
 
                 // Add both members to MongoDB and cache
@@ -297,7 +324,7 @@ pub(crate) async fn create_room(
                     "content": {
                         "name": room_name,
                         "is_direct": true,
-                        "e2e": true
+                        "e2e": e2e
                     }
                 });
                 broadcast_to_room(&state, &room_id, &event).await;
@@ -432,7 +459,7 @@ pub(crate) async fn create_room(
         entrance_sounds_enabled: true,
         suggested_theme: String::new(),
         moderation: Default::default(),
-        e2e: is_dm,
+        e2e: is_dm && e2e,
         e2e_epoch: -1,
         e2e_rotate: false,
     };

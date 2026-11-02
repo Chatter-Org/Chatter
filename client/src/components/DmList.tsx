@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { Check, LogOut, MoreVertical, UsersRound } from "lucide-react";
+import { Check, DoorOpen, Lock, LogOut, MoreVertical, Plus, SquarePen } from "lucide-react";
 import { useAppContext } from "@/lib/store";
 import { resolveNotificationLevel, type NotificationLevel } from "@/lib/notifications";
-import { GroupDMDialog } from "@/components/GroupDMDialog";
+import { NewDMDialog } from "@/components/NewDMDialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AuthAvatarImage, AuthImage } from "@/components/AuthImage";
 import { Button } from "@/components/ui/button";
@@ -24,13 +24,13 @@ const NOTIFICATION_LEVELS: { value: NotificationLevel; label: string }[] = [
   { value: "none", label: "Nothing" },
 ];
 
-/** The user's DMs, one row each, with the button that starts a group DM.
+/** The user's DMs, one row each, with the button that starts a new one.
  *
  *  Drawn in two places: the DM column beside the chat on desktop, and the
  *  DMs tab of the mobile sidebar sheet. */
 export function DmList({ onSelect }: { onSelect?: () => void }) {
   const { state } = useAppContext();
-  const [groupDMDialogOpen, setGroupDMDialogOpen] = useState(false);
+  const [newDMDialogOpen, setNewDMDialogOpen] = useState(false);
   // Streaks are judged against when the list was drawn; a day boundary
   // passing while it is open is picked up on the next mount.
   const [now] = useState(Date.now);
@@ -51,13 +51,15 @@ export function DmList({ onSelect }: { onSelect?: () => void }) {
   return (
     <>
       <div className="px-2 pb-1">
-        <button
-          onClick={() => setGroupDMDialogOpen(true)}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full text-xs"
+          onClick={() => setNewDMDialogOpen(true)}
         >
-          <UsersRound className="h-3 w-3" />
-          Group DM
-        </button>
+          <SquarePen className="h-3.5 w-3.5" />
+          New DM
+        </Button>
       </div>
       {dmRoomIds.length === 0 && (
         <p className="px-3 py-3 text-xs text-muted-foreground">
@@ -75,7 +77,7 @@ export function DmList({ onSelect }: { onSelect?: () => void }) {
           />
         ))}
       </div>
-      <GroupDMDialog open={groupDMDialogOpen} onOpenChange={setGroupDMDialogOpen} />
+      <NewDMDialog open={newDMDialogOpen} onOpenChange={setNewDMDialogOpen} />
     </>
   );
 }
@@ -92,11 +94,16 @@ export function DmColumn({
 }) {
   return (
     <div className="flex h-full w-60 shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar">
+      {/* Room actions, kept apart from the DMs below: these make and join
+          rooms, not conversations. */}
       <div className="flex h-14 shrink-0 items-center gap-2 border-b px-3">
-        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={onCreateRoom}>
-          + Create
+        <span className="ui-heading shrink-0">Rooms</span>
+        <Button variant="ghost" size="sm" className="flex-1 px-2 text-xs" onClick={onCreateRoom} title="Create a new room">
+          <Plus className="h-3.5 w-3.5" />
+          Create
         </Button>
-        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={onJoinRoom}>
+        <Button variant="ghost" size="sm" className="flex-1 px-2 text-xs" onClick={onJoinRoom} title="Join an existing room">
+          <DoorOpen className="h-3.5 w-3.5" />
           Join
         </Button>
       </div>
@@ -225,6 +232,10 @@ function DmRow({
       )}
 
       <span className="min-w-0 flex-1 truncate text-[0.9375rem] font-medium leading-tight">{roomName}</span>
+      {/* So an encrypted and a plaintext DM with the same person tell apart. */}
+      {info?.e2e && (
+        <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="End-to-end encrypted" />
+      )}
 
       <span className="ml-auto flex shrink-0 items-center gap-1.5">
         {voiceCount > 0 && (

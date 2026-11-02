@@ -3445,6 +3445,83 @@ async fn forum_posts_can_be_pinned_by_their_creator_and_moderators() {
     assert_eq!(unpin_missing.status(), StatusCode::NOT_FOUND);
 }
 
+/// A DM can be made without encryption. A pair then has up to two DMs, one
+/// of each kind; asking for a kind reuses that one, and asking for neither
+/// reuses the first.
+#[tokio::test]
+async fn dms_can_be_made_plaintext_beside_an_encrypted_one() {
+    let server = spawn_server().await;
+    let client = Client::new();
+    let base = server.base_url.clone();
+
+    let (alice_id, alice) = register_user(&client, &base, "alice", PASSWORD).await;
+    let (bob_id, bob) = register_user(&client, &base, "bob", PASSWORD).await;
+    let (carol_id, _) = register_user(&client, &base, "carol", PASSWORD).await;
+
+    let make = |token: String, invite: Vec<String>, e2e: Option<bool>| {
+        let client = client.clone();
+        let base = base.clone();
+        async move {
+            let mut body = json!({ "is_direct": true, "invite": invite });
+            if let Some(e2e) = e2e {
+                body["e2e"] = json!(e2e);
+            }
+            let res: Value = client
+                .post(format!("{base}/_matrix/client/r0/createRoom"))
+                .header("authorization", bearer(&token))
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            res["room_id"].as_str().unwrap().to_string()
+        }
+    };
+    let is_e2e = |room: String| {
+        let client = client.clone();
+        let base = base.clone();
+        let alice = alice.clone();
+        async move {
+            let state: Value = client
+                .get(format!("{base}/api/rooms/{}/e2e", esc(&room)))
+                .header("authorization", bearer(&alice))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            state["e2e"].as_bool().unwrap()
+        }
+    };
+
+    let encrypted = make(alice.clone(), vec![bob_id.clone()], None).await;
+    assert!(is_e2e(encrypted.clone()).await);
+    let plain = make(alice.clone(), vec![bob_id.clone()], Some(false)).await;
+    assert_ne!(plain, encrypted);
+    assert!(!is_e2e(plain.clone()).await);
+
+    // Each kind is reused, from either side; no choice reuses the first.
+    assert_eq!(
+        make(bob.clone(), vec![alice_id.clone()], Some(false)).await,
+        plain
+    );
+    assert_eq!(
+        make(bob.clone(), vec![alice_id], Some(true)).await,
+        encrypted
+    );
+    assert_eq!(
+        make(alice.clone(), vec![bob_id.clone()], None).await,
+        encrypted
+    );
+
+    // A group DM takes the choice too.
+    let group = make(alice.clone(), vec![bob_id, carol_id], Some(false)).await;
+    assert!(!is_e2e(group).await);
+}
+
 /// End-to-end encrypted DMs (`routes/e2e.rs`). The server cannot check the
 /// cryptography, so this pins what it can: every new DM is encrypted, keys
 /// reach exactly the members, plaintext is refused, a send waits on the

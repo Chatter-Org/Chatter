@@ -349,10 +349,7 @@ async fn build_joined_room(
         let dm_rooms_coll = state.db.collection::<DmRoomRecord>("dm_rooms");
         if let Ok(Some(dm_record)) = dm_rooms_coll.find_one(doc! { "room_id": room_id }).await {
             let streak_coll = state.db.collection::<DmStreakRecord>("dm_streaks");
-            if let Ok(Some(streak)) = streak_coll
-                .find_one(doc! { "_id": &dm_record.user_pair })
-                .await
-            {
+            if let Ok(Some(streak)) = streak_coll.find_one(doc! { "_id": dm_record.pair() }).await {
                 state_events.push(json!({
                     "type": "m.room.dm_streak",
                     "state_key": "",

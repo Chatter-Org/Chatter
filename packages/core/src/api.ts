@@ -2470,11 +2470,13 @@ export async function apiRevokeSession(sessionId: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to revoke session");
 }
 
-export async function apiCreateDM(targetUserIds: string | string[]) {
+/** `e2e` left out lets the server choose: a new DM is encrypted, and a 1:1
+ *  DM that already exists is reused whichever it is. */
+export async function apiCreateDM(targetUserIds: string | string[], opts: { e2e?: boolean } = {}) {
   const invite = Array.isArray(targetUserIds) ? targetUserIds : [targetUserIds];
   const res = await authenticatedFetch("/_matrix/client/r0/createRoom", {
     method: "POST",
-    body: JSON.stringify({ is_direct: true, invite }),
+    body: JSON.stringify({ is_direct: true, invite, ...(opts.e2e === undefined ? {} : { e2e: opts.e2e }) }),
   });
   if (!res.ok) throw new Error("Failed to create DM");
   return res.json() as Promise<{ room_id: string }>;

@@ -65,6 +65,9 @@ pub(crate) struct CreateRoomRequest {
     pub(crate) unlisted: Option<bool>,
     pub(crate) password: Option<String>,
     pub(crate) room_type: Option<String>,
+    /// DMs only: whether a new DM is end-to-end encrypted. Absent means yes,
+    /// and a 1:1 DM that already exists is then reused whatever it is.
+    pub(crate) e2e: Option<bool>,
 }
 
 #[derive(Deserialize)]

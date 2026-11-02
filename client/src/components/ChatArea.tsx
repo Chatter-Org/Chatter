@@ -1579,9 +1579,9 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
                   <Lock className="h-3 w-3 text-muted-foreground" aria-label="End-to-end encrypted" />
                 </span>
               ) : roomInfo?.is_direct ? (
-                // A DM from before encryption: say so, rather than leave it
-                // looking like the encrypted ones.
-                <span title="Not end-to-end encrypted. This conversation started before encryption, so the server can read it." className="inline-flex shrink-0">
+                // A DM from before encryption, or made without it: say so,
+                // rather than leave it looking like the encrypted ones.
+                <span title="Not end-to-end encrypted. The server can read this conversation." className="inline-flex shrink-0">
                   <LockOpen className="h-3 w-3 text-muted-foreground" aria-label="Not end-to-end encrypted" />
                 </span>
               ) : null}

@@ -1172,9 +1172,10 @@ export function createStoreActions(ctx: StoreContext) {
 
   // ─── People: DMs, friends, your own profile ──────────────────────────────
 
-  /** Open (or create) a DM with one person, or a group DM with several. */
-  const openDM = async (targetUserIds: string | string[]) => {
-    const data = await apiCreateDM(targetUserIds);
+  /** Open (or create) a DM with one person, or a group DM with several.
+   *  `e2e` picks an encrypted or a plaintext DM; see `apiCreateDM`. */
+  const openDM = async (targetUserIds: string | string[], opts?: { e2e?: boolean }) => {
+    const data = await apiCreateDM(targetUserIds, opts);
     await loadRooms();
     // A new encrypted DM has no key until a member's client makes one; make
     // it now, so the first message does not wait on it.

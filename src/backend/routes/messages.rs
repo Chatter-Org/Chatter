@@ -543,9 +543,7 @@ pub(crate) async fn send_message(
             let today_str = today_naive.format("%Y-%m-%d").to_string();
 
             let new_count: u32;
-            if let Ok(Some(existing)) = streak_coll
-                .find_one(doc! { "_id": &dm_record.user_pair })
-                .await
+            if let Ok(Some(existing)) = streak_coll.find_one(doc! { "_id": dm_record.pair() }).await
             {
                 let last_naive =
                     chrono::NaiveDate::parse_from_str(&existing.last_streak_date, "%Y-%m-%d")
@@ -556,7 +554,7 @@ pub(crate) async fn send_message(
                     new_count = existing.streak_count;
                     streak_coll
                         .update_one(
-                            doc! { "_id": &dm_record.user_pair },
+                            doc! { "_id": dm_record.pair() },
                             doc! { "$set": { "last_message_ts": timestamp } },
                         )
                         .await
@@ -566,7 +564,7 @@ pub(crate) async fn send_message(
                     new_count = existing.streak_count + 1;
                     streak_coll
                         .update_one(
-                            doc! { "_id": &dm_record.user_pair },
+                            doc! { "_id": dm_record.pair() },
                             doc! { "$set": {
                                 "streak_count": new_count,
                                 "last_message_ts": timestamp,
@@ -580,7 +578,7 @@ pub(crate) async fn send_message(
                     new_count = 1;
                     streak_coll
                         .update_one(
-                            doc! { "_id": &dm_record.user_pair },
+                            doc! { "_id": dm_record.pair() },
                             doc! { "$set": {
                                 "streak_count": 1u32,
                                 "last_message_ts": timestamp,
@@ -594,7 +592,7 @@ pub(crate) async fn send_message(
                 // No existing streak: start at 1
                 new_count = 1;
                 let new_record = DmStreakRecord {
-                    user_pair: dm_record.user_pair.clone(),
+                    user_pair: dm_record.pair().to_string(),
                     streak_count: 1,
                     last_message_ts: timestamp,
                     last_streak_date: today_str,
