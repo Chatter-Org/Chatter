@@ -39,6 +39,12 @@ impl Quota {
 
 /// Sending messages. Comfortably above a fast typist, far below a loop.
 pub(crate) const SEND_MESSAGE: Quota = Quota::per(15.0, 10.0);
+/// Setting up or replacing encryption keys: a handful an hour is a person;
+/// more is someone guessing TOTP codes or spamming key-change notices.
+pub(crate) const E2E_IDENTITY: Quota = Quota::per(5.0, 3600.0);
+/// Reading and sharing keys: every room open and key change asks, so the
+/// burst is generous; a loop is not.
+pub(crate) const E2E_KEYS: Quota = Quota::per(120.0, 60.0);
 /// Uploads are expensive: disk, ffprobe, thumbnailing, transcoding.
 pub(crate) const UPLOAD: Quota = Quota::per(10.0, 60.0);
 /// Registration, keyed per address rather than per user — there is no user yet.

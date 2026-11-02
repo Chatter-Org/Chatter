@@ -314,6 +314,29 @@ describe("e2e session against a lying server", () => {
     expect(JSON.parse(secrets.get("e2e-rooms:@alice:x")!)).toContain("!dm");
   }, 60_000);
 
+  it("still verifies what someone signed before a reset it accepted, and nothing after", async () => {
+    const { alice, bob } = await pair();
+    const before = await bob.send("!dm", "before my reset");
+    const sentAt = Date.now() - 1000;
+    const stamped = { ...before.event, origin_server_ts: sentAt };
+    expect((await alice.read("!dm", [stamped]))[0].content.e2e_state).toBe("ok");
+
+    const newBob = await device("@bob:x");
+    await newBob.as(() => newBob.session.startE2e("@bob:x"));
+    await newBob.as(() => newBob.session.setUpE2e("bob new passphrase", "123456", true));
+    alice.session.handleE2eEvent({ type: "m.e2e.identity", room_id: "!dm", user_id: "@bob:x" });
+    await alice.as(() => alice.session.syncRoomKeys("!dm", true)).catch(() => {});
+    expect(alice.session.getChangedKeys()).toEqual(["@bob:x"]);
+    await alice.session.acceptKeyChange("@bob:x");
+
+    // Sent before: the old key still vouches for it.
+    const [old] = await alice.read("!dm", [{ ...before.event, event_id: before.event.event_id, origin_server_ts: sentAt }]);
+    expect(old.content.e2e_state).toBe("ok");
+    // Claimed to be sent after: the old key, which may be in other hands, does not.
+    const [late] = await alice.read("!dm", [{ ...before.event, origin_server_ts: Date.now() + 60_000 }]);
+    expect(late.content.e2e_state).toBe("unverified");
+  }, 60_000);
+
   it("keeps this device's seed when the server's keys stop matching it", async () => {
     const { alice } = await pair();
     const seedBefore = alice.secrets.get("e2e-seed:@alice:x");

@@ -326,6 +326,17 @@ export function openMessage(
   }
 }
 
+/** Whether `sealed` carries a valid signature by `signPub`, without opening
+ *  it again. For checking a message against a sender's earlier keys. */
+export function messageSignedBy(sealed: SealedMessage, context: MessageContext, signPub: Uint8Array): boolean {
+  try {
+    const aad = messageAad(context);
+    return ed25519.verify(fromB64(sealed.sig), concatBytes(aad, fromB64(sealed.nonce), fromB64(sealed.ct)), signPub);
+  } catch {
+    return false;
+  }
+}
+
 /** A fresh id for a message, sealed inside it. */
 export function newMessageId(): string {
   return toB64(randomBytes(16));

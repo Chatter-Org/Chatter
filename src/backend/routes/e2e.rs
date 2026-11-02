@@ -21,8 +21,9 @@
 use super::super::{
     helpers::{
         broadcast_to_room, error_response, extract_token, generate_id, get_user_from_token,
-        now_millis, send_to_user,
+        now_millis, rate_limited, send_to_user,
     },
+    ratelimit,
     state::{AppState, RoomRecord, UserRecord},
 };
 use axum::{
@@ -274,6 +275,20 @@ fn caller(state: &AppState, headers: &HeaderMap) -> Result<String, (StatusCode, 
         .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Invalid token"))
 }
 
+/// The caller, held to `quota` for this kind of key request.
+async fn limited_caller(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    kind: &str,
+    quota: ratelimit::Quota,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    let user_id = caller(state, headers)?;
+    ratelimit::check(state, &format!("e2e-{kind}:{user_id}"), quota)
+        .await
+        .map_err(|retry_after| rate_limited(retry_after, "Too many encryption requests"))?;
+    Ok(user_id)
+}
+
 fn identity_json(record: &IdentityRecord) -> Value {
     json!({ "enc_pub": record.enc_pub, "sign_pub": record.sign_pub })
 }
@@ -321,7 +336,7 @@ pub(crate) async fn put_identity(
     headers: HeaderMap,
     Json(req): Json<PutIdentityRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let user_id = caller(&state, &headers)?;
+    let user_id = limited_caller(&state, &headers, "identity", ratelimit::E2E_IDENTITY).await?;
     let b = &req.backup;
     let valid = is_key(&req.enc_pub, 32)
         && is_key(&req.sign_pub, 32)
@@ -476,7 +491,7 @@ pub(crate) async fn query_keys(
     headers: HeaderMap,
     Json(req): Json<KeyQueryRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    caller(&state, &headers)?;
+    limited_caller(&state, &headers, "keys", ratelimit::E2E_KEYS).await?;
     if req.user_ids.len() > MAX_KEY_QUERY {
         return Err(error_response(StatusCode::BAD_REQUEST, "Too many users"));
     }
@@ -635,7 +650,7 @@ pub(crate) async fn post_room_keys(
     headers: HeaderMap,
     Json(req): Json<PostRoomKeysRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let user_id = caller(&state, &headers)?;
+    let user_id = limited_caller(&state, &headers, "keys", ratelimit::E2E_KEYS).await?;
     let (room, members) = encrypted_room_for_member(&state, &room_id, &user_id).await?;
     if !room.e2e {
         return Err(refusal(

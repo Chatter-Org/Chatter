@@ -42,6 +42,12 @@ Identity keys, room keys and epochs, sealed messages, and what the server can an
 - **A seed that no longer matches the server's keys is kept**, not deleted (`getKeysReplacedElsewhere`). The banner says the keys were changed from somewhere else. A server answer alone used to be able to wipe the device's keys.
 - **Drafts never reach the server** for an encrypted room. The client keeps them in memory, and `set_draft` refuses them there whatever a client sends. `get_continuity` purges any saved before this.
 - **No link previews** for encrypted messages: the server fetches previews, so it would learn the link.
+- **Earlier keys still vouch for earlier messages.** Accepting a contact's new keys (or resetting your own) keeps the old signing key in the pin with `until` set to that moment. A message sent before then still verifies against it; one claiming to be sent after does not, since a key someone reset away from may be in other hands. `until` is compared with the server's `origin_server_ts`, so a server holding a stolen old key could backdate a forgery — the limit of what a device can check alone.
+
+## The page around it
+
+- A script running in the page can read the seed, so the client is served with a **Content-Security-Policy on scripts** (`content_security_policy` in `static_content.rs`): the bundle, the inline theme script by a hash computed from the file served, the Google Cast sender, wasm for the camera models, and blob workers. Nothing else, and no `unsafe-inline`. Images, media, connections and frames are deliberately left open — the client loads those from anywhere. Adding an inline script or a script host means changing the policy.
+- The key routes are **rate limited** per account: setting up or replacing keys `E2E_IDENTITY` (5 an hour, which also bounds TOTP guessing there), querying and sharing keys `E2E_KEYS`.
 
 ## The client (`packages/core/src/e2e/session.ts`)
 
@@ -55,6 +61,6 @@ Identity keys, room keys and epochs, sealed messages, and what the server can an
 ## Not built yet
 
 - Phase 4: Android (keystore, `getRandomValues` polyfill, unlock UI). Until then Android shows encrypted DMs as locked and cannot send in them.
-- Phase 5: fingerprint/safety-number verification. Keys are pinned on first sight, so a server that lies about someone's keys *from the start* (before this device ever saw them) is not caught. The recipient set of an epoch is not signed, and membership is still the server's word: a phantom member it adds gets a copy of the next key like anyone else. Member key history on the server, so messages signed before a reset still verify.
+- Phase 5: fingerprint/safety-number verification. Keys are pinned on first sight, so a server that lies about someone's keys *from the start* (before this device ever saw them) is not caught. The recipient set of an epoch is not signed, and membership is still the server's word: a phantom member it adds gets a copy of the next key like anyone else. Key history is per device: a device that never saw someone's old keys cannot vouch for their messages from before a reset.
 - Phase 6: encrypted uploads and voice messages (conflicts with server-side conversion and thumbnails).
 - No forward secrecy within an epoch, and no encrypted history for new members.

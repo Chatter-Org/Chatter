@@ -8,6 +8,47 @@ use mongodb::bson::doc;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+/// The page's Content-Security-Policy, scoped to scripts: where the client's
+/// code may come from, so markup that slips into a message cannot run.
+///
+/// It matters more since DMs became end-to-end encrypted — a script running
+/// in the page can read the encryption seed — and it covers only what an
+/// injected script would need. Images, media, connections and frames are left
+/// alone, because the client legitimately loads those from anywhere (link
+/// embeds, GIFs, YouTube, Steam art).
+///
+/// - `'self'`: the bundle. `'sha256-…'`: the inline theme script in
+///   `index.html`, hashed from the file actually served so a rebuild that
+///   changes it cannot break the page.
+/// - `https://www.gstatic.com`: the Google Cast sender and what it loads.
+/// - `'wasm-unsafe-eval'`: the camera and blur models (MediaPipe) are wasm.
+/// - `worker-src blob:`: their timer workers are made from blobs.
+fn content_security_policy(html: &str) -> String {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let inline = regex::Regex::new(r"(?s)<script>(.*?)</script>").unwrap();
+    let hashes: Vec<String> = inline
+        .captures_iter(html)
+        .map(|c| {
+            let digest = Sha256::digest(c[1].as_bytes());
+            format!(
+                "'sha256-{}'",
+                base64::engine::general_purpose::STANDARD.encode(digest)
+            )
+        })
+        .collect();
+    format!(
+        "script-src 'self' {} https://www.gstatic.com 'wasm-unsafe-eval'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'",
+        hashes.join(" ")
+    )
+}
+
+/// The client's page, with its script policy.
+fn client_page(html: String) -> Response {
+    let policy = content_security_policy(&html);
+    ([(header::CONTENT_SECURITY_POLICY, policy)], Html(html)).into_response()
+}
+
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('"', "&quot;")
@@ -15,18 +56,18 @@ fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-pub(crate) async fn serve_client() -> Html<String> {
+pub(crate) async fn serve_client() -> Response {
     let html = tokio::fs::read_to_string("client/dist/index.html")
         .await
         .unwrap_or_else(|_| "<h1>No client found.</h1>".to_string());
-    Html(html)
+    client_page(html)
 }
 
 pub(crate) async fn serve_invite_page(
     State(state): State<Arc<AppState>>,
     Path(code): Path<String>,
     headers: HeaderMap,
-) -> Html<String> {
+) -> Response {
     let html = tokio::fs::read_to_string("client/dist/index.html")
         .await
         .unwrap_or_else(|_| "<h1>No client found.</h1>".to_string());
@@ -91,7 +132,7 @@ pub(crate) async fn serve_invite_page(
         html
     };
 
-    Html(final_html)
+    client_page(final_html)
 }
 
 /// Files the browser fetches from the site root by name rather than through
@@ -125,4 +166,22 @@ pub(crate) async fn versions() -> Json<Value> {
 
 pub(crate) async fn build_version() -> Json<Value> {
     Json(json!({ "version": env!("BUILD_TIMESTAMP") }))
+}
+
+#[cfg(test)]
+mod csp_tests {
+    use super::content_security_policy;
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn allows_the_inline_scripts_it_was_served_with_and_no_others() {
+        let html = "<head><script>paint()</script><script src=\"https://www.gstatic.com/cast.js\" async></script></head>";
+        let policy = content_security_policy(html);
+        let expected = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(b"paint()"));
+        assert!(policy.contains(&format!("'sha256-{expected}'")));
+        assert!(policy.starts_with("script-src 'self' "));
+        assert!(!policy.contains("unsafe-inline"));
+        assert!(policy.contains("object-src 'none'"));
+    }
 }

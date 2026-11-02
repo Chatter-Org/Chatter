@@ -36,6 +36,7 @@ import {
   newMessageId,
   newRoomKey,
   openBackup,
+  messageSignedBy,
   openMessage,
   passphraseProblem,
   publicIdentity,
@@ -80,8 +81,15 @@ const roomEpochs = new Map<string, { epoch: number; rotate: boolean }>();
 /** Members' public keys as this device trusts them. `null` is "asked, and
  *  they have none". */
 const publicKeys = new Map<string, PublicKeys | null>();
-/** Contacts' keys as first seen, kept on the device. */
-let pins: Record<string, { enc_pub: string; sign_pub: string }> = {};
+/**
+ * Contacts' keys as first seen, kept on the device, with the signing keys
+ * they had before any change this device accepted. An earlier key still
+ * vouches for messages sent before the change was accepted (`until`), so a
+ * reset does not turn someone's whole history "unverified" — and not for
+ * anything after, since a key someone reset away from may be in other hands.
+ */
+type Pin = { enc_pub: string; sign_pub: string; previous?: { sign_pub: string; until: number }[] };
+let pins: Record<string, Pin> = {};
 /** Contacts whose keys the server now gives differently from their pin: the
  *  keys it gives, waiting for the person to accept them. */
 const changedKeys = new Map<string, PublicKeys>();
@@ -228,6 +236,7 @@ export async function setUpE2e(passphrase: string, totpCode: string, replace = f
   if (!me) throw new Error("Not signed in");
   const problem = passphraseProblem(passphrase);
   if (problem) throw new Error(problem);
+  const previous = identity;
   const next = newIdentity();
   const backup = await sealBackup(next.seed, passphrase, me);
   try {
@@ -243,6 +252,15 @@ export async function setUpE2e(passphrase: string, totpCode: string, replace = f
   if (replace) {
     roomKeys.clear();
     roomEpochs.clear();
+    // This device's own earlier key still vouches for what it signed before.
+    if (previous) {
+      const own = pins[me] ?? { enc_pub: "", sign_pub: "" };
+      pins[me] = {
+        ...own,
+        previous: [...(own.previous ?? []), { sign_pub: toB64(previous.signPub), until: Date.now() }],
+      };
+      savePins();
+    }
   }
   await adopt(next);
 }
@@ -295,6 +313,14 @@ export async function stopE2e(): Promise<void> {
 }
 
 // ─── Contacts' keys ─────────────────────────────────────────────────────────
+
+/** Whether one of `sender`'s earlier trusted keys signed this message, sent
+ *  at `ts` — before that key was replaced. */
+function signedByEarlierKey(sender: string, sealed: SealedMessage, context: { roomId: string; epoch: number; sender: string }, ts: number | undefined): boolean {
+  const previous = pins[sender]?.previous;
+  if (!previous || ts === undefined) return false;
+  return previous.some((p) => ts < p.until && messageSignedBy(sealed, context, fromB64(p.sign_pub)));
+}
 
 function sameKeys(a: { enc_pub: string; sign_pub: string }, b: { enc_pub: string; sign_pub: string }) {
   return a.enc_pub === b.enc_pub && a.sign_pub === b.sign_pub;
@@ -352,7 +378,12 @@ async function loadPublicKeys(userIds: string[]): Promise<void> {
 export async function acceptKeyChange(userId: string): Promise<void> {
   const next = changedKeys.get(userId);
   if (!next) return;
-  pins[userId] = { enc_pub: toB64(next.enc), sign_pub: toB64(next.sign) };
+  const old = pins[userId];
+  pins[userId] = {
+    enc_pub: toB64(next.enc),
+    sign_pub: toB64(next.sign),
+    previous: old ? [...(old.previous ?? []), { sign_pub: old.sign_pub, until: Date.now() }] : [],
+  };
   publicKeys.set(userId, next);
   changedKeys.delete(userId);
   savePins();
@@ -534,7 +565,15 @@ export function handleE2eEvent(msg: { type?: string; room_id?: string; user_id?:
 
 // ─── Messages ───────────────────────────────────────────────────────────────
 
-type Sealable = { type?: string; event_id?: string; room_id?: string; sender?: string; thread_id?: string; content?: any };
+type Sealable = {
+  type?: string;
+  event_id?: string;
+  room_id?: string;
+  sender?: string;
+  thread_id?: string;
+  origin_server_ts?: number;
+  content?: any;
+};
 
 /** Message types the server makes itself, which are not sealed and are not
  *  anyone's words. */
@@ -600,8 +639,10 @@ function openOne<T extends Sealable>(roomId: string, msg: T): T {
   const key = roomKeys.get(roomId)?.get(sealed.epoch);
   if (!key) return unreadable("missing");
   const signer = msg.sender ? publicKeys.get(msg.sender) : undefined;
-  const opened = openMessage(sealed, key, { roomId, epoch: sealed.epoch, sender: msg.sender ?? "" }, signer?.sign ?? null);
+  const context = { roomId, epoch: sealed.epoch, sender: msg.sender ?? "" };
+  const opened = openMessage(sealed, key, context, signer?.sign ?? null);
   if (!opened.ok) return unreadable("broken");
+  const verified = opened.verified || (!!msg.sender && signedByEarlierKey(msg.sender, sealed, context, msg.origin_server_ts));
   const p = opened.plaintext;
   if (!bindingHolds(msg, p)) return unreadable("forged");
   if (msg.event_id) {
@@ -622,7 +663,7 @@ function openOne<T extends Sealable>(roomId: string, msg: T): T {
       reply_to_body: inReplyTo ? (replyQuote ?? "🔒 Encrypted message") : msg.content?.reply_to_body,
       // Sealed, so the server cannot reveal a spoiler by dropping the flag.
       ...(p.mid !== undefined ? { spoiler: p.spoiler === true } : {}),
-      e2e_state: opened.verified ? "ok" : "unverified",
+      e2e_state: verified ? "ok" : "unverified",
     },
   };
 }
