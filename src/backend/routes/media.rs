@@ -3110,7 +3110,11 @@ pub(crate) async fn upload_guard(
     }
 
     let uri_path = req.uri().path().to_string();
-    let ext = uri_path
+    // Read off the decoded path, because that is the file ServeDir opens: taken
+    // from the raw one, `evil.ht%6dl` had the extension `ht%6dl`, passed the
+    // check below, and was then served from `evil.html` as text/html.
+    let ext = percent_encoding::percent_decode_str(&uri_path)
+        .decode_utf8_lossy()
         .rsplit('.')
         .next()
         .unwrap_or("")
@@ -3332,6 +3336,68 @@ pub(crate) async fn upload_guard(
 
     // Pass through to ServeDir
     with_cache_control(next.run(req).await.into_response(), &uri_path)
+}
+
+/// Whether a type served from `/external` may be shown inline when someone
+/// opens the file directly. Everything here is drawn by the browser itself
+/// and runs no page script: pictures (not SVG, which is a document), audio,
+/// video, PDF and plain text.
+fn renders_inline_safely(content_type: &str) -> bool {
+    let essence = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    (essence.starts_with("image/") && essence != "image/svg+xml")
+        || essence.starts_with("video/")
+        || essence.starts_with("audio/")
+        || essence.starts_with("font/")
+        || matches!(
+            essence.as_str(),
+            "application/pdf" | "text/plain" | "text/vtt" | "application/json"
+        )
+}
+
+/// The headers every `/external` response leaves with, whatever served it.
+///
+/// Uploads share the app's origin, so a file a browser renders as a document
+/// runs as the app: it can trade the refresh cookie for tokens and read the
+/// encryption seed. The extension denylist in `upload_guard` cannot be the
+/// whole answer — `mime_guess` knows `.shtml`, `.xht`, `.rdf` and others as
+/// HTML or XML — so anything that is not plainly a picture, a recording or
+/// text is handed over as a download, in a sandbox, with no sniffing.
+/// `nosniff` also stops an uploaded `.js` served as text/plain from loading as
+/// a script, which would otherwise put uploads inside the page CSP's `'self'`.
+///
+/// Only the response headers change: `<img>`, `<video>`, `fetch` and fonts
+/// ignore `Content-Disposition`, so attachments keep working everywhere they
+/// are embedded.
+pub(crate) async fn harden_external_response(mut resp: Response<Body>) -> Response<Body> {
+    let served = matches!(
+        resp.status(),
+        StatusCode::OK | StatusCode::PARTIAL_CONTENT | StatusCode::NOT_MODIFIED
+    );
+    let headers = resp.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    let inline = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(renders_inline_safely);
+    if served && !inline {
+        headers.insert(
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_static("attachment"),
+        );
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("sandbox; default-src 'none'"),
+        );
+    }
+    resp
 }
 
 #[cfg(test)]
@@ -4672,5 +4738,75 @@ mod tests {
             external_disk_path("/uploads/%2e%2e/%2e%2e/etc/passwd"),
             None
         );
+    }
+
+    fn served_as(status: StatusCode, content_type: &str) -> Response<Body> {
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, content_type)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_document_upload_is_a_sandboxed_download() {
+        for content_type in [
+            "text/html",
+            "text/html; charset=utf-8",
+            "application/xhtml+xml",
+            "image/svg+xml",
+            "text/xml",
+            "application/rdf+xml",
+            "application/octet-stream",
+        ] {
+            let resp = harden_external_response(served_as(StatusCode::OK, content_type)).await;
+            let h = resp.headers();
+            assert_eq!(
+                h[header::CONTENT_DISPOSITION],
+                "attachment",
+                "{content_type}"
+            );
+            assert!(
+                h[header::CONTENT_SECURITY_POLICY]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("sandbox"),
+                "{content_type}"
+            );
+            assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        }
+    }
+
+    #[tokio::test]
+    async fn media_and_text_still_open_in_the_browser() {
+        for content_type in [
+            "image/png",
+            "video/mp4",
+            "audio/ogg",
+            "application/pdf",
+            "text/plain",
+            "text/vtt",
+            "font/woff2",
+        ] {
+            let resp =
+                harden_external_response(served_as(StatusCode::PARTIAL_CONTENT, content_type))
+                    .await;
+            let h = resp.headers();
+            assert!(
+                !h.contains_key(header::CONTENT_DISPOSITION),
+                "{content_type}"
+            );
+            assert!(
+                !h.contains_key(header::CONTENT_SECURITY_POLICY),
+                "{content_type}"
+            );
+            assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_missing_file_is_not_offered_as_a_download() {
+        let resp = harden_external_response(served_as(StatusCode::NOT_FOUND, "text/html")).await;
+        assert!(!resp.headers().contains_key(header::CONTENT_DISPOSITION));
     }
 }

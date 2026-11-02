@@ -36,8 +36,8 @@ use super::{
         invites::{accept_invite, create_invite, delete_invite, get_invite_info, list_invites},
         link_preview::link_preview,
         media::{
-            delete_upload, gif_search, list_uploads, upload_abort, upload_chunk, upload_complete,
-            upload_file, upload_guard, upload_init, upload_status,
+            delete_upload, gif_search, harden_external_response, list_uploads, upload_abort,
+            upload_chunk, upload_complete, upload_file, upload_guard, upload_init, upload_status,
         },
         message_links::get_message_preview,
         messages::{
@@ -135,9 +135,13 @@ pub(crate) fn build_router() -> Router<Arc<AppState>> {
 
     // ServeDir serves static files with streaming, Range requests, etc.
     // upload_guard middleware handles auth, dangerous extensions, and MKV conversion.
+    // The hardening sits outside the guard so it covers the guard's own
+    // answers (the text/plain rendering of a denied extension) as well as
+    // whatever ServeDir sends.
     let external_router = Router::new()
         .fallback_service(ServeDir::new("external"))
         .layer(middleware::from_fn(upload_guard))
+        .layer(middleware::map_response(harden_external_response))
         .layer(media_cors);
 
     Router::new()
