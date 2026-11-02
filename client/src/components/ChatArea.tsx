@@ -1578,7 +1578,7 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
                 : roomInfo?.name || "Unnamed Room"}
               {roomInfo?.is_direct && state.currentRoomId && (isRoomEncrypted(state.currentRoomId) || roomInfo.e2e) ? (
                 <span title="End-to-end encrypted. Files and images are not encrypted yet." className="inline-flex shrink-0">
-                  <Lock className="h-3 w-3 text-muted-foreground" aria-label="End-to-end encrypted" />
+                  <Lock className="h-4 w-4 text-success" strokeWidth={2.75} aria-label="End-to-end encrypted" />
                 </span>
               ) : roomInfo?.is_direct ? (
                 // A DM from before encryption, or made without it: say so,
