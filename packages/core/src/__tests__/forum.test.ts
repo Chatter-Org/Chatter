@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { ForumComment, ForumPost } from "../api";
 import {
   addPinnedPost,
   appendForumPage,
   applyForumListEvent,
   applyForumThreadEvent,
+  forumLinkedMedia,
   forumMarkdownToChat,
   forumPageCursor,
   forumPlainText,
@@ -12,6 +13,7 @@ import {
   pinnedPostToFetch,
   type ForumListView,
 } from "../forum";
+import { configureHost } from "../platform";
 
 function post(id: string, over: Partial<ForumPost> = {}): ForumPost {
   return {
@@ -123,5 +125,36 @@ describe("forumMarkdownToChat", () => {
   });
   it("reads as plain words for an excerpt", () => {
     expect(forumPlainText("I can see **General**\n\nIs there a *join* button?")).toBe("I can see General Is there a join button?");
+  });
+});
+
+describe("forumLinkedMedia", () => {
+  const ORIGIN = "https://chatter.example";
+  beforeEach(() => {
+    configureHost({ origin: () => ORIGIN });
+  });
+
+  it("picks out this server's uploaded pictures and clips", () => {
+    const body = `look ${ORIGIN}/external/a/cat.png and ${ORIGIN}/external/b/clip.mp4.`;
+    expect(forumLinkedMedia(body)).toEqual({
+      images: [`${ORIGIN}/external/a/cat.png`],
+      videos: [`${ORIGIN}/external/b/clip.mp4`],
+    });
+  });
+
+  it("finds a link written as Markdown, once", () => {
+    const url = `${ORIGIN}/external/a/cat.webp`;
+    expect(forumLinkedMedia(`[cat](${url}) ${url}`).images).toEqual([url]);
+  });
+
+  it("leaves other sites, non-uploads, code and Markdown images alone", () => {
+    const body = [
+      "https://elsewhere.example/external/a/cat.png",
+      `${ORIGIN}/assets/logo.png`,
+      `${ORIGIN}/external/a/notes.pdf`,
+      `\`${ORIGIN}/external/a/code.png\``,
+      `![shown](${ORIGIN}/external/a/drawn.png)`,
+    ].join("\n");
+    expect(forumLinkedMedia(body)).toEqual({ images: [], videos: [] });
   });
 });

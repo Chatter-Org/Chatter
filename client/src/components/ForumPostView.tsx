@@ -31,6 +31,7 @@ import { ForumReactions } from "@/components/ForumReactions";
 import {
   FORUM_EVENTS,
   applyForumThreadEvent,
+  forumLinkedMedia,
   type ForumEventDetail,
   type ForumThreadState,
 } from "@chatter/core/forum";
@@ -51,6 +52,18 @@ import { UploadProgressOverlay } from "@/components/UploadProgressOverlay";
 import { toast } from "sonner";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { scrollBehavior } from "@/lib/theme/display";
+
+/** A post's or comment's attachments, then the uploads its body links to —
+ *  a link to a picture already attached adds nothing. */
+function galleryMedia(item: ForumPost | ForumComment) {
+  const linked = forumLinkedMedia(item.body);
+  const images = forumImages(item);
+  const videos = forumVideos(item);
+  return {
+    images: [...images, ...linked.images.filter((u) => !images.includes(u))],
+    videos: [...videos, ...linked.videos.filter((u) => !videos.includes(u))],
+  };
+}
 
 function formatTime(ts: number) {
   const d = new Date(ts);
@@ -519,8 +532,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
               )}
 
               <ForumMediaGallery
-                images={forumImages(comment)}
-                videos={forumVideos(comment)}
+                {...galleryMedia(comment)}
                 files={forumFiles(comment)}
                 className="mt-2"
                 compact
@@ -705,8 +717,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
           )}
           {!editingPost && (
             <ForumMediaGallery
-              images={forumImages(post)}
-              videos={forumVideos(post)}
+              {...galleryMedia(post)}
               files={forumFiles(post)}
             />
           )}

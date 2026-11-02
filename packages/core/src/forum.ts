@@ -1,4 +1,6 @@
 import type { ForumComment, ForumPost } from "./api";
+import { isImageUrl, isVideoUrl } from "./mediaTypes";
+import { host } from "./platform";
 
 /**
  * A forum's list of posts and an open post, as the socket changes them.
@@ -293,4 +295,36 @@ export function forumPlainText(md: string): string {
     .replace(/(?<![a-zA-Z0-9])_(.+?)_(?![a-zA-Z0-9])/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * The pictures and clips a forum body links to on this server, for drawing in
+ * its gallery the way the chat draws a pasted upload link.
+ *
+ * Same-origin uploads (`/external/...`) only: those are what the gallery knows
+ * how to fetch, with the viewer's credentials when the server wants them, and a
+ * picture from another site is a link the author chose to leave as one. Links
+ * inside code and `![](...)` images, which Markdown already draws, are skipped.
+ */
+export function forumLinkedMedia(md: string): { images: string[]; videos: string[] } {
+  const prose = md
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\n]*`/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ");
+  const images: string[] = [];
+  const videos: string[] = [];
+  for (const match of prose.match(/https?:\/\/[^\s<>()[\]]+/g) ?? []) {
+    // Sentence punctuation after a bare link is not part of it.
+    const url = match.replace(/[.,;:!?'"]+$/, "");
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      continue;
+    }
+    if (parsed.origin !== host.origin() || !parsed.pathname.startsWith("/external/")) continue;
+    const list = isImageUrl(parsed.pathname) ? images : isVideoUrl(parsed.pathname) ? videos : null;
+    if (list && !list.includes(url)) list.push(url);
+  }
+  return { images, videos };
 }
