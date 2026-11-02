@@ -106,6 +106,9 @@ pub(crate) async fn create_room(
                     entrance_sounds_enabled: true,
                     suggested_theme: String::new(),
                     moderation: Default::default(),
+                    e2e: true,
+                    e2e_epoch: -1,
+                    e2e_rotate: false,
                 };
                 let rooms_coll = state.db.collection::<RoomRecord>("rooms");
                 let _ = rooms_coll.insert_one(room_record).await;
@@ -153,7 +156,7 @@ pub(crate) async fn create_room(
                     "type": "m.room.created",
                     "room_id": room_id,
                     "sender": user_id,
-                    "content": { "is_direct": true }
+                    "content": { "is_direct": true, "e2e": true }
                 });
                 broadcast_to_room(&state, &room_id, &event).await;
 
@@ -237,6 +240,9 @@ pub(crate) async fn create_room(
                     entrance_sounds_enabled: true,
                     suggested_theme: String::new(),
                     moderation: Default::default(),
+                    e2e: true,
+                    e2e_epoch: -1,
+                    e2e_rotate: false,
                 };
                 let rooms_coll = state.db.collection::<RoomRecord>("rooms");
                 let _ = rooms_coll.insert_one(room_record).await;
@@ -290,7 +296,8 @@ pub(crate) async fn create_room(
                     "sender": user_id,
                     "content": {
                         "name": room_name,
-                        "is_direct": true
+                        "is_direct": true,
+                        "e2e": true
                     }
                 });
                 broadcast_to_room(&state, &room_id, &event).await;
@@ -425,6 +432,9 @@ pub(crate) async fn create_room(
         entrance_sounds_enabled: true,
         suggested_theme: String::new(),
         moderation: Default::default(),
+        e2e: is_dm,
+        e2e_epoch: -1,
+        e2e_rotate: false,
     };
     let rooms_coll = state.db.collection::<RoomRecord>("rooms");
     let _ = rooms_coll.insert_one(room_record).await;
@@ -661,6 +671,8 @@ pub(crate) async fn leave_room(
                 members.retain(|m| m != &user_id);
             }
         }
+        // Nor may whoever left read what follows.
+        super::e2e::membership_changed(&state, &room_id).await;
         {
             let mut roles = state.room_roles.write().await;
             if let Some(room_roles) = roles.get_mut(&room_id) {
@@ -938,6 +950,7 @@ pub(crate) async fn delete_room(
     // Remove DM mapping
     let dm_coll = state.db.collection::<DmRoomRecord>("dm_rooms");
     let _ = dm_coll.delete_many(doc! { "room_id": &room_id }).await;
+    super::e2e::forget_room(&state, &room_id).await;
 
     // Remove invites
     let inv_coll = state
@@ -1482,6 +1495,7 @@ pub(crate) async fn kick_member(
             members.retain(|m| m != &target_user_id);
         }
     }
+    super::e2e::membership_changed(&state, &room_id).await;
     {
         let mut roles = state.room_roles.write().await;
         if let Some(room_roles) = roles.get_mut(&room_id) {
@@ -1631,6 +1645,7 @@ pub(crate) async fn ban_member(
             members.retain(|m| m != &target_user_id);
         }
     }
+    super::e2e::membership_changed(&state, &room_id).await;
     {
         let mut roles = state.room_roles.write().await;
         if let Some(room_roles) = roles.get_mut(&room_id) {
@@ -2050,7 +2065,7 @@ pub(crate) async fn add_to_dm(
         "type": "m.room.created",
         "room_id": room_id,
         "sender": user_id,
-        "content": { "is_direct": true }
+        "content": { "is_direct": true, "e2e": room.e2e }
     });
     send_to_user(&state, &req.user_id, &event).await;
 

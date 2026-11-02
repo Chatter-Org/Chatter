@@ -1,8 +1,9 @@
 mod common;
 
 use common::{
-    bearer, create_room, esc, recv_event_type, register_user, register_user_with_secret,
-    spawn_server, totp_code, ws_connect_authenticated, PASSWORD,
+    bearer, create_room, esc, post_room_keys, put_e2e_identity, recv_event_type, register_user,
+    register_user_with_secret, sealed_message, spawn_server, totp_code, ws_connect_authenticated,
+    PASSWORD,
 };
 use reqwest::{multipart, Client, StatusCode};
 use serde_json::{json, Value};
@@ -2308,7 +2309,7 @@ async fn unreads_count_replies_and_dms_as_mentions_and_skip_deleted_messages() {
 
     let (alice_user_id, alice_token) =
         register_user(&client, &server.base_url, "alice", PASSWORD).await;
-    let (_bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
+    let (bob_user_id, bob_token) = register_user(&client, &server.base_url, "bob", PASSWORD).await;
     let room_id = create_room(
         &client,
         &server.base_url,
@@ -2396,20 +2397,21 @@ async fn unreads_count_replies_and_dms_as_mentions_and_skip_deleted_messages() {
         true,
     )
     .await;
-    send(
-        bob_token.clone(),
-        dm_id.clone(),
-        "d1",
-        json!({ "msgtype": "m.text", "body": "hey" }),
+    // A new DM is end-to-end encrypted: keys first, then sealed messages.
+    put_e2e_identity(&client, &server.base_url, &alice_token).await;
+    put_e2e_identity(&client, &server.base_url, &bob_token).await;
+    let started = post_room_keys(
+        &client,
+        &server.base_url,
+        &bob_token,
+        &dm_id,
+        0,
+        &[&alice_user_id, &bob_user_id],
     )
     .await;
-    send(
-        bob_token.clone(),
-        dm_id.clone(),
-        "d2",
-        json!({ "msgtype": "m.text", "body": "you there?" }),
-    )
-    .await;
+    assert_eq!(started.status(), StatusCode::OK);
+    send(bob_token.clone(), dm_id.clone(), "d1", sealed_message(0)).await;
+    send(bob_token.clone(), dm_id.clone(), "d2", sealed_message(0)).await;
 
     let body: Value = client
         .get(format!("{}/api/unreads", server.base_url))
@@ -3433,4 +3435,241 @@ async fn forum_posts_can_be_pinned_by_their_creator_and_moderators() {
         .await
         .unwrap();
     assert_eq!(unpin_missing.status(), StatusCode::NOT_FOUND);
+}
+
+/// End-to-end encrypted DMs (`routes/e2e.rs`). The server cannot check the
+/// cryptography, so this pins what it can: every new DM is encrypted, keys
+/// reach exactly the members, plaintext is refused, a send waits on the
+/// current key, and what is stored is the seal and a placeholder.
+#[tokio::test]
+async fn e2e_dms_take_sealed_messages_under_the_current_key() {
+    let server = spawn_server().await;
+    let client = Client::new();
+    let base = server.base_url.clone();
+
+    let (alice_id, alice) = register_user(&client, &base, "alice", PASSWORD).await;
+    let (bob_id, bob) = register_user(&client, &base, "bob", PASSWORD).await;
+    let (carol_id, carol) = register_user(&client, &base, "carol", PASSWORD).await;
+
+    // Identity: none, then published, then refused a second time unless replaced.
+    let get = |token: String| {
+        let client = client.clone();
+        let base = base.clone();
+        async move {
+            client
+                .get(format!("{base}/api/e2e/identity"))
+                .header("authorization", bearer(&token))
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        }
+    };
+    assert!(get(alice.clone()).await["identity"].is_null());
+    put_e2e_identity(&client, &base, &alice).await;
+    assert_eq!(
+        get(alice.clone()).await["identity"]["backup"]["kdf"],
+        "scrypt"
+    );
+    let again = client
+        .put(format!("{base}/api/e2e/identity"))
+        .header("authorization", bearer(&alice))
+        .json(&get(alice.clone()).await["identity"])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(again.status(), StatusCode::CONFLICT);
+    put_e2e_identity(&client, &base, &bob).await;
+
+    let keys: Value = client
+        .post(format!("{base}/api/e2e/keys/query"))
+        .header("authorization", bearer(&carol))
+        .json(&json!({ "user_ids": [alice_id, bob_id, carol_id] }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(keys["keys"][&alice_id]["enc_pub"].is_string());
+    assert!(keys["keys"][&carol_id].is_null());
+
+    // Every new DM is encrypted, and owes its first key.
+    let dm = create_room(&client, &base, &alice, "", Some(vec![bob_id.clone()]), true).await;
+    let room_state = |token: String| {
+        let client = client.clone();
+        let base = base.clone();
+        let dm = dm.clone();
+        async move {
+            client
+                .get(format!("{base}/api/rooms/{}/e2e", esc(&dm)))
+                .header("authorization", bearer(&token))
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        }
+    };
+    let state = room_state(alice.clone()).await;
+    assert_eq!(state["e2e"], true);
+    assert_eq!(state["epoch"], -1);
+    assert_eq!(state["rotate"], true);
+    let outsider = client
+        .get(format!("{base}/api/rooms/{}/e2e", esc(&dm)))
+        .header("authorization", bearer(&carol))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(outsider.status(), StatusCode::FORBIDDEN);
+
+    let send = |token: String, txn: &'static str, body: Value| {
+        let client = client.clone();
+        let base = base.clone();
+        let dm = dm.clone();
+        async move {
+            client
+                .put(format!(
+                    "{base}/_matrix/client/r0/rooms/{}/send/m.room.message/{txn}",
+                    esc(&dm)
+                ))
+                .header("authorization", bearer(&token))
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    // Nothing is sent before there is a key, and plaintext never is.
+    let early = send(alice.clone(), "t0", sealed_message(0)).await;
+    assert_eq!(early.status(), StatusCode::CONFLICT);
+    let plain = send(
+        alice.clone(),
+        "t1",
+        json!({ "msgtype": "m.text", "body": "in the clear" }),
+    )
+    .await;
+    assert_eq!(plain.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        plain.json::<Value>().await.unwrap()["errcode"],
+        "M_E2E_REQUIRED"
+    );
+
+    // The first key must reach every member with keys: not one fewer.
+    let short = post_room_keys(&client, &base, &alice, &dm, 0, &[&alice_id]).await;
+    assert_eq!(short.status(), StatusCode::CONFLICT);
+    let started = post_room_keys(&client, &base, &alice, &dm, 0, &[&alice_id, &bob_id]).await;
+    assert_eq!(started.status(), StatusCode::OK);
+    // A second client racing to start the same epoch loses.
+    let raced = post_room_keys(&client, &base, &bob, &dm, 0, &[&alice_id, &bob_id]).await;
+    assert_eq!(
+        raced.status(),
+        StatusCode::OK,
+        "a copy for someone who has one is a no-op"
+    );
+    let bob_state = room_state(bob.clone()).await;
+    assert_eq!(bob_state["epoch"], 0);
+    assert_eq!(bob_state["keys"].as_array().unwrap().len(), 1);
+    assert_eq!(bob_state["keys"][0]["sender"], alice_id.as_str());
+
+    // A sealed send is stored as the seal and a placeholder.
+    let upload = "http://localhost/external/0123456789abcdef0123456789abcdef/cat.png";
+    let mut with_file = sealed_message(0);
+    with_file["attachments"] = json!([upload]);
+    let sent = send(alice.clone(), "t2", with_file).await;
+    assert_eq!(sent.status(), StatusCode::OK);
+    let smuggled = {
+        let mut body = sealed_message(0);
+        body["attachments"] = json!(["secret words"]);
+        send(alice.clone(), "t3", body).await
+    };
+    assert_eq!(smuggled.status(), StatusCode::BAD_REQUEST);
+
+    let page: Value = client
+        .get(format!(
+            "{base}/_matrix/client/r0/rooms/{}/messages?limit=10",
+            esc(&dm)
+        ))
+        .header("authorization", bearer(&bob))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let stored = page["chunk"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["content"]["e2e"].is_object())
+        .expect("the sealed message");
+    assert_eq!(stored["content"]["e2e"]["epoch"], 0);
+    let body = stored["content"]["body"].as_str().unwrap();
+    assert!(body.starts_with("🔒"));
+    assert!(body.ends_with(upload));
+
+    // Someone joins: the next message waits on a new key, which leaves no
+    // member with keys out.
+    let added = client
+        .post(format!("{base}/api/rooms/{}/dm/invite", esc(&dm)))
+        .header("authorization", bearer(&alice))
+        .json(&json!({ "user_id": carol_id }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(added.status(), StatusCode::OK);
+    let stale = send(alice.clone(), "t4", sealed_message(0)).await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let refusal: Value = stale.json().await.unwrap();
+    assert_eq!(refusal["errcode"], "M_E2E_EPOCH");
+    assert_eq!(refusal["rotate"], true);
+
+    // Carol has no keys yet, so the new epoch is for Alice and Bob.
+    let rotated = post_room_keys(&client, &base, &bob, &dm, 1, &[&alice_id, &bob_id]).await;
+    assert_eq!(rotated.status(), StatusCode::OK);
+    assert_eq!(
+        send(alice.clone(), "t5", sealed_message(1)).await.status(),
+        StatusCode::OK
+    );
+
+    // Once Carol has keys she is owed the current one, and is handed it.
+    put_e2e_identity(&client, &base, &carol).await;
+    let carol_state = room_state(carol.clone()).await;
+    let carol_row = carol_state["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["user_id"] == carol_id.as_str())
+        .unwrap()
+        .clone();
+    assert_eq!(carol_row["has_identity"], true);
+    assert_eq!(carol_row["has_key"], false);
+    let handed = post_room_keys(&client, &base, &alice, &dm, 1, &[&carol_id]).await;
+    assert_eq!(handed.status(), StatusCode::OK);
+    let carol_state = room_state(carol.clone()).await;
+    let epochs: Vec<i64> = carol_state["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k["epoch"].as_i64().unwrap())
+        .collect();
+    assert_eq!(epochs, vec![1], "nothing from before she joined");
+
+    // Plaintext rooms are untouched, and refuse a seal.
+    let room = create_room(&client, &base, &alice, "Plain", None, false).await;
+    let sealed_in_plain = client
+        .put(format!(
+            "{base}/_matrix/client/r0/rooms/{}/send/m.room.message/p1",
+            esc(&room)
+        ))
+        .header("authorization", bearer(&alice))
+        .json(&sealed_message(0))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(sealed_in_plain.status(), StatusCode::BAD_REQUEST);
 }

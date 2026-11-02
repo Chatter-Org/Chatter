@@ -4,6 +4,7 @@ How messages are sent, paged, linked, pinned, deleted and threaded, and how a dr
 
 Moved verbatim from the root AGENTS.md; keep it current when you change the behaviour it describes.
 
+- DMs created since end-to-end encryption shipped take only **sealed** sends, edits and thread replies (`content.e2e`). The stored `body` is a placeholder plus upload links, so reply quotes, previews and search see no text. See `e2e-dms.md`
 - Auth endpoints: POST `/_matrix/client/r0/register`, `/login`, `/logout`
 - Room CRUD: POST `/createRoom`, `/{room_id}/join`, `/{room_id}/leave`; GET `/joined_rooms`
 - Messages: PUT `/{room_id}/send/m.room.message/{txn_id}`; DELETE via `/{room_id}/redact/{event_id}/{txn_id}`

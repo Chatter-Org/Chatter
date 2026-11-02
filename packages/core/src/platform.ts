@@ -61,6 +61,13 @@ export interface Host {
 
   /** Hand the person a file — a browser download, a share sheet. */
   saveFile(blob: Blob, filename: string): void;
+
+  /** Small secrets kept on this device and nowhere else — the seed behind
+   *  end-to-end encryption. A platform that keeps none answers null, and the
+   *  person unlocks with their passphrase every time the app starts. */
+  secretGet(name: string): Promise<string | null>;
+  secretSet(name: string, value: string): Promise<void>;
+  secretDelete(name: string): Promise<void>;
 }
 
 const inert: Host = {
@@ -80,6 +87,9 @@ const inert: Host = {
   prewarmSounds: () => {},
   adoptGifFavorites: () => {},
   saveFile: () => {},
+  secretGet: async () => null,
+  secretSet: async () => {},
+  secretDelete: async () => {},
 };
 
 let current: Host = inert;

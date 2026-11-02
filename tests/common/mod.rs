@@ -224,3 +224,76 @@ where
         }
     }
 }
+
+// ─── End-to-end encryption ───────────────────────────────────────────────────
+//
+// The server never opens anything it is given, so these are byte strings of
+// the right lengths rather than real keys: what the server checks is shape.
+
+#[allow(dead_code)]
+pub const B64_16: &str = "BwcHBwcHBwcHBwcHBwcHBw==";
+#[allow(dead_code)]
+pub const B64_24: &str = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH";
+#[allow(dead_code)]
+pub const B64_32: &str = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=";
+#[allow(dead_code)]
+pub const B64_48: &str = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH";
+#[allow(dead_code)]
+pub const B64_64: &str =
+    "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw==";
+
+/// Publish an identity for the account behind `token`.
+#[allow(dead_code)]
+pub async fn put_e2e_identity(client: &Client, base_url: &str, token: &str) {
+    let response = client
+        .put(format!("{base_url}/api/e2e/identity"))
+        .header("authorization", bearer(token))
+        .json(&json!({
+            "enc_pub": B64_32,
+            "sign_pub": B64_32,
+            "backup": {
+                "kdf": "scrypt", "log_n": 15, "r": 8, "p": 1,
+                "salt": B64_16, "nonce": B64_24, "ct": B64_48,
+            },
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+}
+
+/// A wrapped room key for `user_id`, as `POST /api/rooms/{id}/e2e/keys` takes it.
+#[allow(dead_code)]
+pub fn wrapped_key(user_id: &str) -> Value {
+    json!({ "user_id": user_id, "eph": B64_32, "nonce": B64_24, "ct": B64_48, "sig": B64_64 })
+}
+
+/// Start `epoch` in an encrypted room, with a copy for each of `user_ids`.
+#[allow(dead_code)]
+pub async fn post_room_keys(
+    client: &Client,
+    base_url: &str,
+    token: &str,
+    room_id: &str,
+    epoch: i64,
+    user_ids: &[&str],
+) -> reqwest::Response {
+    let keys: Vec<Value> = user_ids.iter().map(|u| wrapped_key(u)).collect();
+    client
+        .post(format!("{base_url}/api/rooms/{}/e2e/keys", esc(room_id)))
+        .header("authorization", bearer(token))
+        .json(&json!({ "epoch": epoch, "keys": keys }))
+        .send()
+        .await
+        .unwrap()
+}
+
+/// A sealed message body under `epoch`, as a client sends it.
+#[allow(dead_code)]
+pub fn sealed_message(epoch: i64) -> Value {
+    json!({
+        "msgtype": "m.text",
+        "body": "",
+        "e2e": { "v": 1, "epoch": epoch, "nonce": B64_24, "ct": B64_48, "sig": B64_64 },
+    })
+}

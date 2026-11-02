@@ -74,6 +74,7 @@ import {
 import { loadLastChannels, pickLandingChannel } from "../lastChannel";
 import { channelNotificationTag, settingsKey, type NotificationLevel, type NotificationSettings } from "../notifications";
 import { host } from "../platform";
+import { getE2eStatus, isRoomEncrypted, noteRoomEncryption, syncRoomKeys } from "../e2e/session";
 import type { ProfileTheme } from "../profileTheme";
 import { displayUserId, userIdFromInput } from "../utils";
 import {
@@ -135,6 +136,7 @@ export function roomInfoFromSync(roomId: string, roomData: SyncRoom | undefined)
     name: nameEvent?.content?.name || "Unnamed Room",
     topic: topicEvent?.content?.topic || "",
     is_direct: directEvent?.content?.is_direct || false,
+    e2e: directEvent?.content?.e2e || false,
     tags: tagsEvent?.content?.tags || [],
     icon_url: iconEvent?.content?.icon_url || "",
     creator: nameEvent?.sender || "",
@@ -195,6 +197,7 @@ export function createStoreActions(ctx: StoreContext) {
     for (const roomId of data.joined_rooms) {
       roomInfoMap[roomId] = roomInfoFromSync(roomId, syncData.rooms?.join?.[roomId]);
     }
+    for (const [roomId, info] of Object.entries(roomInfoMap)) noteRoomEncryption(roomId, !!info.e2e);
     dispatch({ type: "SET_ROOMS", payload: { roomIds: data.joined_rooms, roomInfoMap } });
     // A pack's first mention or join should be as quick as a built-in one.
     host.prewarmSounds(
@@ -563,6 +566,10 @@ export function createStoreActions(ctx: StoreContext) {
   const selectRoom = async (roomId: string) => {
     dispatch({ type: "SELECT_ROOM", payload: roomId });
     void loadActiveThreads(roomId);
+    // An encrypted DM may owe something only a member holding its key can
+    // give: a copy for someone who set up encryption since, or a new key
+    // after a membership change. Settled whenever a member looks at it.
+    if (isRoomEncrypted(roomId) && getE2eStatus() === "ready") void syncRoomKeys(roomId).catch(() => {});
 
     // Whether this switch is still the one on screen. Requests that are no
     // longer awaited in order can land after the next switch has started, and
@@ -1166,7 +1173,24 @@ export function createStoreActions(ctx: StoreContext) {
   const openDM = async (targetUserIds: string | string[]) => {
     const data = await apiCreateDM(targetUserIds);
     await loadRooms();
+    // A new encrypted DM has no key until a member's client makes one; make
+    // it now, so the first message does not wait on it.
+    if (isRoomEncrypted(data.room_id) && getE2eStatus() === "ready") {
+      void syncRoomKeys(data.room_id).catch(() => {});
+    }
     await selectRoom(data.room_id);
+  };
+
+  /** Load the timeline on screen again. After encryption is unlocked, so the
+   *  messages that were shown locked are opened. */
+  const reloadTimeline = async () => {
+    const { currentRoomId, currentChannelId } = getState();
+    if (!currentRoomId) return;
+    const msgData = await apiGetMessages(currentRoomId, 50, undefined, undefined, currentChannelId || undefined);
+    const cur = getState();
+    if (cur.currentRoomId !== currentRoomId || (cur.currentChannelId || undefined) !== (currentChannelId || undefined)) return;
+    const messages = msgData.chunk.filter((m) => m.type === "m.room.message");
+    dispatch({ type: "SET_MESSAGES", payload: { messages, hasMore: msgData.has_more } });
   };
 
 
@@ -1350,6 +1374,7 @@ export function createStoreActions(ctx: StoreContext) {
     updateProfile,
     loadMessagesAround,
     selectChannel,
+    reloadTimeline,
     sendMessage,
     deleteMessage,
     hardDeleteNotification,

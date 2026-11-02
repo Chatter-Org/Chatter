@@ -43,7 +43,7 @@ import { usePendingFiles, MAX_ATTACHMENTS } from "@/hooks/usePendingFiles";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { VoiceRecordButton, VoiceRecordingBar } from "@/components/VoiceRecorderBar";
 import { useInterruptedUploads } from "@/hooks/useInterruptedUploads";
-import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, UserPlus, Pencil, Pin, Smile, Phone, PhoneOff, Video, Paperclip, Plus, SendHorizontal } from "lucide-react";
+import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, UserPlus, Pencil, Pin, Smile, Phone, PhoneOff, Video, Paperclip, Plus, SendHorizontal, Lock } from "lucide-react";
 import { CommandBar } from "./CommandBar";
 import { AddToDMDialog } from "./AddToDMDialog";
 import { PollDialog } from "./PollDialog";
@@ -77,6 +77,7 @@ import { scrollBehavior } from "@/lib/theme/display";
 import { oldestUnreadEventId } from "@/lib/unreads";
 import { RestrictionNotice } from "@/components/moderation/RestrictionNotice";
 import { showRoomRules } from "@/components/moderation/moderationUtils";
+import { E2eBanner } from "@/components/e2e/E2eBanner";
 
 // Opening a channel holds the newest message while the page settles: avatars,
 // images and embeds all resolve their heights after the first render, and each
@@ -1572,6 +1573,11 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
               {state.currentChannelId && state.channels.length > 0
                 ? `# ${state.channels.find((c) => c.channel_id === state.currentChannelId)?.name || "channel"}`
                 : roomInfo?.name || "Unnamed Room"}
+              {roomInfo?.e2e && (
+                <span title="End-to-end encrypted. Files and images are not encrypted yet." className="inline-flex shrink-0">
+                  <Lock className="h-3 w-3 text-muted-foreground" aria-label="End-to-end encrypted" />
+                </span>
+              )}
               {roomInfo?.is_direct && (
                 <Pencil className="h-3 w-3 text-muted-foreground can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity shrink-0" />
               )}
@@ -1773,6 +1779,8 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
           onStopWebcam={dmCall.stopWebcam}
         />
       )}
+
+      {roomInfo?.e2e && <E2eBanner />}
 
       {state.currentRoomId && (
         <AddToDMDialog

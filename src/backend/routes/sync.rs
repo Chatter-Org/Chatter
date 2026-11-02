@@ -213,7 +213,7 @@ async fn build_joined_room(
         json!({
             "type": "m.room.direct",
             "state_key": "",
-            "content": {"is_direct": room_data.is_dm},
+            "content": {"is_direct": room_data.is_dm, "e2e": room_data.e2e},
             "sender": room_data.creator
         }),
         json!({
@@ -337,6 +337,7 @@ async fn build_joined_room(
             "state_key": "",
             "content": {
                 "is_direct": true,
+                "e2e": room_data.e2e,
                 "dm_user_ids": others,
                 "dm_avatars": Value::Object(dm_avatars),
                 "dm_voice_count": dm_voice_count,

@@ -48,6 +48,26 @@ configureHost({
     a.remove();
     URL.revokeObjectURL(url);
   },
+  // The encryption seed. Kept per browser profile, and forgotten on sign-out
+  // (e2e/session.ts), so the next person at a shared computer needs the
+  // passphrase.
+  secretGet: async (name) => {
+    try {
+      return localStorage.getItem(`chatter-secret:${name}`);
+    } catch {
+      return null;
+    }
+  },
+  secretSet: async (name, value) => {
+    try {
+      localStorage.setItem(`chatter-secret:${name}`, value);
+    } catch {}
+  },
+  secretDelete: async (name) => {
+    try {
+      localStorage.removeItem(`chatter-secret:${name}`);
+    } catch {}
+  },
 });
 
 // Decode the built-in effects (and derive the leave sound) now, so the first

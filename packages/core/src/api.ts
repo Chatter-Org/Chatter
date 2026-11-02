@@ -21,6 +21,8 @@ import {
   saveResumable,
 } from "./uploadStore";
 import { host } from "./platform";
+import type { IdentityBackup, PublicIdentity, SealedMessage, WrappedRoomKey } from "./e2e/crypto";
+import { messageCrypto, type E2eMessageState } from "./e2e/hooks";
 
 // Access token lives only in memory — never persisted to localStorage.
 // In the browser the refresh token is stored exclusively in an HttpOnly cookie
@@ -632,7 +634,8 @@ export async function apiGetMessagesAfter(
   if (channelId) url += `&channel_id=${encodeURIComponent(channelId)}`;
   const res = await authenticatedFetch(url);
   if (!res.ok) throw new Error("Failed to load missed messages");
-  return res.json() as Promise<{ chunk: MatrixMessage[]; has_more: boolean }>;
+  const data = (await res.json()) as { chunk: MatrixMessage[]; has_more: boolean };
+  return { ...data, chunk: await messageCrypto().open(roomId, data.chunk) };
 }
 
 /**
@@ -660,10 +663,31 @@ export async function apiGetMessages(
   if (showcasePane) url += `&showcase_pane=${encodeURIComponent(showcasePane)}`;
   const res = await authenticatedFetch(url);
   if (!res.ok) throw new Error("Failed to load messages");
-  return res.json() as Promise<{
-    chunk: MatrixMessage[];
-    has_more: boolean;
-  }>;
+  const data = (await res.json()) as { chunk: MatrixMessage[]; has_more: boolean };
+  return { ...data, chunk: await messageCrypto().open(roomId, data.chunk) };
+}
+
+/**
+ * Send, sealing the text first when the room is end-to-end encrypted.
+ *
+ * When the server refuses because the room's key moved on (someone joined or
+ * left) or because the room turned out to be encrypted, the crypto gets one
+ * chance to catch up and the message is sealed again and resent.
+ */
+async function sendMaybeSealed(
+  roomId: string,
+  body: string,
+  inReplyTo: string | undefined,
+  payload: Record<string, unknown>,
+  send: (payload: Record<string, unknown>) => Promise<Response>,
+): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const sealed = await messageCrypto().seal(roomId, body, inReplyTo);
+    const res = await send(sealed ? { ...payload, body: "", e2e: sealed.e2e, attachments: sealed.attachments } : payload);
+    if (res.ok || attempt > 0) return res;
+    const refusal = await res.clone().json().catch(() => null);
+    if (!(await messageCrypto().recover(roomId, refusal?.errcode))) return res;
+  }
 }
 
 export async function apiSendMessage(roomId: string, body: string, inReplyTo?: string, spoiler?: boolean, channelId?: string, showcasePane?: string) {
@@ -681,12 +705,11 @@ export async function apiSendMessage(roomId: string, body: string, inReplyTo?: s
   if (showcasePane) {
     payload.showcase_pane = showcasePane;
   }
-  const res = await authenticatedFetch(
-    `/_matrix/client/r0/rooms/${roomId}/send/m.room.message/${txnId}`,
-    {
+  const res = await sendMaybeSealed(roomId, body, inReplyTo, payload, (sealed) =>
+    authenticatedFetch(`/_matrix/client/r0/rooms/${roomId}/send/m.room.message/${txnId}`, {
       method: "PUT",
-      body: JSON.stringify(payload),
-    }
+      body: JSON.stringify(sealed),
+    }),
   );
   if (!res.ok) {
     // A rate limit or slow mode says how long to wait; pass that through so
@@ -744,14 +767,16 @@ export async function apiHardDeleteNotification(roomId: string, eventId: string)
 
 export async function apiEditMessage(roomId: string, eventId: string, newBody: string) {
   const txnId = Date.now();
-  const res = await authenticatedFetch(
-    `/_matrix/client/r0/rooms/${roomId}/edit/${eventId}/${txnId}`,
-    {
+  const res = await sendMaybeSealed(roomId, newBody, undefined, { body: newBody }, (sealed) =>
+    authenticatedFetch(`/_matrix/client/r0/rooms/${roomId}/edit/${eventId}/${txnId}`, {
       method: "PUT",
-      body: JSON.stringify({ body: newBody }),
-    }
+      body: JSON.stringify(sealed),
+    }),
   );
-  if (!res.ok) throw new Error("Failed to edit message");
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || "Failed to edit message");
+  }
   return res.json();
 }
 
@@ -806,7 +831,7 @@ export async function apiGetPins(
   if (!res.ok) throw new Error("Failed to load pinned messages");
   const data = await res.json();
   return {
-    items: (data.pins ?? []) as PinnedMessage[],
+    items: await messageCrypto().open(roomId, (data.pins ?? []) as PinnedMessage[]),
     hasMore: !!data.has_more,
     nextOffset: data.next_offset ?? offset,
   };
@@ -854,12 +879,14 @@ export async function apiGetThreadMessages(
   }
   const res = await authenticatedFetch(`/api/rooms/${roomId}/threads/${threadEventId}?${params}`);
   if (!res.ok) throw new Error("Failed to load thread messages");
-  return res.json() as Promise<{
+  const data = (await res.json()) as {
     root: MatrixMessage;
     messages: MatrixMessage[];
     has_more: boolean;
     posters?: string[];
-  }>;
+  };
+  const [root, ...messages] = await messageCrypto().open(roomId, [data.root, ...data.messages]);
+  return { ...data, root, messages };
 }
 
 export async function apiGetRoomThreads(
@@ -915,14 +942,16 @@ export async function apiSendThreadMessage(
   const txnId = Date.now();
   const payload: Record<string, string> = { msgtype: "m.text", body };
   if (inReplyTo) payload.in_reply_to = inReplyTo;
-  const res = await authenticatedFetch(
-    `/api/rooms/${roomId}/threads/${threadEventId}/${txnId}`,
-    {
+  const res = await sendMaybeSealed(roomId, body, inReplyTo, payload, (sealed) =>
+    authenticatedFetch(`/api/rooms/${roomId}/threads/${threadEventId}/${txnId}`, {
       method: "PUT",
-      body: JSON.stringify(payload),
-    }
+      body: JSON.stringify(sealed),
+    }),
   );
-  if (!res.ok) throw new Error("Failed to send thread message");
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || "Failed to send thread message");
+  }
   return res.json();
 }
 
@@ -956,7 +985,7 @@ export async function apiSearchMessages(
   if (!res.ok) throw new Error("Search failed");
   const data = await res.json();
   return {
-    items: (data.results ?? []) as MatrixMessage[],
+    items: await messageCrypto().open(roomId, (data.results ?? []) as MatrixMessage[]),
     hasMore: !!data.has_more,
     nextOffset: data.next_offset ?? offset,
   };
@@ -1095,6 +1124,10 @@ export interface MatrixMessage {
     bot_avatar_url?: string;
     embeds?: Embed[];
     showcase_pane?: string;
+    /** Sealed text, in an end-to-end encrypted DM. Once opened, `body` and
+     *  `reply_to_body` hold what it said and `e2e_state` how that went. */
+    e2e?: SealedMessage;
+    e2e_state?: E2eMessageState;
     /** Set by the server when the sender lacks mention_everyone: role mentions
      *  render as written but must not notify. */
     suppress_role_mentions?: boolean;
@@ -1133,6 +1166,8 @@ export interface RoomInfo {
   name: string;
   topic: string;
   is_direct?: boolean;
+  /** End-to-end encrypted: every DM created since encryption shipped. */
+  e2e?: boolean;
   tags?: string[];
   icon_url?: string;
   creator?: string;
@@ -2456,6 +2491,94 @@ export async function apiAddToDM(roomId: string, userId: string) {
   }
   return res.json() as Promise<{ added: boolean }>;
 }
+
+// ─── End-to-end encryption (routes/e2e.rs) ──────────────────────────────────
+
+export interface E2eIdentityRecord extends PublicIdentity {
+  backup: IdentityBackup;
+}
+
+/** A failed key request, keeping the server's `errcode` so the caller can
+ *  tell "the key moved on" from "something broke". */
+export class E2eRequestError extends Error {
+  readonly status: number;
+  readonly errcode?: string;
+  constructor(message: string, status: number, errcode?: string) {
+    super(message);
+    this.status = status;
+    this.errcode = errcode;
+  }
+}
+
+async function e2eFailure(res: Response, fallback: string): Promise<E2eRequestError> {
+  const body = await res.json().catch(() => null);
+  return new E2eRequestError(body?.error || fallback, res.status, body?.errcode);
+}
+
+/** This account's identity and its passphrase-sealed backup, or null when
+ *  encryption has never been set up. */
+export async function apiE2eGetIdentity(): Promise<E2eIdentityRecord | null> {
+  const res = await authenticatedFetch("/api/e2e/identity");
+  if (!res.ok) throw await e2eFailure(res, "Failed to load encryption keys");
+  const data = await res.json();
+  return data.identity ?? null;
+}
+
+export async function apiE2ePutIdentity(identity: E2eIdentityRecord, replace = false): Promise<void> {
+  const res = await authenticatedFetch("/api/e2e/identity", {
+    method: "PUT",
+    body: JSON.stringify({ ...identity, replace }),
+  });
+  if (!res.ok) throw await e2eFailure(res, "Failed to save encryption keys");
+}
+
+/** Public keys for these accounts. Ones that have never set up encryption
+ *  are missing from the answer. */
+export async function apiE2eQueryKeys(userIds: string[]): Promise<Record<string, PublicIdentity>> {
+  const res = await authenticatedFetch("/api/e2e/keys/query", {
+    method: "POST",
+    body: JSON.stringify({ user_ids: userIds }),
+  });
+  if (!res.ok) throw await e2eFailure(res, "Failed to load keys");
+  const data = await res.json();
+  return data.keys ?? {};
+}
+
+export interface E2eRoomKeyCopy extends WrappedRoomKey {
+  epoch: number;
+  sender: string;
+}
+
+export interface E2eRoomState {
+  e2e: boolean;
+  epoch?: number;
+  /** A new epoch is owed before anyone can send. */
+  rotate?: boolean;
+  /** The caller's copies, one per epoch they were a member for. */
+  keys?: E2eRoomKeyCopy[];
+  members?: { user_id: string; has_identity: boolean; has_key: boolean }[];
+}
+
+export async function apiE2eGetRoom(roomId: string): Promise<E2eRoomState> {
+  const res = await authenticatedFetch(`/api/rooms/${encodeURIComponent(roomId)}/e2e`);
+  if (!res.ok) throw await e2eFailure(res, "Failed to load this conversation's keys");
+  return res.json();
+}
+
+/** Start the next epoch (`epoch` one past the current, a copy for every
+ *  member with keys), or hand the current one to members who lack it. */
+export async function apiE2ePostRoomKeys(
+  roomId: string,
+  epoch: number,
+  keys: (WrappedRoomKey & { user_id: string })[],
+): Promise<void> {
+  const res = await authenticatedFetch(`/api/rooms/${encodeURIComponent(roomId)}/e2e/keys`, {
+    method: "POST",
+    body: JSON.stringify({ epoch, keys }),
+  });
+  if (!res.ok) throw await e2eFailure(res, "Failed to share this conversation's key");
+}
+
 
 // ─── Forum ──────────────────────────────────────────────────────────────────
 

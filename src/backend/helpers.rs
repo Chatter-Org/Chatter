@@ -1322,6 +1322,8 @@ pub(crate) async fn do_join_room(
     }
 
     broadcast_to_room(state, room_id, &sys_event).await;
+    // Whoever just arrived must not read what came before.
+    super::routes::e2e::membership_changed(state, room_id).await;
     Ok(true)
 }
 

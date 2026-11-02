@@ -76,6 +76,10 @@ pub(crate) struct SendMessageRequest {
     pub(crate) channel_id: Option<String>,
     pub(crate) showcase_pane: Option<String>, // "featured" | "community" for showcase channels
     pub(crate) embeds: Option<Vec<serde_json::Value>>,
+    /// The sealed text, in an end-to-end encrypted DM. `body` is ignored then.
+    pub(crate) e2e: Option<super::routes::e2e::SealedContent>,
+    /// An encrypted message's upload links, which are not encrypted yet.
+    pub(crate) attachments: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -152,6 +156,8 @@ pub(crate) struct AddToDmRequest {
 pub(crate) struct EditMessageRequest {
     pub(crate) body: String,
     pub(crate) embeds: Option<Vec<serde_json::Value>>,
+    pub(crate) e2e: Option<super::routes::e2e::SealedContent>,
+    pub(crate) attachments: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]

@@ -325,12 +325,21 @@ pub(crate) async fn admin_delete_user(
         .await;
 
     // Update room_members cache
-    {
+    let left_rooms: Vec<String> = {
         let mut rm = state.room_members.write().await;
-        for members in rm.values_mut() {
-            members.retain(|m| m != &target_id);
+        let mut left = vec![];
+        for (room_id, members) in rm.iter_mut() {
+            if members.contains(&target_id) {
+                members.retain(|m| m != &target_id);
+                left.push(room_id.clone());
+            }
         }
+        left
+    };
+    for room_id in &left_rooms {
+        super::e2e::membership_changed(&state, room_id).await;
     }
+    super::e2e::forget_user(&state, &target_id).await;
 
     // Remove from room_roles cache
     {
@@ -648,6 +657,7 @@ pub(crate) async fn admin_delete_room(
         .collection::<mongodb::bson::Document>("room_members")
         .delete_many(doc! { "room_id": &room_id })
         .await;
+    super::e2e::forget_room(&state, &room_id).await;
     let _ = db
         .collection::<mongodb::bson::Document>("messages")
         .delete_many(doc! { "room_id": &room_id })

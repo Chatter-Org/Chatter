@@ -63,6 +63,7 @@ import {
 import { reducer } from "./reducer";
 import { createWsMessageHandler } from "./wsHandler";
 import { createStoreActions } from "@chatter/core/store/actions";
+import { getE2eStatus, isRoomEncrypted, startE2e, stopE2e, subscribeE2e } from "@chatter/core/e2e/session";
 import { saveLastChannels } from "../lastChannel";
 
 /** How long to wait before opening the socket again after it closed. */
@@ -341,6 +342,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     saveLastChannels(state.userId, state.lastChannelByRoom);
   }, [state.userId, state.lastChannelByRoom]);
 
+  // End-to-end encryption: where this account stands, once someone is signed
+  // in. Keyed on the account alone — a token refresh is not a new answer.
+  useEffect(() => {
+    if (state.userId && stateRef.current.accessToken) void startE2e(state.userId);
+  }, [state.userId]);
+
+  // Unlocking opens what was shown locked: load the encrypted timeline again.
+  useEffect(
+    () =>
+      subscribeE2e(() => {
+        if (getE2eStatus() !== "ready") return;
+        const roomId = stateRef.current.currentRoomId;
+        if (roomId && isRoomEncrypted(roomId)) void shared.reloadTimeline().catch(() => {});
+      }),
+    [shared],
+  );
+
   // Update document title with total unread notification count
   useEffect(() => {
     const total = Object.values(state.roomMentions).reduce((a, b) => a + b, 0);
@@ -545,6 +563,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // is not what the next one is, and these were resolved against the
     // account that is leaving.
     clearMessagePreviews();
+    // This device forgets the encryption seed with the session.
+    void stopE2e();
     if (wsRef.current) {
       wsRef.current.onclose = null;
       wsRef.current.close();
@@ -558,6 +578,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     clearTokens();
     clearMediaBlobs();
     clearMessagePreviews();
+    // This device forgets the encryption seed with the session.
+    void stopE2e();
     if (wsRef.current) {
       wsRef.current.onclose = null;
       wsRef.current.close();

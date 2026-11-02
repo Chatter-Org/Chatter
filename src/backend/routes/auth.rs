@@ -883,12 +883,21 @@ pub(crate) async fn delete_account(
     let _ = room_members.delete_many(doc! { "user_id": &user_id }).await;
 
     // Update room_members cache
-    {
+    let left_rooms: Vec<String> = {
         let mut rm = state.room_members.write().await;
-        for members in rm.values_mut() {
-            members.retain(|m| m != &user_id);
+        let mut left = vec![];
+        for (room_id, members) in rm.iter_mut() {
+            if members.contains(&user_id) {
+                members.retain(|m| m != &user_id);
+                left.push(room_id.clone());
+            }
         }
+        left
+    };
+    for room_id in &left_rooms {
+        super::e2e::membership_changed(&state, room_id).await;
     }
+    super::e2e::forget_user(&state, &user_id).await;
 
     // Remove from room_roles cache
     {

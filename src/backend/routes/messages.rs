@@ -93,7 +93,7 @@ pub(crate) async fn send_message(
     State(state): State<Arc<AppState>>,
     Path((room_id, txn_id)): Path<(String, String)>,
     headers: HeaderMap,
-    Json(req): Json<SendMessageRequest>,
+    Json(mut req): Json<SendMessageRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let _ = txn_id;
     let token = extract_token(&headers)
@@ -127,6 +127,14 @@ pub(crate) async fn send_message(
         .ok()
         .flatten()
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Room not found"))?;
+
+    // An encrypted DM's text arrives sealed. From here on `req.body` is the
+    // placeholder and any upload links, so every check and record below that
+    // reads a body reads that, and none of them can see the message.
+    let sealed = super::e2e::check_send(&room, req.e2e.as_ref(), req.attachments.as_deref())?;
+    if let Some(ref surface) = sealed {
+        req.body = surface.body.clone();
+    }
 
     if is_bot {
         // Bots must target their own room and a channel with matching bot_id
@@ -371,6 +379,10 @@ pub(crate) async fn send_message(
         "body": req.body
     });
 
+    if let Some(ref surface) = sealed {
+        content["e2e"] = json!(surface.sealed);
+    }
+
     if req.spoiler == Some(true) {
         content["spoiler"] = json!(true);
     }
@@ -485,7 +497,11 @@ pub(crate) async fn send_message(
                 sender_name,
                 room_name: room.name.clone(),
                 channel_name,
-                body: req.body.clone(),
+                body: if room.e2e {
+                    super::e2e::PUSH_BODY.to_string()
+                } else {
+                    req.body.clone()
+                },
                 icon: room.icon_url.clone(),
                 is_dm: room.is_dm,
                 audience: None,
@@ -1203,7 +1219,7 @@ pub(crate) async fn edit_message(
     State(state): State<Arc<AppState>>,
     Path((room_id, event_id, txn_id)): Path<(String, String, String)>,
     headers: HeaderMap,
-    Json(req): Json<EditMessageRequest>,
+    Json(mut req): Json<EditMessageRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let _ = txn_id;
     let token = extract_token(&headers)
@@ -1226,14 +1242,18 @@ pub(crate) async fn edit_message(
     };
 
     let rooms_coll = state.db.collection::<RoomRecord>("rooms");
-    if rooms_coll
+    let room = rooms_coll
         .find_one(doc! { "_id": &room_id })
         .await
         .ok()
         .flatten()
-        .is_none()
-    {
-        return Err(error_response(StatusCode::NOT_FOUND, "Room not found"));
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Room not found"))?;
+
+    // An edit to an encrypted message is sealed afresh, under the current
+    // epoch, as a send is.
+    let sealed = super::e2e::check_send(&room, req.e2e.as_ref(), req.attachments.as_deref())?;
+    if let Some(ref surface) = sealed {
+        req.body = surface.body.clone();
     }
 
     {
@@ -1306,6 +1326,12 @@ pub(crate) async fn edit_message(
         "edited_at": now_millis()
     };
 
+    if let Some(ref surface) = sealed {
+        if let Ok(bson) = mongodb::bson::to_bson(&surface.sealed) {
+            set_doc.insert("content.e2e", bson);
+        }
+    }
+
     // If embeds are provided, update them too
     let embeds_json = if let Some(ref embeds) = req.embeds {
         let bson_embeds =
@@ -1341,6 +1367,9 @@ pub(crate) async fn edit_message(
 
     if let Some(embeds) = embeds_json {
         edit_event["new_embeds"] = embeds;
+    }
+    if let Some(ref surface) = sealed {
+        edit_event["new_e2e"] = json!(surface.sealed);
     }
 
     broadcast_to_room(&state, &room_id, &edit_event).await;
@@ -1498,7 +1527,7 @@ pub(crate) async fn send_thread_message(
     State(state): State<Arc<AppState>>,
     Path((room_id, thread_event_id, txn_id)): Path<(String, String, String)>,
     headers: HeaderMap,
-    Json(req): Json<SendMessageRequest>,
+    Json(mut req): Json<SendMessageRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let _ = txn_id;
     let token = extract_token(&headers)
@@ -1513,6 +1542,12 @@ pub(crate) async fn send_thread_message(
         .ok()
         .flatten()
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Room not found"))?;
+
+    // Sealed as in `send_message`.
+    let sealed = super::e2e::check_send(&room, req.e2e.as_ref(), req.attachments.as_deref())?;
+    if let Some(ref surface) = sealed {
+        req.body = surface.body.clone();
+    }
 
     {
         let rm = state.room_members.read().await;
@@ -1621,6 +1656,9 @@ pub(crate) async fn send_thread_message(
         "msgtype": req.msgtype.unwrap_or_else(|| "m.text".to_string()),
         "body": req.body
     });
+    if let Some(ref surface) = sealed {
+        content["e2e"] = json!(surface.sealed);
+    }
 
     // A reply inside a thread answers something *in that thread* — its root or
     // another reply. Anything else is dropped rather than quoted: a quote of a
@@ -1823,7 +1861,11 @@ pub(crate) async fn send_thread_message(
             sender_name: format!("{sender_name} · {thread_label}"),
             room_name: room.name.clone(),
             channel_name: String::new(),
-            body: req_body.clone(),
+            body: if room.e2e {
+                super::e2e::PUSH_BODY.to_string()
+            } else {
+                req_body.clone()
+            },
             icon: room.icon_url.clone(),
             is_dm: room.is_dm,
             audience: Some(participants),
@@ -2209,6 +2251,8 @@ pub(crate) async fn search_messages(
             doc! {
                 "room_id": &room_id,
                 "redacted": { "$ne": true },
+                // A sealed message's body is its placeholder, not its text.
+                "content.e2e": { "$exists": false },
                 "content.body": { "$regex": format!("@{}\\b", q), "$options": "i" }
             }
         }
@@ -2248,6 +2292,7 @@ pub(crate) async fn search_messages(
             doc! {
                 "room_id": &room_id,
                 "redacted": { "$ne": true },
+                "content.e2e": { "$exists": false },
                 "content.body": { "$regex": q, "$options": "i" }
             }
         }

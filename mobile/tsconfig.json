@@ -4,7 +4,8 @@
     "strict": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@chatter/core/*": ["../packages/core/src/*"]
+      "@chatter/core/*": ["../packages/core/src/*"],
+      "@noble/*": ["./node_modules/@noble/*"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts", "src/uniwind-types.d.ts"],

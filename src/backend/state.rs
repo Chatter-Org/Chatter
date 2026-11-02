@@ -233,6 +233,20 @@ pub(crate) struct RoomRecord {
     /// `moderation::public_view`).
     #[serde(default)]
     pub(crate) moderation: ModerationSettings,
+    /// End-to-end encrypted: every DM created since encryption shipped. The
+    /// server holds only ciphertext for its messages and refuses plaintext
+    /// sends (see `routes/e2e.rs`). DMs from before stay plaintext.
+    #[serde(default)]
+    pub(crate) e2e: bool,
+    /// The room key members currently encrypt with. `-1` until the first
+    /// member's client makes one.
+    #[serde(default = "no_e2e_epoch")]
+    pub(crate) e2e_epoch: i64,
+    /// Membership changed since the current key was made, so the next message
+    /// waits on a new one: someone who left must not read what follows, and
+    /// someone who arrived must not read what came before.
+    #[serde(default)]
+    pub(crate) e2e_rotate: bool,
 }
 
 /// How a room is moderated. Every field defaults to what a room behaved like
@@ -1156,6 +1170,10 @@ impl RolePermissions {
 
 fn default_true() -> bool {
     true
+}
+
+fn no_e2e_epoch() -> i64 {
+    -1
 }
 
 impl Default for RolePermissions {

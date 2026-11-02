@@ -13,6 +13,9 @@ export default defineConfig({
       // compiled as part of this app, and the Dockerfile copies it alongside.
       "@chatter/core": path.resolve(__dirname, "../packages/core/src"),
     },
+    // The core's npm imports resolve from this app, which installs them: the
+    // Docker image copies the core's source and nothing else.
+    dedupe: ["@noble/ciphers", "@noble/curves", "@noble/hashes"],
   },
   server: {
     fs: {

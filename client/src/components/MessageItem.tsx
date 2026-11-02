@@ -1631,6 +1631,14 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
               {message.edited && (
                 <span className="ui-hint ml-1">(edited)</span>
               )}
+              {message.content.e2e_state === "unverified" && (
+                <span
+                  className="ui-hint ml-1"
+                  title="This message opened, but isn't signed by its sender's current keys. They may have reset their encryption since — or it isn't from them."
+                >
+                  (unverified)
+                </span>
+              )}
               {emojiTip && (
                 <div
                   className="fixed z-50 px-2 py-1 text-xs rounded bg-popover border border-border text-popover-foreground shadow pointer-events-none -translate-x-1/2"

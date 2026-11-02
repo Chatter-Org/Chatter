@@ -14,6 +14,7 @@ import {
 } from "../notifications";
 import { arrivalSound, type SoundPack } from "../soundRules";
 import { host } from "../platform";
+import { createE2eEventGate, handleE2eEvent } from "../e2e/session";
 
 /** Coalesce room-list refreshes.
  *
@@ -472,7 +473,10 @@ export function createWsMessageHandler(
     });
   };
 
-  return (msg: any) => {
+  // Encrypted text is opened before anything below sees it, so notifications,
+  // mentions and the timeline all read the message rather than its seal.
+  return createE2eEventGate((msg: any) => {
+    if (handleE2eEvent(msg)) return;
     if (msg.type === "m.room.message") {
       maybeNotify(msg);
       const cur = stateRef.current;
@@ -1213,5 +1217,5 @@ export function createWsMessageHandler(
     // WebRTC signaling messages are handled by the voice/screen hooks
     // by subscribing to raw WS messages via a custom event
     host.emit("ws-message", msg);
-  };
+  });
 }

@@ -20,6 +20,7 @@ use super::{
             list_postable_channels, update_category, update_channel,
         },
         continuity::{get_continuity, set_draft, set_resume_point},
+        e2e::{get_identity, get_room_e2e, post_room_keys, put_identity, query_keys},
         events::{create_event, delete_event, list_events, list_rsvps, set_rsvp, update_event},
         forum::{
             create_comment, create_post, delete_comment, delete_post, edit_comment, edit_post,
@@ -198,6 +199,11 @@ pub(crate) fn build_router() -> Router<Arc<AppState>> {
         .route("/_matrix/client/r0/rooms/{room_id}/join", post(join_room))
         .route("/_matrix/client/r0/rooms/{room_id}/leave", post(leave_room))
         .route("/api/rooms/{room_id}/dm/invite", post(add_to_dm))
+        // End-to-end encrypted DMs (routes/e2e.rs)
+        .route("/api/e2e/identity", get(get_identity).put(put_identity))
+        .route("/api/e2e/keys/query", post(query_keys))
+        .route("/api/rooms/{room_id}/e2e", get(get_room_e2e))
+        .route("/api/rooms/{room_id}/e2e/keys", post(post_room_keys))
         .route("/_matrix/client/r0/joined_rooms", get(joined_rooms))
         .route("/api/rooms", get(list_all_rooms))
         .route("/api/rooms/{room_id}", delete(delete_room))

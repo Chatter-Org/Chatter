@@ -28,7 +28,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@chatter/core/*": ["../packages/core/src/*"]
+      "@chatter/core/*": ["../packages/core/src/*"],
+      "@noble/*": ["./node_modules/@noble/*"]
     }
   },
   "include": ["src", "../packages/core/src"],

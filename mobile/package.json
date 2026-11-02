@@ -5,6 +5,9 @@
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.2",
     "@expo-google-fonts/jetbrains-mono": "^0.4.1",
+    "@noble/ciphers": "2.0.1",
+    "@noble/curves": "2.0.1",
+    "@noble/hashes": "2.0.1",
     "@react-native-community/datetimepicker": "9.2.1",
     "@shopify/flash-list": "2.3.2",
     "@shopify/react-native-skia": "2.14.0",
