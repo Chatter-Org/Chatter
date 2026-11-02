@@ -14,7 +14,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { UserProfileDialog } from "./UserProfileDialog";
 import { displayUserId } from "@/lib/utils";
 import { AuthImage, AuthAvatarImage } from "@/components/AuthImage";
-import { AtSign, Users, MessageSquare, Clock, UserPlus, UserCheck, Ban, ChevronDown, Radio, Volume2, MicOff, HeadphoneOff, Gamepad2, MessageCircle } from "lucide-react";
+import { AtSign, Users, MessageSquare, Clock, UserPlus, UserCheck, Ban, ChevronDown, Radio, Volume2, MicOff, HeadphoneOff, Gamepad2, MessageCircle, Plus, DoorOpen } from "lucide-react";
 import { LivePill } from "./voice/LivePill";
 import { ActivityStats } from "./activity/ActivityStats";
 import { StorageManager } from "./activity/StorageManager";
@@ -90,7 +90,13 @@ function statusColor(status: string) {
   return "bg-muted-foreground";
 }
 
-export function ActivityPage() {
+export function ActivityPage({
+  onCreateRoom,
+  onJoinRoom,
+}: {
+  onCreateRoom: () => void;
+  onJoinRoom: () => void;
+}) {
   const channelLinkText = useChannelLinkText();
   const { state, selectRoom, openMessage, openDM, loadFriendPresence, acceptFriendRequest, rejectFriendRequest, removeFriend, unblockUser, loadUnreads, sendFriendRequest } = useAppContext();
   const [activities, setActivities] = useState<RoomActivity[]>([]);
@@ -285,7 +291,19 @@ export function ActivityPage() {
           </p>
         </div>
 
-        <CrossRoomSearch onSelectRoom={selectRoom} />
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={onCreateRoom} title="Create a new room">
+              <Plus className="h-4 w-4" />
+              Create room
+            </Button>
+            <Button variant="outline" size="sm" onClick={onJoinRoom} title="Join an existing room">
+              <DoorOpen className="h-4 w-4" />
+              Join room
+            </Button>
+          </div>
+          <CrossRoomSearch onSelectRoom={selectRoom} />
+        </div>
 
         {/* Two-column layout: Rooms left, Friends right */}
         <div className="flex flex-col md:flex-row gap-6 md:gap-8 items-start">

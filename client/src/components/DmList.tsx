@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Check, DoorOpen, Lock, LogOut, MoreVertical, Plus, SquarePen } from "lucide-react";
+import { Check, Lock, LogOut, MoreVertical, SquarePen } from "lucide-react";
 import { useAppContext } from "@/lib/store";
 import { resolveNotificationLevel, type NotificationLevel } from "@/lib/notifications";
 import { sortDmsByActivity } from "@/lib/sidebarOrder";
@@ -87,31 +87,13 @@ export function DmList({ onSelect }: { onSelect?: () => void }) {
 }
 
 /** The DM list as a column of its own, in the slot a room's channel list
- *  takes. Rooms are made and joined from here: with the sidebar held to its
- *  rail, this is the one panel that is not about a particular room. */
-export function DmColumn({
-  onCreateRoom,
-  onJoinRoom,
-}: {
-  onCreateRoom: () => void;
-  onJoinRoom: () => void;
-}) {
+ *  takes. */
+export function DmColumn() {
   return (
     <div className="flex h-full w-60 shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar">
-      {/* Room actions, kept apart from the DMs below: these make and join
-          rooms, not conversations. */}
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b px-3">
-        <span className="ui-heading shrink-0">Rooms</span>
-        <Button variant="ghost" size="sm" className="flex-1 px-2 text-xs" onClick={onCreateRoom} title="Create a new room">
-          <Plus className="h-3.5 w-3.5" />
-          Create
-        </Button>
-        <Button variant="ghost" size="sm" className="flex-1 px-2 text-xs" onClick={onJoinRoom} title="Join an existing room">
-          <DoorOpen className="h-3.5 w-3.5" />
-          Join
-        </Button>
+      <div className="flex h-14 shrink-0 items-center border-b px-3">
+        <span className="ui-heading">Direct messages</span>
       </div>
-      <p className="ui-heading px-3 pt-3 pb-1.5">Direct messages</p>
       <ScrollArea className="flex-1 min-h-0">
         <DmList />
       </ScrollArea>

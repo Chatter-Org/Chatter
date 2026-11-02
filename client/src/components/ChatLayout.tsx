@@ -584,7 +584,7 @@ export function ChatLayout() {
   const showDmColumn =
     !isMobile && !state.adminDashboardOpen && (isDmRoom || (dmsOpen && !state.currentRoomId));
   const dmColumn = showDmColumn && (
-    <DmColumn onCreateRoom={() => setCreateOpen(true)} onJoinRoom={() => setJoinOpen(true)} />
+    <DmColumn />
   );
   // The channel column carries the call's controls at its foot in every room,
   // so the bottom voice bar is only needed where that column is not showing:
@@ -794,7 +794,10 @@ export function ChatLayout() {
               ) : !state.currentRoomId ? (
                 <>
                   {dmColumn}
-                  <ActivityPage />
+                  <ActivityPage
+                    onCreateRoom={() => setCreateOpen(true)}
+                    onJoinRoom={() => setJoinOpen(true)}
+                  />
                 </>
               ) : (
               <>
