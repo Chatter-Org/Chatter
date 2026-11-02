@@ -54,7 +54,7 @@ export function DmList({ onSelect }: { onSelect?: () => void }) {
 
   return (
     <>
-      <div className="px-2 pb-1">
+      <div className="mb-1 border-b border-border px-2 py-2">
         <Button
           variant="outline"
           size="sm"
