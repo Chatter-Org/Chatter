@@ -685,6 +685,16 @@ pub(crate) async fn handle_ws_text(state: Arc<AppState>, user_id: &str, conn_id:
 
                 let mut denied = !is_member || is_banned;
 
+                // The channel must be one of this room's calls. Permissions are
+                // judged in `room_id`, and a channel that is not in it resolves
+                // to the room-level set — or to nothing at all for an owner — so
+                // naming another server's channel from a room of your own used
+                // to put you in that call. A room's own call (a DM's) is keyed
+                // by the room id itself.
+                if !denied && channel_id != room_id {
+                    denied = !is_call_channel_of(&state, room_id, channel_id).await;
+                }
+
                 // Voice channels carry overwrites like any other, so connect is
                 // judged against this channel, not just the room.
                 if !denied {

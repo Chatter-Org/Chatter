@@ -7,7 +7,10 @@ use crate::backend::{
         advertised_candidates, create_peer_connection, ice_candidate_to_json, parse_ice_candidate,
         relay_packet, rewrite_rtcp_feedback_for_publisher, CandidateGate,
     },
-    ws::webcam_simulcast::{pick_layer, starts_keyframe, VideoRestamp, Vp8Munger, WebcamQuality},
+    ws::{
+        screen_webrtc::{may_watch_stream, user_in_voice_room},
+        webcam_simulcast::{pick_layer, starts_keyframe, VideoRestamp, Vp8Munger, WebcamQuality},
+    },
 };
 use rtcp::{
     packet::Packet as RtcpPacket, payload_feedbacks::picture_loss_indication::PictureLossIndication,
@@ -39,11 +42,6 @@ use webrtc::{
 
 pub(crate) fn subscriber_key(viewer_user_id: &str, sharer_user_id: &str) -> String {
     format!("{}|{}", viewer_user_id, sharer_user_id)
-}
-
-pub(crate) async fn user_in_voice_room(state: &AppState, _room_id: &str, user_id: &str) -> bool {
-    let vc = state.voice_channels.read().await;
-    vc.values().any(|members| members.contains_key(user_id))
 }
 
 pub(crate) async fn user_is_webcam_active(state: &AppState, _room_id: &str, user_id: &str) -> bool {
@@ -516,7 +514,7 @@ pub(crate) async fn handle_webcam_webrtc_subscribe_offer(
         return;
     }
 
-    if !user_in_voice_room(&state, room_id, viewer_user_id).await {
+    if !may_watch_stream(&state, room_id, viewer_user_id, sharer_user_id).await {
         let error = json!({
             "type": "webcam_webrtc_error",
             "scope": "subscribe",

@@ -1,6 +1,6 @@
 use crate::backend::{
     constants::{SCREEN_AUDIO_RTP_BUFFER_SIZE, SCREEN_RTP_BUFFER_SIZE},
-    helpers::{broadcast_to_room, send_to_user},
+    helpers::{broadcast_to_room, channel_permissions, send_to_user},
     metrics::{MediaKind, METRICS},
     state::{AppState, ScreenPublisherState, ScreenSubscriberState},
     webrtc::{
@@ -55,9 +55,55 @@ pub(crate) async fn send_screen_viewers_update(state: &AppState, sharer_user_id:
 
 /// Check if user is in any voice channel (channel_id-keyed map).
 /// The room_id param is kept for backward compat but we search all channels.
-pub(crate) async fn user_in_voice_room(state: &AppState, _room_id: &str, user_id: &str) -> bool {
+/// The call `user_id` is in, as `(channel_id, room_id)`.
+pub(crate) async fn voice_session_of(state: &AppState, user_id: &str) -> Option<(String, String)> {
     let vc = state.voice_channels.read().await;
-    vc.values().any(|members| members.contains_key(user_id))
+    vc.iter().find_map(|(channel_id, members)| {
+        members
+            .get(user_id)
+            .map(|member| (channel_id.clone(), member.room_id.clone()))
+    })
+}
+
+/// Whether `user_id` is in a call in `room_id`.
+///
+/// The room is part of the answer. This used to ask only whether the user was
+/// in *any* call, so someone sitting in a channel of their own room could
+/// subscribe to a screen or camera in any other room on the instance just by
+/// naming it.
+pub(crate) async fn user_in_voice_room(state: &AppState, room_id: &str, user_id: &str) -> bool {
+    voice_session_of(state, user_id)
+        .await
+        .is_some_and(|(_, in_room)| in_room == room_id)
+}
+
+/// Whether `viewer` may watch what `sharer` is sending in `room_id`: both in a
+/// call in that room, and the sharer's channel one the viewer can see. A call
+/// in another channel of the same room can be watched — the client offers
+/// that — but not one in a channel hidden from the viewer.
+pub(crate) async fn may_watch_stream(
+    state: &AppState,
+    room_id: &str,
+    viewer: &str,
+    sharer: &str,
+) -> bool {
+    if !user_in_voice_room(state, room_id, viewer).await {
+        return false;
+    }
+    let Some((channel_id, sharer_room)) = voice_session_of(state, sharer).await else {
+        return false;
+    };
+    if sharer_room != room_id {
+        return false;
+    }
+    // A room's own call is keyed by the room id and has no channel to check.
+    let scope = if channel_id == room_id {
+        ""
+    } else {
+        &channel_id
+    };
+    let perms = channel_permissions(state, room_id, scope, viewer).await;
+    scope.is_empty() || perms.view_channel
 }
 
 pub(crate) async fn user_is_sharing_screen(
@@ -587,7 +633,7 @@ pub(crate) async fn handle_screen_webrtc_subscribe_offer(
         return;
     }
 
-    if !user_in_voice_room(&state, room_id, viewer_user_id).await {
+    if !may_watch_stream(&state, room_id, viewer_user_id, sharer_user_id).await {
         let error = json!({
             "type": "screen_webrtc_error",
             "scope": "subscribe",

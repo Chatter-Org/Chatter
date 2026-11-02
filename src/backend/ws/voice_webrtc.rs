@@ -1,4 +1,4 @@
-use super::screen_webrtc::user_in_voice_room;
+use super::screen_webrtc::voice_session_of;
 use super::voice_slots::release_slots_for_speaker;
 use crate::backend::{
     constants::{VOICE_ACTIVITY_DBOV_THRESHOLD, VOICE_MAX_ACTIVE_SPEAKERS, VOICE_RTP_BUFFER_SIZE},
@@ -156,7 +156,7 @@ pub(crate) async fn handle_voice_webrtc_publish_offer(
     state: Arc<AppState>,
     user_id: &str,
     room_id: &str,
-    channel_id: &str,
+    _requested_channel_id: &str,
     sdp: &str,
 ) {
     if room_id.is_empty() || sdp.is_empty() {
@@ -170,16 +170,25 @@ pub(crate) async fn handle_voice_webrtc_publish_offer(
         return;
     }
 
-    if !user_in_voice_room(&state, room_id, user_id).await {
-        let error = json!({
-            "type": "voice_webrtc_error",
-            "scope": "publish",
-            "room_id": room_id,
-            "detail": "You must be in the room voice channel before publishing audio"
-        });
-        send_to_user(&state, user_id, &error).await;
-        return;
-    }
+    // The channel is the one the user joined, not the one this message names:
+    // `speak` is judged against it below, and a client naming a channel it
+    // can speak in would otherwise talk into the one it cannot. The named one
+    // is ignored rather than checked against it: an older client leaves it
+    // out, which reads as the room id.
+    let channel_id = match voice_session_of(&state, user_id).await {
+        Some((joined, in_room)) if in_room == room_id => joined,
+        _ => {
+            let error = json!({
+                "type": "voice_webrtc_error",
+                "scope": "publish",
+                "room_id": room_id,
+                "detail": "You must be in the room voice channel before publishing audio"
+            });
+            send_to_user(&state, user_id, &error).await;
+            return;
+        }
+    };
+    let channel_id = channel_id.as_str();
 
     // The real enforcement point for a server mute: refuse the audio at the
     // SFU. Disabling the track client-side is a courtesy a patched client can
