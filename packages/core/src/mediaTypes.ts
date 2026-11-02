@@ -8,7 +8,9 @@
  */
 export const IMAGE_EXTENSIONS = /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?.*)?$/i;
 export const VIDEO_EXTENSIONS = /\.(mp4|webm|ogg|mov|mkv)(\?.*)?$/i;
-export const AUDIO_EXTENSIONS = /\.(mp3|wav|flac|aac|m4a)(\?.*)?$/i;
+// `weba` and `oga` are the audio-only spellings of WebM and Ogg: what a voice
+// message is saved as, so it is not mistaken for a video by the line above.
+export const AUDIO_EXTENSIONS = /\.(mp3|wav|flac|aac|m4a|weba|oga|opus)(\?.*)?$/i;
 
 export function isImageUrl(url: string): boolean {
   return IMAGE_EXTENSIONS.test(url);

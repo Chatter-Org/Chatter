@@ -119,6 +119,21 @@ describe("a send that carries files", () => {
     ]);
   });
 
+  it("keeps the reply on a send that is only files", async () => {
+    apiUploadFile
+      .mockResolvedValueOnce({ url: "/external/a/voice-message.weba" })
+      .mockResolvedValueOnce({ url: "/external/b/two.png" });
+    enqueueOutgoing({
+      target: { kind: "channel", roomId: "!r:x", channelId: "", replyTo: "$parent" },
+      label: "#general",
+      body: "",
+      files: [fileNamed("voice-message.weba"), fileNamed("two.png")],
+    });
+    await settled();
+
+    expect(apiSendMessage.mock.calls.map((call) => call[2])).toEqual(["$parent", undefined]);
+  });
+
   it("leaves nothing behind when it lands", async () => {
     enqueueOutgoing({
       target: { kind: "channel", roomId: "!r:x", channelId: "c" },

@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, File as FileIcon } from "lucide-react";
 import { FileAttachmentCard } from "@/components/FileAttachmentCard";
 import { forumAttachmentKind } from "@/lib/mediaTypes";
+import { isVoiceMessageUrl } from "@chatter/core/voiceMessage";
+import { VoiceMessagePlayer } from "@/components/VoiceMessagePlayer";
 
 /**
  * The pictures and clips on a forum post or comment, laid out by how many there
@@ -110,9 +112,13 @@ export function ForumMediaGallery({
         <ForumVideo key={url} url={url} compact={compact} />
       ))}
 
-      {files.map((url) => (
-        <FileAttachmentCard key={url} url={url} />
-      ))}
+      {files.map((url) =>
+        isVoiceMessageUrl(url) ? (
+          <VoiceMessagePlayer key={url} url={url} />
+        ) : (
+          <FileAttachmentCard key={url} url={url} />
+        ),
+      )}
 
       <Dialog
         open={lightboxAt !== null}

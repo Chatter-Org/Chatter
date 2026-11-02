@@ -40,6 +40,8 @@ import { enqueueOutgoing, useOutgoingUploads, type OutgoingTarget } from "@/lib/
 import { isSameFile } from "@/lib/uploadResume";
 import { DMCallBar } from "./DMCallBar";
 import { usePendingFiles, MAX_ATTACHMENTS } from "@/hooks/usePendingFiles";
+import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { VoiceRecordButton, VoiceRecordingBar } from "@/components/VoiceRecorderBar";
 import { useInterruptedUploads } from "@/hooks/useInterruptedUploads";
 import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, UserPlus, Pencil, Pin, Smile, Phone, PhoneOff, Video, Paperclip, Plus, SendHorizontal } from "lucide-react";
 import { CommandBar } from "./CommandBar";
@@ -321,6 +323,8 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
     remaining: attachmentsRemaining,
   } = usePendingFiles();
   const outgoing = useOutgoingUploads();
+  // The limit stopping a recording sends it, as pressing Send would.
+  const voiceRecorder = useVoiceRecorder((file) => sendVoiceMessage(file));
   const {
     uploads: interruptedUploads,
     refresh: refreshInterruptedUploads,
@@ -787,6 +791,22 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
       toast.error(err instanceof Error ? err.message : "Failed to send message");
       restoreComposer();
     }
+  };
+
+  /** A recording goes through the outgoing queue like any attachment, on its
+   *  own and answering whatever the composer was replying to. */
+  const sendVoiceMessage = (file: File) => {
+    if (!state.currentRoomId) return;
+    if (withinSizeLimit([file]).length === 0) return;
+    const replyTo = state.replyingTo?.event_id;
+    dispatch({ type: "SET_REPLYING_TO", payload: null });
+    isNearBottomRef.current = true;
+    enqueueOutgoing({
+      target: { kind: "channel", roomId: state.currentRoomId, channelId: state.currentChannelId ?? "", replyTo },
+      label: destinationLabel(),
+      body: "",
+      files: [file],
+    });
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -2087,6 +2107,10 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
             "relative flex items-end rounded-xl border border-input bg-secondary/40 transition-colors focus-within:border-ring/70",
             isMobile ? "gap-0.5 p-0.5" : "gap-1 p-1",
           )}>
+            {voiceRecorder.recording && (
+              <VoiceRecordingBar recorder={voiceRecorder} onSend={sendVoiceMessage} />
+            )}
+
             {/* Mention autocomplete */}
             {mentionOpen && (
               <MentionMenu matches={mentionMatches} selectedIdx={selectedMentionIdx} onSelect={completeMention} />
@@ -2314,6 +2338,14 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
                 </PopoverContent>
               </Popover>
             </div>
+
+            {can(state, "attach_files") && (
+              <VoiceRecordButton
+                recorder={voiceRecorder}
+                className={cn(isMobile && "size-11")}
+                iconClassName={isMobile ? "h-5 w-5" : "h-4 w-4"}
+              />
+            )}
 
             <Button
               onClick={handleSend}

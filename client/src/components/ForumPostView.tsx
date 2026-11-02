@@ -47,6 +47,8 @@ import {
 } from "@/lib/forumThread";
 import { sortForumAttachments } from "@/lib/mediaTypes";
 import { useUploadQueue } from "@/hooks/useUploadQueue";
+import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { VoiceRecordButton, VoiceRecordingBar } from "@/components/VoiceRecorderBar";
 import { clipboardFiles } from "@/lib/clipboardFiles";
 import { UploadProgressOverlay } from "@/components/UploadProgressOverlay";
 import { toast } from "sonner";
@@ -285,6 +287,30 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
       setSubmitting(false);
     }
   };
+
+  /** A recording is posted straight away as a comment of its own, answering
+   *  whatever the reply bar holds. What is typed stays in the box. */
+  const sendVoiceComment = async (file: File) => {
+    const limit = state.uploadLimitBytes;
+    if (limit > 0 && file.size > limit) {
+      toast.error(`That voice message is over the ${Math.round(limit / 1024 / 1024)} MB limit`);
+      return;
+    }
+    const parentId = replyingTo?.comment_id;
+    setSubmitting(true);
+    try {
+      const { url } = await apiUploadFile(file);
+      // The server wants a body, as for any comment that is only media.
+      const { comment_id } = await apiCreateForumComment(roomId, postId, "(voice message)", [], [], parentId, [url]);
+      setReplyingTo(null);
+      setLandingCommentId(comment_id);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to post voice message");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  const voiceRecorder = useVoiceRecorder((file) => void sendVoiceComment(file));
 
   const handleDeleteComment = async (commentId: string) => {
     if (!(await confirm({ title: "Delete this comment?", confirmLabel: "Delete", destructive: true }))) return;
@@ -833,7 +859,10 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
               ))}
             </div>
           )}
-          <div className="flex items-end gap-1 rounded-xl border border-input bg-secondary/40 p-1 transition-colors focus-within:border-ring/70">
+          <div className="relative flex items-end gap-1 rounded-xl border border-input bg-secondary/40 p-1 transition-colors focus-within:border-ring/70">
+            {voiceRecorder.recording && (
+              <VoiceRecordingBar recorder={voiceRecorder} onSend={(file) => void sendVoiceComment(file)} />
+            )}
             <input
               ref={fileInputRef}
               type="file"
@@ -888,6 +917,7 @@ export function ForumPostView({ roomId, postId, onBack }: ForumPostViewProps) {
                 rows={1}
               />
             </div>
+            <VoiceRecordButton recorder={voiceRecorder} disabled={submitting} />
             <Button
               size="icon"
               className="shrink-0 rounded-lg"

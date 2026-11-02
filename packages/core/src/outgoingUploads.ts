@@ -227,9 +227,11 @@ async function deliver(target: OutgoingTarget, body: string, urls: string[]) {
     );
     return;
   }
-  // Files only: each as its own message.
-  for (const url of urls) {
-    await apiSendMessage(target.roomId, url, undefined, target.spoiler, channelId);
+  // Files only: each as its own message. The first carries the reply, or a
+  // file sent as an answer (a voice message, most often) lost what it answered.
+  for (const [i, url] of urls.entries()) {
+    const replyTo = i === 0 && !body ? target.replyTo : undefined;
+    await apiSendMessage(target.roomId, url, replyTo, target.spoiler, channelId);
   }
   if (body) {
     await apiSendMessage(target.roomId, body, target.replyTo, target.spoiler, channelId);

@@ -31,6 +31,8 @@ import { toast } from "sonner";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { PendingAttachments } from "./PendingAttachments";
 import { usePendingFiles, MAX_ATTACHMENTS } from "@/hooks/usePendingFiles";
+import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { VoiceRecordButton, VoiceRecordingBar } from "@/components/VoiceRecorderBar";
 import { OutgoingUploads } from "./OutgoingUploads";
 import { enqueueOutgoing, useOutgoingUploads, type OutgoingTarget } from "@/lib/outgoingUploads";
 import { scrollBehavior } from "@/lib/theme/display";
@@ -61,6 +63,7 @@ export function ThreadPanel() {
     clear: clearPendingFiles,
   } = usePendingFiles();
   const outgoing = useOutgoingUploads();
+  const voiceRecorder = useVoiceRecorder((file) => sendVoiceMessage(file));
   const inputRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -196,6 +199,25 @@ export function ThreadPanel() {
       // request layer, and the thread stays open.
     }
   }, [body, linkChannels, pendingFiles, clearPendingFiles, state.currentRoomId, state.activeThreadEventId, state.threadReplyingTo, threadLabel, cancelReply]);
+
+  /** A recording goes up on its own, answering whatever the reply bar holds. */
+  const sendVoiceMessage = (file: File) => {
+    const roomId = state.currentRoomId;
+    const threadEventId = state.activeThreadEventId;
+    if (!roomId || !threadEventId) return;
+    if (state.uploadLimitBytes > 0 && file.size > state.uploadLimitBytes) {
+      toast.error(`Voice message too large (max ${Math.round(state.uploadLimitBytes / 1024 / 1024)} MB)`);
+      return;
+    }
+    const replyTo = state.threadReplyingTo?.event_id;
+    cancelReply();
+    enqueueOutgoing({
+      target: { kind: "thread", roomId, threadEventId, replyTo },
+      label: threadLabel,
+      body: "",
+      files: [file],
+    });
+  };
 
   const mentionMatches = useMemo(
     () =>
@@ -710,6 +732,9 @@ export function ThreadPanel() {
         )}
         <PendingAttachments files={pendingFiles} onRemove={removePendingFile} />
         <div className="relative flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2">
+          {voiceRecorder.recording && (
+            <VoiceRecordingBar recorder={voiceRecorder} onSend={sendVoiceMessage} className="rounded-md" />
+          )}
           {mentionSearch !== null && (
             <MentionMenu matches={mentionMatches} selectedIdx={selectedMentionIdx} onSelect={completeMention} />
           )}
@@ -759,6 +784,10 @@ export function ThreadPanel() {
               />
             </PopoverContent>
           </Popover>
+          <VoiceRecordButton
+            recorder={voiceRecorder}
+            className="h-6 w-6 text-muted-foreground hover:text-foreground"
+          />
           <Button
             size="sm"
             className="h-7 px-2 shrink-0"

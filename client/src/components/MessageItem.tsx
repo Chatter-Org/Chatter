@@ -23,6 +23,8 @@ import {
 import { cn, displayUserId } from "@/lib/utils";
 import { readProfileAccent } from "@/lib/profileTheme";
 import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS } from "@/lib/mediaTypes";
+import { isVoiceMessageUrl } from "@chatter/core/voiceMessage";
+import { VoiceMessagePlayer } from "@/components/VoiceMessagePlayer";
 import { reservedBox, thumbnailBox, type MediaDimensions } from "@/lib/mediaBox";
 import { can, canManageMessages } from "@/lib/permissions";
 import { attachmentFolders } from "@/lib/attachments";
@@ -936,15 +938,19 @@ const MediaPreview = memo(function MediaPreview({ body, media, hiddenBySpoiler, 
       {videos.map((url) => (
         <LazyVideo key={url} url={url} dims={media?.[url]} onExpand={() => { lightboxDidAutoPlay.current = false; setLightbox({ url, type: "video" }); }} onCast={(u, track) => castVideo(u, track)} castState={castState} />
       ))}
-      {audios.map((url) => (
-        <audio
-          key={url}
-          src={withAuth(url)}
-          controls
-          preload="auto"
-          className="max-w-full"
-        />
-      ))}
+      {audios.map((url) =>
+        isVoiceMessageUrl(url) ? (
+          <VoiceMessagePlayer key={url} url={url} />
+        ) : (
+          <audio
+            key={url}
+            src={withAuth(url)}
+            controls
+            preload="auto"
+            className="max-w-full"
+          />
+        ),
+      )}
       {files.map((url) => (
         <FileAttachmentCard key={url} url={url} />
       ))}
