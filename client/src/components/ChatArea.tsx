@@ -1355,8 +1355,10 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
   const clearEditingEvent = useCallback(() => setEditingEventId(null), []);
 
   /** Toggle a companion panel; opening one closes whichever was open. */
-  // The server refuses a topic edit without manage_channels, so don't offer it.
-  const canEditTopic = can(state, "manage_channels");
+  // The server refuses a topic edit without manage_channels, so don't offer
+  // it — except in a DM, where any member may set it, as they may rename it.
+  const canEditTopic =
+    !!(state.currentRoomId && state.roomInfoMap[state.currentRoomId]?.is_direct) || can(state, "manage_channels");
 
   const togglePanel = (mode: AppPanel) => {
     const next = panel === mode ? null : mode;

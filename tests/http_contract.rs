@@ -3522,6 +3522,86 @@ async fn dms_can_be_made_plaintext_beside_an_encrypted_one() {
     assert!(!is_e2e(group).await);
 }
 
+/// Any member of a DM may set its topic, as any member may rename it; the
+/// rest of the DM's channel stays out of reach.
+#[tokio::test]
+async fn any_dm_member_can_set_the_topic() {
+    let server = spawn_server().await;
+    let client = Client::new();
+    let base = server.base_url.clone();
+
+    let (_, alice) = register_user(&client, &base, "alice", PASSWORD).await;
+    let (bob_id, bob) = register_user(&client, &base, "bob", PASSWORD).await;
+
+    let dm: Value = client
+        .post(format!("{base}/_matrix/client/r0/createRoom"))
+        .header("authorization", bearer(&alice))
+        .json(&json!({ "is_direct": true, "invite": [bob_id], "e2e": false }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let dm = dm["room_id"].as_str().unwrap().to_string();
+
+    // A DM's channel is made by its first message.
+    let sent = client
+        .put(format!(
+            "{base}/_matrix/client/r0/rooms/{}/send/m.room.message/txn1",
+            esc(&dm)
+        ))
+        .header("authorization", bearer(&alice))
+        .json(&json!({"msgtype": "m.text", "body": "hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(sent.status(), StatusCode::OK);
+    let channels: Value = client
+        .get(format!("{base}/api/rooms/{}/channels", esc(&dm)))
+        .header("authorization", bearer(&bob))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let channel = channels["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["channel_type"] == "text")
+        .unwrap()["channel_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let edit = |body: Value| {
+        let client = client.clone();
+        let url = format!("{base}/api/rooms/{}/channels/{}", esc(&dm), esc(&channel));
+        let bob = bob.clone();
+        async move {
+            client
+                .put(url)
+                .header("authorization", bearer(&bob))
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    assert_eq!(edit(json!({ "topic": "plans" })).await, StatusCode::OK);
+    assert_eq!(
+        edit(json!({ "topic": "plans", "name": "mine" })).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        edit(json!({ "slowmode_secs": 5 })).await,
+        StatusCode::FORBIDDEN
+    );
+}
+
 /// End-to-end encrypted DMs (`routes/e2e.rs`). The server cannot check the
 /// cryptography, so this pins what it can: every new DM is encrypted, keys
 /// reach exactly the members, plaintext is refused, a send waits on the

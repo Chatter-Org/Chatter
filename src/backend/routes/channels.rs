@@ -453,9 +453,41 @@ pub(crate) async fn update_channel(
     let user_id = get_user_from_token(&state, &token)
         .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Invalid token"))?;
 
-    if !effective_permissions(&state, &room_id, &user_id)
-        .await
-        .manage_channels
+    // In a DM any member may set the topic, as any member may rename it.
+    // Nothing else about a DM's channel is theirs to change.
+    let topic_only = req.topic.is_some()
+        && req.name.is_none()
+        && req.position.is_none()
+        && req.category_id.is_none()
+        && req.read_only.is_none()
+        && req.slowmode_secs.is_none()
+        && req.view_roles.is_none()
+        && req.write_roles.is_none()
+        && req.overwrites.is_none()
+        && req.inherit_category_permissions.is_none()
+        && req.showcase_write_roles.is_none()
+        && req.showcase_posters.is_none()
+        && req.system_channel.is_none()
+        && req.voice_bitrate.is_none();
+    let dm_member_topic = topic_only
+        && state
+            .room_members
+            .read()
+            .await
+            .get(&room_id)
+            .is_some_and(|m| m.contains(&user_id))
+        && state
+            .db
+            .collection::<RoomRecord>("rooms")
+            .find_one(doc! { "_id": &room_id })
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|r| r.is_dm);
+    if !dm_member_topic
+        && !effective_permissions(&state, &room_id, &user_id)
+            .await
+            .manage_channels
     {
         return Err(error_response(
             StatusCode::FORBIDDEN,
