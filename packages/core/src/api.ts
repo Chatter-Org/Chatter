@@ -3828,24 +3828,33 @@ export async function apiMarkRead(roomId: string, channelId?: string, threadId?:
 
 // ─── Steam ────────────────────────────────────────────────────────────────────
 
-export async function apiSteamExchangeCode(code: string): Promise<{
-  access_token: string;
-  refresh_token: string;
-  user_id: string;
-  is_admin: boolean;
-  totp_verified: boolean;
-}> {
+export type SteamExchangeResult =
+  | { requires_totp: true }
+  | {
+      requires_totp?: false;
+      access_token: string;
+      refresh_token: string;
+      user_id: string;
+      is_admin: boolean;
+      totp_verified: boolean;
+    };
+
+/** Trade the one-time `steam_code` for a session. An account with two-factor
+ *  answers `{ requires_totp: true }` first; call again with the same code and
+ *  an authenticator or recovery code. */
+export async function apiSteamExchangeCode(code: string, totpCode?: string): Promise<SteamExchangeResult> {
   // Unauthenticated — user is not logged in yet when this is called.
   const res = await serverFetch("/api/auth/steam/exchange", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify(totpCode ? { code, totp_code: totpCode } : { code }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => null);
     throw new Error(data?.error || "Steam login failed");
   }
   const data = await res.json();
+  if (data.requires_totp) return { requires_totp: true };
   keepRefreshToken(data);
   return data;
 }

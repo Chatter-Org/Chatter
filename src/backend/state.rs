@@ -109,6 +109,7 @@ pub struct AppState {
     pub(crate) steam_api_key: String,
     // One-time login codes for Steam OAuth — nonce -> payload, expires in 60s
     pub(crate) steam_login_codes: RwLock<HashMap<String, SteamLoginCode>>,
+    pub(crate) steam_flows: RwLock<HashMap<String, SteamFlow>>,
     // Web Push application-server keypair. None when push is misconfigured, in
     // which case delivery is skipped rather than attempted and failed.
     pub(crate) vapid: Option<super::push::VapidKeys>,
@@ -119,11 +120,17 @@ pub struct AppState {
 
 #[derive(Clone)]
 pub(crate) struct SteamLoginCode {
-    pub(crate) access_token: String,
-    pub(crate) refresh_token: String,
     pub(crate) user_id: String,
-    pub(crate) is_admin: bool,
-    pub(crate) totp_verified: bool,
+    pub(crate) expires_at: f64, // unix seconds
+}
+
+/// A Steam sign-in or link this server started, keyed by the random `state`
+/// it put in `return_to`. Single use, and bound to the browser that started
+/// it by the `steam_flow` cookie. `link_user` is the account a link attaches
+/// to; `None` is a sign-in.
+#[derive(Clone)]
+pub(crate) struct SteamFlow {
+    pub(crate) link_user: Option<String>,
     pub(crate) expires_at: f64, // unix seconds
 }
 

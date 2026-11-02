@@ -144,6 +144,7 @@ pub async fn build_state_in(database: &str) -> Arc<AppState> {
         klipy_api_key,
         steam_api_key,
         steam_login_codes: RwLock::new(HashMap::new()),
+        steam_flows: RwLock::new(HashMap::new()),
         vapid,
         http_client: reqwest::Client::new(),
     })

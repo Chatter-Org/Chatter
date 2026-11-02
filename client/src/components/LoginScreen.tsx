@@ -54,6 +54,9 @@ export function LoginScreen() {
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [needsTotp, setNeedsTotp] = useState(false);
+  // A Steam sign-in waiting on the authenticator code: the one-time code from
+  // the callback, held until the second factor goes with it.
+  const [steamCode, setSteamCode] = useState<string | null>(null);
 
   // Register fields
   const [regUsername, setRegUsername] = useState("");
@@ -140,12 +143,49 @@ export function LoginScreen() {
     clearStepTimeouts();
   }, [clearStepTimeouts]);
 
+  /** Exchange a Steam sign-in code, asking for the authenticator code when
+   *  the account has two-factor. */
+  const finishSteamLogin = useCallback(
+    async (code: string, totp?: string) => {
+      const data = await apiSteamExchangeCode(code, totp);
+      if (data.requires_totp) {
+        setSteamCode(code);
+        setNeedsTotp(true);
+        return;
+      }
+      setSteamCode(null);
+      setAccessToken(data.access_token);
+      setRefreshToken(data.refresh_token);
+      setIsAdmin(!!data.is_admin);
+      setTotpVerified(!!data.totp_verified);
+      dispatch({ type: "LOGIN", payload: { accessToken: data.access_token, userId: data.user_id } });
+      dispatch({ type: "SET_IS_ADMIN", payload: !!data.is_admin });
+      dispatch({ type: "SET_TOTP_VERIFIED", payload: !!data.totp_verified });
+    },
+    [dispatch],
+  );
+
   // ── Login handler ──
   const handleLogin = useCallback(
     async (e: FormEvent) => {
       e.preventDefault();
       const name = username.trim();
       setError(null);
+
+      if (steamCode) {
+        if (!totpCode) {
+          setError("TOTP code is required");
+          return;
+        }
+        setLoading(true);
+        try {
+          await finishSteamLogin(steamCode, totpCode);
+        } catch (err) {
+          setError(err instanceof Error && err.message ? err.message : "Steam login failed. Please try again.");
+        }
+        setLoading(false);
+        return;
+      }
 
       const usernameValidationError = validateUsername(name);
       if (usernameValidationError) {
@@ -184,7 +224,7 @@ export function LoginScreen() {
         setVisibleSteps(0);
       }
     },
-    [username, password, totpCode, needsTotp, login, runConnectionAnimation, clearStepTimeouts],
+    [username, password, totpCode, needsTotp, steamCode, finishSteamLogin, login, runConnectionAnimation, clearStepTimeouts],
   );
 
   // ── Register handler ──
@@ -371,16 +411,7 @@ export function LoginScreen() {
 
     if (steamCode) {
       window.history.replaceState({}, "", "/");
-      apiSteamExchangeCode(steamCode)
-        .then((data) => {
-          setAccessToken(data.access_token);
-          setRefreshToken(data.refresh_token);
-          setIsAdmin(!!data.is_admin);
-          setTotpVerified(!!data.totp_verified);
-          dispatch({ type: "LOGIN", payload: { accessToken: data.access_token, userId: data.user_id } });
-          dispatch({ type: "SET_IS_ADMIN", payload: !!data.is_admin });
-          dispatch({ type: "SET_TOTP_VERIFIED", payload: !!data.totp_verified });
-        })
+      finishSteamLogin(steamCode)
         .catch((err: any) => {
           setError(err.message || "Steam login failed. Please try again.");
         });
@@ -396,7 +427,8 @@ export function LoginScreen() {
       window.history.replaceState({}, "", "/");
       const messages: Record<string, string> = {
         already_linked: "This Steam account is already linked to another user.",
-        invalid_state: "Invalid state token. Please try again.",
+        invalid_state: "That Steam sign-in expired or was started elsewhere. Please try again.",
+        not_configured: "Steam sign-in isn't set up on this server.",
         no_account: "No Chatter account is linked to that Steam profile.",
         account_disabled: "This account has been disabled.",
       };
@@ -600,8 +632,9 @@ export function LoginScreen() {
       case "login":
         return (
           <form onSubmit={handleLogin} className="space-y-5">
-            {renderUsernameInput(username, setUsername, true)}
-            {renderPasswordInput("password", "password", password, setPassword)}
+            {/* A Steam sign-in already has its first factor; only the code is asked. */}
+            {!steamCode && renderUsernameInput(username, setUsername, true)}
+            {!steamCode && renderPasswordInput("password", "password", password, setPassword)}
 
             {needsTotp && (
               <div className="space-y-1.5">
@@ -671,6 +704,7 @@ export function LoginScreen() {
                 setNicknameWarning(null);
                 setNeedsTotp(false);
                 setTotpCode("");
+                setSteamCode(null);
               })}
               {renderLink("forgot password?", () => {
                 setStep("recovery-login");
