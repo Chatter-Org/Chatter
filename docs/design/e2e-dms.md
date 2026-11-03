@@ -47,7 +47,7 @@ Identity keys, room keys and epochs, sealed messages, and what the server can an
 
 ## The page around it
 
-- A script running in the page can read the seed, so the client is served with a **Content-Security-Policy on scripts** (`content_security_policy` in `static_content.rs`): the bundle, the inline theme script by a hash computed from the file served, the Google Cast sender, wasm for the camera models, and blob workers. Nothing else, and no `unsafe-inline`. Images, media, connections and frames are deliberately left open — the client loads those from anywhere. Adding an inline script or a script host means changing the policy.
+- A script running in the page can read the seed, so the client is served with a **Content-Security-Policy on scripts** (`content_security_policy` in `static_content.rs`): the bundle, the inline theme script by a hash computed from the file served, the Google Cast sender, wasm for the camera models, blob workers, and blob scripts (worklets fall under `script-src`, and the desktop app's screen-share audio worklet is a blob; only running script can make a blob URL). Nothing else, and no `unsafe-inline`. Images, media, connections and frames are deliberately left open — the client loads those from anywhere. Adding an inline script or a script host means changing the policy.
 - The key routes are **rate limited** per account: setting up or replacing keys `E2E_IDENTITY` (5 an hour, which also bounds TOTP guessing there), querying and sharing keys `E2E_KEYS`.
 
 ## The client (`packages/core/src/e2e/session.ts`)

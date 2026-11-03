@@ -23,6 +23,10 @@ use std::sync::Arc;
 /// - `https://www.gstatic.com`: the Google Cast sender and what it loads.
 /// - `'wasm-unsafe-eval'`: the camera and blur models (MediaPipe) are wasm.
 /// - `worker-src blob:`: their timer workers are made from blobs.
+/// - `blob:` in `script-src`: worklets are checked against `script-src`, and
+///   the desktop app builds its screen-share audio worklet from a blob. Only a
+///   script already running can make a blob URL, so injected markup gains
+///   nothing from it.
 fn content_security_policy(html: &str) -> String {
     use base64::Engine;
     use sha2::{Digest, Sha256};
@@ -38,7 +42,7 @@ fn content_security_policy(html: &str) -> String {
         })
         .collect();
     format!(
-        "script-src 'self' {} https://www.gstatic.com 'wasm-unsafe-eval'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'",
+        "script-src 'self' {} https://www.gstatic.com 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'",
         hashes.join(" ")
     )
 }
@@ -183,5 +187,7 @@ mod csp_tests {
         assert!(policy.starts_with("script-src 'self' "));
         assert!(!policy.contains("unsafe-inline"));
         assert!(policy.contains("object-src 'none'"));
+        // The desktop app's screen-share audio worklet is loaded from a blob.
+        assert!(policy.contains("'wasm-unsafe-eval' blob:;"));
     }
 }
