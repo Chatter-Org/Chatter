@@ -10,6 +10,17 @@
  * behind it; its files are kept by `avatarStore`, not here.
  */
 import { avatarStore } from "@/lib/avatarStore";
+import {
+  AVATAR_BRIGHTNESS,
+  AVATAR_LIGHTS,
+  AVATAR_ZOOM,
+  DEFAULT_AVATAR_LOOK,
+  type AvatarLightFrom,
+  type AvatarLook,
+} from "@/lib/avatarLook";
+
+export { AVATAR_BRIGHTNESS, AVATAR_LIGHTS, AVATAR_ZOOM, DEFAULT_AVATAR_LOOK };
+export type { AvatarLightFrom, AvatarLook };
 
 export type CameraEffect =
   | { kind: "none" }
@@ -18,20 +29,6 @@ export type CameraEffect =
   /** A VRM file kept on this device (`avatarStore`), by its id, drawn
    *  in front of one of the images (a data URL) or a plain backdrop. */
   | { kind: "avatar"; id: string; backgroundSrc?: string; zoom?: number; arms?: boolean; look?: AvatarLook };
-
-/** Where the avatar's light comes from, as the viewer sees it. */
-export type AvatarLightFrom = "front" | "left" | "right" | "above";
-
-/** How the avatar is lit and outlined; models are made for different
- *  lighting, so it is kept per avatar, as the zoom is. */
-export interface AvatarLook {
-  /** The light's strength, 1 as the avatar was first drawn. */
-  brightness: number;
-  lightFrom: AvatarLightFrom;
-  /** An outline drawn round the model, 0 for none and 1 the thickest. Any
-   *  outline the model has of its own is drawn either way. */
-  outline: number;
-}
 
 /** What can be chosen as the background; an avatar is chosen separately. */
 export type CameraBackgroundEffect = Exclude<CameraEffect, { kind: "avatar" }>;
@@ -55,13 +52,6 @@ const AVATAR_LOOK_KEY = "chatter_camera_avatar_look";
  *  for every avatar. */
 const AVATAR_ARMS_KEY = "chatter_camera_avatar_arms";
 
-/** How close the avatar's camera is: 1 frames a person-sized model's head
- *  and shoulders. Here rather than in `avatarCamera.ts` so the picker can
- *  use it without loading three.js. */
-export const AVATAR_ZOOM = { min: 0.4, max: 2, default: 1 } as const;
-export const AVATAR_BRIGHTNESS = { min: 0.4, max: 2 } as const;
-export const AVATAR_LIGHTS: AvatarLightFrom[] = ["front", "left", "right", "above"];
-export const DEFAULT_AVATAR_LOOK: AvatarLook = { brightness: 1, lightFrom: "front", outline: 0 };
 const BACKGROUNDS_KEY = "chatter_camera_backgrounds";
 
 /** Enough to choose between without filling the browser's storage. */

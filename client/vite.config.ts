@@ -6,6 +6,8 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Workers are started as modules (streamer mode's), as in the dev server.
+  worker: { format: 'es' },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

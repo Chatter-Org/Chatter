@@ -12,7 +12,7 @@
  */
 import { avatarStore } from "@/lib/avatarStore";
 import type { BreakoutBox } from "@/lib/backgroundBlur";
-import type { AvatarOverlay } from "@/lib/avatarCamera";
+import type { StreamerWorkerReply, StreamerWorkerRequest } from "@/lib/streamerWorker";
 import {
   readAvatar,
   readAvatarArms,
@@ -53,8 +53,6 @@ const DEFAULTS: StreamerSettings = {
   placement: { x: 1, y: 1, size: STREAMER_SIZE.default },
 };
 
-/** Above what any capture is shared at. */
-const MAX_FPS = 60;
 /** The face is followed at the camera avatar's rate. */
 const AVATAR_FPS = 30;
 
@@ -118,116 +116,13 @@ export interface StreamerShare {
 }
 
 /**
- * Each frame of `screen` with the avatar drawn over it. A frame goes out when
- * either changes: a still screen sends few frames of its own, and the avatar
- * should keep moving over it. The two do not keep time together, so frames
- * are held to `fps`, the share's rate: more would be drawn only for the
- * encoder to drop. A change held back goes out once the gap is up.
- */
-function composite(
-  box: Required<BreakoutBox>,
-  screen: MediaStreamTrack,
-  avatar: AvatarOverlay,
-  initial: StreamerPlacement,
-  fps: number,
-): StreamerShare {
-  const reader = new box.MediaStreamTrackProcessor({ track: screen, maxBufferSize: 1 }).readable.getReader();
-  const generator = new box.MediaStreamTrackGenerator({ kind: "video" });
-  const writer = generator.writable.getWriter();
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d", { alpha: false });
-  if (!ctx) throw new Error("This computer can't draw streamer mode.");
-  let placement = initial;
-  // Held until the next one comes, so the avatar can be redrawn over it.
-  let latest: VideoFrame | null = null;
-  const gapFor = (rate: number) => (1000 / Math.min(MAX_FPS, Math.max(1, rate))) * 0.9;
-  let minGapMs = gapFor(fps);
-  let lastMs = -Infinity;
-  // Something has changed since the last frame went out.
-  let dirty = false;
-  let held: ReturnType<typeof setTimeout> | null = null;
-  let writing = false;
-  let stopped = false;
-
-  const draw = () => {
-    if (stopped || writing || !dirty || !latest || held) return;
-    const now = performance.now();
-    const wait = lastMs + minGapMs - now;
-    if (wait > 0) {
-      held = setTimeout(() => {
-        held = null;
-        draw();
-      }, wait);
-      return;
-    }
-    lastMs = now;
-    dirty = false;
-    const width = latest.displayWidth;
-    const height = latest.displayHeight;
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
-    }
-    ctx.drawImage(latest, 0, 0, width, height);
-    const side = Math.round(Math.min(width, height * placement.size));
-    ctx.drawImage(
-      avatar.canvas,
-      Math.round((width - side) * placement.x),
-      Math.round((height - side) * placement.y),
-      side,
-      side,
-    );
-    writing = true;
-    writer
-      .write(new VideoFrame(canvas, { timestamp: Math.round(now * 1000) }))
-      .catch(() => {})
-      .finally(() => {
-        writing = false;
-        draw();
-      });
-  };
-  const changed = () => {
-    dirty = true;
-    draw();
-  };
-  avatar.onDraw = changed;
-
-  void (async () => {
-    while (!stopped) {
-      const { value: frame, done } = await reader.read().catch(() => ({ value: undefined, done: true }));
-      if (done || !frame) break;
-      latest?.close();
-      latest = frame;
-      changed();
-    }
-    latest?.close();
-    latest = null;
-  })();
-
-  return {
-    track: generator,
-    setPlacement: (next) => (placement = next),
-    setZoom: avatar.setZoom,
-    setArmTracking: avatar.setArmTracking,
-    setLook: avatar.setLook,
-    setFps: (rate) => (minGapMs = gapFor(rate)),
-    stop: () => {
-      if (stopped) return;
-      stopped = true;
-      if (held) clearTimeout(held);
-      avatar.stop();
-      reader.cancel().catch(() => {});
-      writer.close().catch(() => {});
-      generator.stop();
-    },
-  };
-}
-
-/**
  * Turns on the camera and the avatar and puts it over `screen`, at up to
- * `fps` frames a second. Anything that
- * fails throws, with the camera already off again; the share can go ahead
- * without the avatar, since nothing private was going to be in it.
+ * `fps` frames a second. The drawing is all done in a worker
+ * (`streamerWorker.ts`), so a heavy avatar does not slow the page: it is
+ * handed the screen's and the camera's frames and draws the track returned.
+ * Anything that fails throws, with the camera already off again; the share
+ * can go ahead without the avatar, since nothing private was going to be in
+ * it.
  */
 export async function startStreamerShare(
   screen: MediaStreamTrack,
@@ -236,8 +131,8 @@ export async function startStreamerShare(
 ): Promise<StreamerShare> {
   const avatarId = streamerAvatarId(settings);
   if (!avatarId) throw new Error("Pick an avatar for streamer mode first.");
-  const box = globalThis as unknown as BreakoutBox;
   if (!streamerModeSupported()) throw new Error("Streamer mode needs Chrome, Edge or the desktop app.");
+  const box = globalThis as unknown as Required<BreakoutBox>;
   // Enough to read a face; more only costs the landmarker time.
   const camera = await navigator.mediaDevices.getUserMedia({
     video: {
@@ -248,23 +143,66 @@ export async function startStreamerShare(
     },
   });
   const source = camera.getVideoTracks()[0];
+  let worker: Worker | null = null;
+  let generator: MediaStreamTrack | null = null;
   try {
-    const [{ startAvatarOverlay }, model] = await Promise.all([
-      import("@/lib/avatarCamera"),
-      readAvatar(avatarId),
-    ]);
-    const avatar = await startAvatarOverlay(source, AVATAR_FPS, model, {
-      zoom: readAvatarZoom(avatarId),
-      arms: readAvatarArms(),
-      look: readAvatarLook(avatarId),
+    const model = await readAvatar(avatarId);
+    const out = new box.MediaStreamTrackGenerator({ kind: "video" });
+    generator = out;
+    const started = new Worker(new URL("./streamerWorker.ts", import.meta.url), { type: "module" });
+    worker = started;
+    const send = (message: StreamerWorkerRequest, transfer: Transferable[] = []) =>
+      started.postMessage(message, transfer);
+    const screenFrames = new box.MediaStreamTrackProcessor({ track: screen, maxBufferSize: 1 }).readable;
+    const cameraFrames = new box.MediaStreamTrackProcessor({ track: source, maxBufferSize: 1 }).readable;
+    const ready = new Promise<void>((resolve, reject) => {
+      started.onmessage = ({ data }: MessageEvent<StreamerWorkerReply>) => {
+        if (data.type === "ready") resolve();
+        else reject(new Error(data.message || "Your avatar couldn't be drawn."));
+      };
+      started.onerror = (event) => {
+        event.preventDefault();
+        console.warn("[streamer-mode] worker failed:", event.message);
+        reject(new Error("Your avatar couldn't be drawn."));
+      };
     });
-    try {
-      return composite(box as Required<BreakoutBox>, screen, avatar, settings.placement, fps);
-    } catch (err) {
-      avatar.stop();
-      throw err;
-    }
+    send(
+      {
+        type: "start",
+        screen: screenFrames,
+        camera: cameraFrames,
+        out: out.writable,
+        model,
+        zoom: readAvatarZoom(avatarId),
+        arms: readAvatarArms(),
+        look: readAvatarLook(avatarId),
+        placement: settings.placement,
+        fps,
+        avatarFps: AVATAR_FPS,
+      },
+      [screenFrames, cameraFrames, out.writable, model],
+    );
+    await ready;
+
+    let stopped = false;
+    return {
+      track: out,
+      setPlacement: (placement) => send({ type: "placement", placement }),
+      setZoom: (zoom) => send({ type: "zoom", zoom }),
+      setArmTracking: (on) => send({ type: "arms", on }),
+      setLook: (look) => send({ type: "look", look }),
+      setFps: (rate) => send({ type: "fps", fps: rate }),
+      stop: () => {
+        if (stopped) return;
+        stopped = true;
+        started.terminate();
+        out.stop();
+        source.stop();
+      },
+    };
   } catch (err) {
+    worker?.terminate();
+    generator?.stop();
     source.stop();
     throw err;
   }

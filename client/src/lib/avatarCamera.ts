@@ -20,18 +20,21 @@ import {
 } from "@mediapipe/tasks-vision";
 import wasmLoaderPath from "@mediapipe/tasks-vision/vision_wasm_internal.js?url";
 import wasmBinaryPath from "@mediapipe/tasks-vision/vision_wasm_internal.wasm?url";
+import workerWasmLoaderPath from "@mediapipe/tasks-vision/vision_wasm_module_internal.js?url";
+import workerWasmBinaryPath from "@mediapipe/tasks-vision/vision_wasm_module_internal.wasm?url";
 import modelAssetPath from "@/assets/models/face_landmarker.task?url";
 import poseModelAssetPath from "@/assets/models/pose_landmarker_lite.task?url";
 import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import type { BlurredCamera, BreakoutBox } from "@/lib/backgroundBlur";
+// Not `cameraBackgrounds`: this is also loaded in streamer mode's worker.
 import {
   AVATAR_ZOOM,
   DEFAULT_AVATAR_LOOK,
   type AvatarLightFrom,
   type AvatarLook,
-} from "@/lib/cameraBackgrounds";
+} from "@/lib/avatarLook";
 
 /** The avatar is drawn at this size whatever the camera's. */
 const WIDTH = 1280;
@@ -108,11 +111,17 @@ let lastTimestamp = 0;
 
 let poseLandmarkerPromise: Promise<PoseLandmarker | null> | null = null;
 
+/** MediaPipe's runtime: the page loads it as a classic script, and streamer
+ *  mode's worker, a module that cannot, as the ES-module build. */
+const fileset =
+  typeof document === "undefined"
+    ? { wasmLoaderPath: workerWasmLoaderPath, wasmBinaryPath: workerWasmBinaryPath }
+    : { wasmLoaderPath, wasmBinaryPath };
+
 /** One pose landmarker for the page, for the arms. Without it the arms rest,
  *  which is no reason to fail the camera. */
 function loadPoseLandmarker(): Promise<PoseLandmarker | null> {
   poseLandmarkerPromise ??= (async () => {
-    const fileset = { wasmLoaderPath, wasmBinaryPath };
     const options = (delegate: "GPU" | "CPU") => ({
       baseOptions: { modelAssetPath: poseModelAssetPath, delegate },
       runningMode: "VIDEO" as const,
@@ -134,7 +143,6 @@ function loadPoseLandmarker(): Promise<PoseLandmarker | null> {
 /** One landmarker for the page; building it is the slow part. */
 function loadLandmarker(): Promise<FaceLandmarker> {
   landmarkerPromise ??= (async () => {
-    const fileset = { wasmLoaderPath, wasmBinaryPath };
     const options = (delegate: "GPU" | "CPU") => ({
       baseOptions: { modelAssetPath, delegate },
       runningMode: "VIDEO" as const,
@@ -476,10 +484,11 @@ function backdropTexture(image: ImageBitmap): THREE.CanvasTexture {
 /**
  * The avatar's scene: `draw` reads the face (and while arm tracking is on,
  * every other frame, the arms) off a camera frame, poses the avatar from them and renders it onto
- * `canvas`. Owns everything it is given;
- * `dispose` lets it all go.
+ * `canvas` (the page's, or in streamer mode's worker an offscreen one). Owns
+ * everything it is given; `dispose` lets it all go.
  */
-function makeScene(
+function makeScene<C extends HTMLCanvasElement | OffscreenCanvas>(
+  canvas: C,
   landmarker: FaceLandmarker,
   vrm: VRM,
   backdrop: THREE.CanvasTexture | null,
@@ -488,7 +497,6 @@ function makeScene(
   look: AvatarLook,
   frame: Frame = CAMERA_FRAME,
 ) {
-  const canvas = document.createElement("canvas");
   canvas.width = frame.width;
   canvas.height = frame.height;
   let renderer: THREE.WebGLRenderer;
@@ -572,7 +580,7 @@ function makeScene(
   return { canvas, draw, dispose, setZoom, setArmTracking, setLook };
 }
 
-type AvatarScene = ReturnType<typeof makeScene>;
+type AvatarScene = ReturnType<typeof makeScene<HTMLCanvasElement>>;
 
 /**
  * Chromium (Chrome, Edge, the desktop app): the camera's frames in, the
@@ -697,7 +705,7 @@ export async function startAvatarCamera(
   try {
     if (image) backdrop = backdropTexture(image);
     const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
-    const avatar = makeScene(landmarker, vrm, backdrop, zoom, arms, look);
+    const avatar = makeScene(document.createElement("canvas"), landmarker, vrm, backdrop, zoom, arms, look);
     const box = globalThis as unknown as BreakoutBox;
     if (box.MediaStreamTrackProcessor && box.MediaStreamTrackGenerator && typeof VideoFrame !== "undefined") {
       return avatarWithBreakoutBox(box as Required<BreakoutBox>, avatar, source, fps);
@@ -712,73 +720,21 @@ export async function startAvatarCamera(
   }
 }
 
-export interface AvatarOverlay {
-  /** The avatar on a clear background, redrawn as the face moves. */
-  canvas: HTMLCanvasElement;
-  /** Called after each redraw, for whoever copies `canvas` onwards. */
-  onDraw: (() => void) | null;
-  setZoom: (zoom: number) => void;
-  setArmTracking: (on: boolean) => void;
-  setLook: (look: AvatarLook) => void;
-  /** Stops the avatar and `source` with it. */
-  stop: () => void;
-}
+export type AvatarOverlayScene = ReturnType<typeof makeScene<OffscreenCanvas>>;
 
 /**
- * Streamer mode's avatar: the VRM in `model` following the face in `source`
- * at up to `fps`, drawn square on a clear `canvas` rather than sent as a
- * camera. Chromium only — it reads the camera through the breakout box, so it
- * keeps going while the sharer's tab is hidden, which it always is mid-share.
+ * Streamer mode's avatar, in its worker: the VRM in `model` drawn square on a
+ * clear offscreen canvas rather than sent as a camera. Its `draw` takes each
+ * camera frame; whoever reads the camera calls it, and copies `canvas` onwards.
  */
-export async function startAvatarOverlay(
-  source: MediaStreamTrack,
-  fps: number,
+export async function startAvatarOverlayScene(
   model: ArrayBuffer,
   { zoom = AVATAR_ZOOM.default, arms = true, look = DEFAULT_AVATAR_LOOK }: Omit<AvatarOptions, "image"> = {},
-): Promise<AvatarOverlay> {
-  const box = globalThis as unknown as BreakoutBox;
-  if (!box.MediaStreamTrackProcessor) throw new Error("Streamer mode needs Chrome, Edge or the desktop app.");
+): Promise<AvatarOverlayScene> {
   const [landmarker, vrm] = await Promise.all([loadLandmarker(), loadVrm(model)]);
-  const avatar = makeScene(landmarker, vrm, null, zoom, arms, look, {
+  return makeScene(new OffscreenCanvas(OVERLAY_SIZE, OVERLAY_SIZE), landmarker, vrm, null, zoom, arms, look, {
     width: OVERLAY_SIZE,
     height: OVERLAY_SIZE,
     transparent: true,
   });
-  const reader = new box.MediaStreamTrackProcessor({ track: source, maxBufferSize: 1 }).readable.getReader();
-  const minGapUs = (1_000_000 / fps) * 0.9;
-  let lastUs = -Infinity;
-  let stopped = false;
-  const overlay: AvatarOverlay = {
-    canvas: avatar.canvas,
-    onDraw: null,
-    setZoom: avatar.setZoom,
-    setArmTracking: avatar.setArmTracking,
-    setLook: avatar.setLook,
-    stop: () => {
-      if (stopped) return;
-      stopped = true;
-      overlay.onDraw = null;
-      reader.cancel().catch(() => {});
-      source.stop();
-    },
-  };
-
-  void (async () => {
-    while (!stopped) {
-      const { value: frame, done } = await reader.read().catch(() => ({ value: undefined, done: true }));
-      if (done || !frame) break;
-      try {
-        if (stopped || frame.timestamp - lastUs < minGapUs) continue;
-        const deltaS = lastUs === -Infinity ? 0 : (frame.timestamp - lastUs) / 1_000_000;
-        lastUs = frame.timestamp;
-        avatar.draw(frame, deltaS);
-        overlay.onDraw?.();
-      } finally {
-        frame.close();
-      }
-    }
-    avatar.dispose();
-  })();
-
-  return overlay;
 }
