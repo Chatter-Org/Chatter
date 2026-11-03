@@ -53,7 +53,7 @@ const DEFAULTS: StreamerSettings = {
   placement: { x: 1, y: 1, size: STREAMER_SIZE.default },
 };
 
-/** Above what any capture is shared at; the sender caps it to the chosen rate. */
+/** Above what any capture is shared at. */
 const MAX_FPS = 60;
 /** The face is followed at the camera avatar's rate. */
 const AVATAR_FPS = 30;
@@ -111,6 +111,8 @@ export interface StreamerShare {
   setZoom: (zoom: number) => void;
   setArmTracking: (on: boolean) => void;
   setLook: (look: AvatarLook) => void;
+  /** The share's frame rate, which the frames going out are kept to. */
+  setFps: (fps: number) => void;
   /** Stops the avatar and its camera. The capture is the caller's to stop. */
   stop: () => void;
 }
@@ -118,13 +120,16 @@ export interface StreamerShare {
 /**
  * Each frame of `screen` with the avatar drawn over it. A frame goes out when
  * either changes: a still screen sends few frames of its own, and the avatar
- * should keep moving over it.
+ * should keep moving over it. The two do not keep time together, so frames
+ * are held to `fps`, the share's rate: more would be drawn only for the
+ * encoder to drop. A change held back goes out once the gap is up.
  */
 function composite(
   box: Required<BreakoutBox>,
   screen: MediaStreamTrack,
   avatar: AvatarOverlay,
   initial: StreamerPlacement,
+  fps: number,
 ): StreamerShare {
   const reader = new box.MediaStreamTrackProcessor({ track: screen, maxBufferSize: 1 }).readable.getReader();
   const generator = new box.MediaStreamTrackGenerator({ kind: "video" });
@@ -135,16 +140,28 @@ function composite(
   let placement = initial;
   // Held until the next one comes, so the avatar can be redrawn over it.
   let latest: VideoFrame | null = null;
-  const minGapMs = (1000 / MAX_FPS) * 0.9;
+  const gapFor = (rate: number) => (1000 / Math.min(MAX_FPS, Math.max(1, rate))) * 0.9;
+  let minGapMs = gapFor(fps);
   let lastMs = -Infinity;
+  // Something has changed since the last frame went out.
+  let dirty = false;
+  let held: ReturnType<typeof setTimeout> | null = null;
   let writing = false;
   let stopped = false;
 
   const draw = () => {
-    if (stopped || writing || !latest) return;
+    if (stopped || writing || !dirty || !latest || held) return;
     const now = performance.now();
-    if (now - lastMs < minGapMs) return;
+    const wait = lastMs + minGapMs - now;
+    if (wait > 0) {
+      held = setTimeout(() => {
+        held = null;
+        draw();
+      }, wait);
+      return;
+    }
     lastMs = now;
+    dirty = false;
     const width = latest.displayWidth;
     const height = latest.displayHeight;
     if (canvas.width !== width || canvas.height !== height) {
@@ -164,9 +181,16 @@ function composite(
     writer
       .write(new VideoFrame(canvas, { timestamp: Math.round(now * 1000) }))
       .catch(() => {})
-      .finally(() => (writing = false));
+      .finally(() => {
+        writing = false;
+        draw();
+      });
   };
-  avatar.onDraw = draw;
+  const changed = () => {
+    dirty = true;
+    draw();
+  };
+  avatar.onDraw = changed;
 
   void (async () => {
     while (!stopped) {
@@ -174,7 +198,7 @@ function composite(
       if (done || !frame) break;
       latest?.close();
       latest = frame;
-      draw();
+      changed();
     }
     latest?.close();
     latest = null;
@@ -186,9 +210,11 @@ function composite(
     setZoom: avatar.setZoom,
     setArmTracking: avatar.setArmTracking,
     setLook: avatar.setLook,
+    setFps: (rate) => (minGapMs = gapFor(rate)),
     stop: () => {
       if (stopped) return;
       stopped = true;
+      if (held) clearTimeout(held);
       avatar.stop();
       reader.cancel().catch(() => {});
       writer.close().catch(() => {});
@@ -198,13 +224,15 @@ function composite(
 }
 
 /**
- * Turns on the camera and the avatar and puts it over `screen`. Anything that
+ * Turns on the camera and the avatar and puts it over `screen`, at up to
+ * `fps` frames a second. Anything that
  * fails throws, with the camera already off again; the share can go ahead
  * without the avatar, since nothing private was going to be in it.
  */
 export async function startStreamerShare(
   screen: MediaStreamTrack,
   settings: StreamerSettings,
+  fps: number,
 ): Promise<StreamerShare> {
   const avatarId = streamerAvatarId(settings);
   if (!avatarId) throw new Error("Pick an avatar for streamer mode first.");
@@ -231,7 +259,7 @@ export async function startStreamerShare(
       look: readAvatarLook(avatarId),
     });
     try {
-      return composite(box as Required<BreakoutBox>, screen, avatar, settings.placement);
+      return composite(box as Required<BreakoutBox>, screen, avatar, settings.placement, fps);
     } catch (err) {
       avatar.stop();
       throw err;

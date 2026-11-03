@@ -536,6 +536,8 @@ export function useWebRTCScreen() {
           // Some capture sources refuse a live frame rate change. The sender
           // cap below still bounds what we actually encode and send.
         }
+        // Streamer mode draws its own frames, at the share's rate.
+        streamerShareRef.current?.setFps(profile.targetFps);
       }
       const videoSender = pc.getSenders().find((s) => s.track?.kind === "video");
       // Streamer mode sends its own track, not the capture's.
@@ -620,7 +622,7 @@ export function useWebRTCScreen() {
       let sent = stream;
       if (streamer.on && streamerModeSupported()) {
         try {
-          streamerShareRef.current = await startStreamerShare(capturedTrack, streamer);
+          streamerShareRef.current = await startStreamerShare(capturedTrack, streamer, profile.targetFps);
           sent = new MediaStream([streamerShareRef.current.track, ...stream.getAudioTracks()]);
         } catch (err) {
           console.warn("[screen-share] streamer mode unavailable:", err);
