@@ -9,16 +9,25 @@ interface VoiceChannelStatusProps {
   /** Only someone in the call may set it. */
   canEdit: boolean;
   onSave: (status: string) => void;
+  /** Open with the field already showing, as when set from the channel row. */
+  startEditing?: boolean;
+  /** Called when the field closes, saved or not. */
+  onEditEnd?: () => void;
 }
 
 /**
  * The line under a voice channel's name. Shown to everyone while it is set;
- * the people in the call can click it to change it, or set one when there is
- * none (the prompt appears on hover, and always on a touch screen). Enter or
- * leaving the field saves, Escape cancels, and an empty field clears it.
+ * the people in the call can click it to change it. Setting one when there is
+ * none starts from a button on the channel row, which mounts this with
+ * `startEditing`. Enter or leaving the field saves, Escape cancels, and an
+ * empty field clears it.
  */
-export function VoiceChannelStatus({ status, canEdit, onSave }: VoiceChannelStatusProps) {
-  const [draft, setDraft] = useState<string | null>(null);
+export function VoiceChannelStatus({ status, canEdit, onSave, startEditing, onEditEnd }: VoiceChannelStatusProps) {
+  const [draft, setDraftState] = useState<string | null>(startEditing ? (status ?? "") : null);
+  const setDraft = (next: string | null) => {
+    setDraftState(next);
+    if (next === null) onEditEnd?.();
+  };
 
   if (draft !== null) {
     const commit = () => {
@@ -48,7 +57,7 @@ export function VoiceChannelStatus({ status, canEdit, onSave }: VoiceChannelStat
     );
   }
 
-  if (!status && !canEdit) return null;
+  if (!status) return null;
 
   if (!canEdit) {
     return (
@@ -62,12 +71,10 @@ export function VoiceChannelStatus({ status, canEdit, onSave }: VoiceChannelStat
     <button
       type="button"
       onClick={() => setDraft(status ?? "")}
-      title={status ? `${status} (click to change)` : "Set a channel status"}
-      className={`flex w-full min-w-0 items-center gap-1 rounded px-1 text-left text-[0.5625rem] leading-3 text-muted-foreground transition-opacity hover:text-foreground cursor-pointer ${
-        status ? "" : "opacity-0 group-hover/voice:opacity-100 focus-visible:opacity-100 max-md:opacity-100"
-      }`}
+      title={`${status} (click to change)`}
+      className="flex w-full min-w-0 items-center gap-1 rounded px-1 text-left text-[0.5625rem] leading-3 text-muted-foreground transition-opacity hover:text-foreground cursor-pointer"
     >
-      <span className="truncate">{status || "Set a channel status"}</span>
+      <span className="truncate">{status}</span>
       <Pencil className="h-[9px] w-[9px] shrink-0 opacity-0 group-hover/voice:opacity-70 max-md:opacity-70" />
     </button>
   );

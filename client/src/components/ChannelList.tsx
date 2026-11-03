@@ -5,7 +5,7 @@ import { useChannelLinkText } from "@/hooks/useChannelLinkText";
 import {
   Hash, Volume2, Volume1, VolumeX, Plus, Pencil, Trash2, ChevronDown, ChevronRight,
   MicOff, PhoneOff, HeadphoneOff, Camera, FolderPlus, GripVertical, PanelLeftClose, PanelLeftOpen, Lock, Shield, ImagePlus, X, Scissors,
-  Film, LayoutList, Move3d, PenTool, Sparkles, Bot, ShieldOff, MessagesSquare,
+  Film, LayoutList, Move3d, PenTool, Sparkles, Bot, ShieldOff, MessagesSquare, MessageSquareText,
 } from "lucide-react";
 import { displayUserId } from "@/lib/utils";
 import { readProfileAccent, speakingStyle } from "@/lib/profileTheme";
@@ -212,6 +212,8 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
   // Per-user local volume (0-1) and expanded volume control
   const [userVolumes, setUserVolumes] = useState<Record<string, number>>({});
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
+  // The voice channel whose status is being written while it has none yet.
+  const [statusDraftChannel, setStatusDraftChannel] = useState<string | null>(null);
 
   const handleVolumeChange = useCallback((userId: string, vol: number) => {
     setUserVolumes((prev) => ({ ...prev, [userId]: vol }));
@@ -581,15 +583,21 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
             showGrip={canManage}
             badge={occupiedSince ? <VoiceTimer since={occupiedSince} /> : undefined}
             inCall={inThisCall}
+            onSetStatus={inThisCall && !callStatus ? () => setStatusDraftChannel(ch.channel_id) : undefined}
           />
         </div>
-        {holdsCall && (callStatus || inThisCall) && (
+        {/* Only drawn while there is a status (or one being written): an
+            empty line kept for the prompt pushed the call's occupants away
+            from its name. The prompt lives on the row instead. */}
+        {holdsCall && (callStatus || (inThisCall && statusDraftChannel === ch.channel_id)) && (
           <div className="ml-7 pr-1 pb-0.5">
             <VoiceChannelStatus
               key={callStatus ?? ""}
               status={callStatus}
               canEdit={inThisCall}
+              startEditing={!callStatus}
               onSave={(status) => setVoiceChannelStatus(ch.channel_id, status)}
+              onEditEnd={() => setStatusDraftChannel(null)}
             />
           </div>
         )}
@@ -1416,6 +1424,7 @@ function ChannelItem({
   showGrip,
   badge,
   inCall,
+  onSetStatus,
 }: {
   channel: { channel_id: string; name: string; topic?: string };
   isSelected: boolean;
@@ -1434,6 +1443,8 @@ function ChannelItem({
   badge?: React.ReactNode;
   /** The call you are in: its name is drawn a quarter larger so it stands out. */
   inCall?: boolean;
+  /** Set on the call you are in while it has no status: offers to write one. */
+  onSetStatus?: () => void;
 }) {
   const unreadHighlight = !isSelected && hasUnread;
   // The count rides on the right with the mention badge, so every name
@@ -1462,8 +1473,18 @@ function ChannelItem({
         <span aria-hidden className="absolute -left-2 top-1/2 h-2 w-1 -translate-y-1/2 rounded-r-full bg-foreground" />
       )}
       {icon}
-      <span className={`truncate font-medium ${inCall ? "text-[calc(var(--text-sm)*1.25)]" : "text-sm"}`}>{channel.name}</span>
+      <span className={`truncate font-medium leading-5 ${inCall ? "text-[calc(var(--text-sm)*1.15)]" : "text-sm"}`}>{channel.name}</span>
       {badge}
+      {onSetStatus && (
+        <button
+          type="button"
+          className={`${hasRightBadge || notifyRoomId ? "" : "ml-auto"} shrink-0 p-0.5 rounded can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 hover:bg-accent transition-opacity`}
+          title="Set a channel status"
+          onClick={(e) => { e.stopPropagation(); onSetStatus(); }}
+        >
+          <MessageSquareText className="h-3 w-3" />
+        </button>
+      )}
       {showUnreadCount && (
         <span
           className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1.5 text-3xs font-semibold tabular-nums leading-none text-foreground shrink-0"
@@ -1495,7 +1516,7 @@ function ChannelItem({
       {canManage && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-            <button className={`${hasRightBadge || notifyRoomId ? "" : "ml-auto"} p-0.5 rounded can-hover:opacity-0 can-hover:group-hover:opacity-100 hover:bg-accent transition-opacity`}>
+            <button className={`${hasRightBadge || notifyRoomId || onSetStatus ? "" : "ml-auto"} p-0.5 rounded can-hover:opacity-0 can-hover:group-hover:opacity-100 hover:bg-accent transition-opacity`}>
               <Pencil className="h-3 w-3" />
             </button>
           </DropdownMenuTrigger>
