@@ -580,6 +580,7 @@ export function ChannelList({ asDrawer = false, onChannelSelected, onJoinVoiceCh
             }
             showGrip={canManage}
             badge={occupiedSince ? <VoiceTimer since={occupiedSince} /> : undefined}
+            inCall={inThisCall}
           />
         </div>
         {holdsCall && (callStatus || inThisCall) && (
@@ -1414,6 +1415,7 @@ function ChannelItem({
   icon,
   showGrip,
   badge,
+  inCall,
 }: {
   channel: { channel_id: string; name: string; topic?: string };
   isSelected: boolean;
@@ -1430,6 +1432,8 @@ function ChannelItem({
   icon: React.ReactNode;
   showGrip?: boolean;
   badge?: React.ReactNode;
+  /** The call you are in: its name is drawn a quarter larger so it stands out. */
+  inCall?: boolean;
 }) {
   const unreadHighlight = !isSelected && hasUnread;
   // The count rides on the right with the mention badge, so every name
@@ -1458,7 +1462,7 @@ function ChannelItem({
         <span aria-hidden className="absolute -left-2 top-1/2 h-2 w-1 -translate-y-1/2 rounded-r-full bg-foreground" />
       )}
       {icon}
-      <span className="truncate text-sm font-medium">{channel.name}</span>
+      <span className={`truncate font-medium ${inCall ? "text-[calc(var(--text-sm)*1.25)]" : "text-sm"}`}>{channel.name}</span>
       {badge}
       {showUnreadCount && (
         <span
