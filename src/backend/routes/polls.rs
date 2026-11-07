@@ -244,6 +244,24 @@ pub(crate) async fn create_poll(
     validate(&req.question, &req.options, req.duration_minutes)
         .map_err(|e| error_response(StatusCode::BAD_REQUEST, &e))?;
 
+    let running = state
+        .db
+        .collection::<PollRecord>("polls")
+        .count_documents(doc! {
+            "room_id": &room_id,
+            "channel_id": &channel_id,
+            "closed": false,
+            "ends_at": { "$gt": now_millis() },
+        })
+        .await
+        .unwrap_or(0) as i64;
+    if running >= MAX_OPEN_POLLS {
+        return Err(error_response(
+            StatusCode::CONFLICT,
+            "This channel already has 3 polls running. Wait for one to end.",
+        ));
+    }
+
     let question = req.question.trim().to_string();
     let options: Vec<String> = req
         .options
@@ -480,9 +498,10 @@ pub(crate) async fn get_poll(
     Ok(Json(json!({ "poll": poll_state_value(&record, &tally) })))
 }
 
-/// How many running polls a channel's banner is told about. Past a few the
-/// banner is a second timeline; the rest are one scroll away in the channel.
-const OPEN_POLLS_LIMIT: i64 = 5;
+/// How many polls may run in one channel at once. A fourth is refused until
+/// one ends: past a few the banner is a second timeline, and a channel of
+/// polls is one nobody answers. Mirrored by `MAX_OPEN_POLLS` in core.
+const MAX_OPEN_POLLS: i64 = 3;
 
 #[derive(serde::Deserialize)]
 pub(crate) struct OpenPollsQuery {
@@ -544,7 +563,7 @@ pub(crate) async fn list_open_polls(
         .collection::<PollRecord>("polls")
         .find(filter)
         .sort(doc! { "created_at": -1 })
-        .limit(OPEN_POLLS_LIMIT)
+        .limit(MAX_OPEN_POLLS)
         .await
     {
         while let Ok(Some(record)) = cursor.try_next().await {

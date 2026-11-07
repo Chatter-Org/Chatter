@@ -15,6 +15,8 @@ export const MAX_QUESTION_LEN = 300;
 export const MAX_OPTION_LEN = 100;
 export const MIN_OPTIONS = 2;
 export const MAX_OPTIONS = 10;
+/** Polls that may run in one channel at once; the server refuses a fourth. */
+export const MAX_OPEN_POLLS = 3;
 
 /** How long a poll may run, as the composer offers it. The last of these is
  *  the server's `MAX_DURATION_MINUTES`. */

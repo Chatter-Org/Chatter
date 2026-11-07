@@ -48,6 +48,8 @@ import { CommandBar } from "./CommandBar";
 import { AddToDMDialog } from "./AddToDMDialog";
 import { PollDialog } from "./PollDialog";
 import { OpenPollsBanner } from "./OpenPollsBanner";
+import { useOpenPolls } from "@/hooks/useOpenPolls";
+import { MAX_OPEN_POLLS } from "@/lib/polls";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -162,6 +164,8 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [gifOpen, setGifOpen] = useState(false);
   const [pollOpen, setPollOpen] = useState(false);
+  const openPolls = useOpenPolls();
+  const pollsFull = openPolls.length >= MAX_OPEN_POLLS;
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionSearch, setMentionSearch] = useState("");
   const [mentionStart, setMentionStart] = useState(-1);
@@ -1800,7 +1804,7 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
         />
       )}
 
-      {roomInfo?.room_type === "text" && <OpenPollsBanner onJump={jumpToMessage} />}
+      {roomInfo?.room_type === "text" && <OpenPollsBanner polls={openPolls} onJump={jumpToMessage} />}
 
       {/* Unread messages banner */}
       {roomUnreadBannerCount > 0 && (
@@ -2201,9 +2205,9 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
                     {isSpoiler ? "Turn off spoiler" : "Mark as spoiler"}
                   </DropdownMenuItem>
                   {can(state, "send_messages") && (
-                    <DropdownMenuItem onSelect={() => setPollOpen(true)}>
+                    <DropdownMenuItem disabled={pollsFull} onSelect={() => setPollOpen(true)}>
                       <BarChart3 className="h-4 w-4" />
-                      Create a poll
+                      {pollsFull ? "Polls full — wait for one to end" : "Create a poll"}
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
@@ -2250,7 +2254,8 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
                 size="icon"
                 className="shrink-0"
                 onClick={() => setPollOpen(true)}
-                title="Create a poll"
+                disabled={pollsFull}
+                title={pollsFull ? "This channel has 3 polls running. Wait for one to end." : "Create a poll"}
               >
                 <BarChart3 className="h-4 w-4" />
               </Button>
