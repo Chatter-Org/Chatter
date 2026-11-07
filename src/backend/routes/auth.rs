@@ -42,25 +42,78 @@ fn build_totp(secret_base32: &str, username: &str) -> Result<TOTP, String> {
     .map_err(|e| format!("TOTP error: {}", e))
 }
 
-fn hash_recovery_code(code: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(code.as_bytes());
-    hex::encode(hasher.finalize())
+/// Recovery codes are as good as a password (with one, the account's password
+/// is reset), so they are random enough to resist guessing (16 characters from
+/// a 32-letter alphabet, 80 bits) and stored the way passwords are: Argon2 with
+/// a per-code salt. A leaked database cannot be brute-forced offline.
+const RECOVERY_CODE_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const RECOVERY_CODE_LEN: usize = 16;
+
+/// What gets hashed and compared: upper case, letters and digits only, so the
+/// dashes a code is shown with (and stray spaces) do not matter.
+fn normalize_recovery_code(code: &str) -> String {
+    code.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
 }
 
+fn hash_recovery_code(code: &str) -> String {
+    hash_password(&normalize_recovery_code(code))
+}
+
+/// Codes made before this were an unsalted SHA-256 hex digest of an 8-character
+/// code. They still verify, so nobody is locked out, but they are weak:
+/// regenerating the codes replaces them.
+fn is_legacy_recovery_hash(stored: &str) -> bool {
+    stored.len() == 64 && stored.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn recovery_code_matches(code: &str, stored: &str) -> bool {
+    if is_legacy_recovery_hash(stored) {
+        let mut hasher = Sha256::new();
+        hasher.update(normalize_recovery_code(code).as_bytes());
+        let digest = hex::encode(hasher.finalize());
+        // Constant time, though the digest is of a code, not a secret key.
+        return digest.len() == stored.len()
+            && digest
+                .bytes()
+                .zip(stored.bytes())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b.to_ascii_lowercase()))
+                == 0;
+    }
+    verify_password(&normalize_recovery_code(code), stored)
+}
+
+/// Index of the stored hash a presented code matches. Argon2 is deliberately
+/// slow, so this runs off the async workers.
+async fn find_recovery_code(code: &str, stored: &[String]) -> Option<usize> {
+    let code = code.to_string();
+    let stored = stored.to_vec();
+    tokio::task::spawn_blocking(move || stored.iter().position(|h| recovery_code_matches(&code, h)))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// `count` fresh codes: what to show the person once, and what to store.
 fn generate_recovery_codes(count: usize) -> (Vec<String>, Vec<String>) {
     use rand::Rng;
-    let chars: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let mut rng = rand::thread_rng();
     let mut plaintext = Vec::with_capacity(count);
     let mut hashed = Vec::with_capacity(count);
     for _ in 0..count {
-        let code: String = (0..8)
-            .map(|_| chars[rng.gen_range(0..chars.len())] as char)
+        let raw: String = (0..RECOVERY_CODE_LEN)
+            .map(|_| RECOVERY_CODE_ALPHABET[rng.gen_range(0..RECOVERY_CODE_ALPHABET.len())] as char)
             .collect();
-        let hash = hash_recovery_code(&code);
-        plaintext.push(code);
-        hashed.push(hash);
+        hashed.push(hash_recovery_code(&raw));
+        let shown = raw
+            .as_bytes()
+            .chunks(4)
+            .map(|c| std::str::from_utf8(c).unwrap())
+            .collect::<Vec<_>>()
+            .join("-");
+        plaintext.push(shown);
     }
     (plaintext, hashed)
 }
@@ -80,8 +133,7 @@ pub(crate) async fn verify_totp_or_recovery(
     }
 
     // Try recovery codes
-    let code_hash = hash_recovery_code(&code.to_uppercase());
-    if let Some(pos) = user.recovery_codes.iter().position(|h| h == &code_hash) {
+    if let Some(pos) = find_recovery_code(code, &user.recovery_codes).await {
         // Remove used recovery code from DB
         let mut remaining = user.recovery_codes.clone();
         remaining.remove(pos);
@@ -699,11 +751,8 @@ pub(crate) async fn recovery_login(
     }
 
     // Verify recovery code
-    let code_hash = hash_recovery_code(&req.recovery_code.to_uppercase());
-    let pos = user
-        .recovery_codes
-        .iter()
-        .position(|h| h == &code_hash)
+    let pos = find_recovery_code(&req.recovery_code, &user.recovery_codes)
+        .await
         .ok_or_else(|| error_response(StatusCode::FORBIDDEN, "Invalid recovery code"))?;
 
     // Remove used recovery code from DB
@@ -1290,4 +1339,30 @@ pub(crate) async fn revoke_session(
     }
 
     Ok(Json(json!({ "success": true })))
+}
+
+#[cfg(test)]
+mod recovery_code_tests {
+    use super::*;
+
+    #[test]
+    fn new_codes_are_long_salted_and_verify_however_typed() {
+        let (shown, stored) = generate_recovery_codes(2);
+        assert_eq!(shown[0].len(), RECOVERY_CODE_LEN + 3);
+        assert!(stored[0].starts_with("$argon2"));
+        assert_ne!(stored[0], stored[1]);
+        let typed = shown[0].to_lowercase().replace('-', " ");
+        assert!(recovery_code_matches(&typed, &stored[0]));
+        assert!(!recovery_code_matches(&shown[1], &stored[0]));
+    }
+
+    #[test]
+    fn old_sha256_codes_still_verify() {
+        let mut h = Sha256::new();
+        h.update(b"ABCD1234");
+        let legacy = hex::encode(h.finalize());
+        assert!(is_legacy_recovery_hash(&legacy));
+        assert!(recovery_code_matches("abcd1234", &legacy));
+        assert!(!recovery_code_matches("ABCD1235", &legacy));
+    }
 }
