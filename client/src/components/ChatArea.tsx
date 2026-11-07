@@ -47,6 +47,7 @@ import { Search, X, ArrowDown, BarChart3, CalendarDays, Film, EyeOff, AtSign, Us
 import { CommandBar } from "./CommandBar";
 import { AddToDMDialog } from "./AddToDMDialog";
 import { PollDialog } from "./PollDialog";
+import { OpenPollsBanner } from "./OpenPollsBanner";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -1798,6 +1799,8 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
           roomId={state.currentRoomId}
         />
       )}
+
+      {roomInfo?.room_type === "text" && <OpenPollsBanner onJump={jumpToMessage} />}
 
       {/* Unread messages banner */}
       {roomUnreadBannerCount > 0 && (

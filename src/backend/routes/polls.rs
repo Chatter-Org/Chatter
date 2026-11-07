@@ -480,6 +480,97 @@ pub(crate) async fn get_poll(
     Ok(Json(json!({ "poll": poll_state_value(&record, &tally) })))
 }
 
+/// How many running polls a channel's banner is told about. Past a few the
+/// banner is a second timeline; the rest are one scroll away in the channel.
+const OPEN_POLLS_LIMIT: i64 = 5;
+
+#[derive(serde::Deserialize)]
+pub(crate) struct OpenPollsQuery {
+    channel_id: Option<String>,
+}
+
+/// The polls still running in a channel, newest first, so a reader arriving
+/// after the poll has scrolled out of the page can still be told it is there.
+///
+/// Answers only what the banner draws — the question, the clock, where the
+/// message is — with the live state attached in the shape every other poll
+/// path uses. A channel the caller cannot view answers an empty list, not an
+/// error, for the reason `require_readable_poll` answers 404.
+pub(crate) async fn list_open_polls(
+    State(state): State<Arc<AppState>>,
+    Path(room_id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<OpenPollsQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let token = extract_token(&headers)
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Missing token"))?;
+    let user_id = get_user_from_token(&state, &token)
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Invalid token"))?;
+
+    let empty = || Ok(Json(json!({ "polls": [] })));
+    {
+        let rm = state.room_members.read().await;
+        if !rm
+            .get(&room_id)
+            .map(|m| m.contains(&user_id))
+            .unwrap_or(false)
+        {
+            return empty();
+        }
+    }
+
+    let channel_id = query.channel_id.unwrap_or_default();
+    if !channel_id.is_empty()
+        && !channel_permissions(&state, &room_id, &channel_id, &user_id)
+            .await
+            .view_channel
+    {
+        return empty();
+    }
+
+    // `ends_at` as well as `closed`: between the clock running out and the
+    // scheduler's next tick a poll is open on paper and over in fact, and a
+    // banner inviting a vote that will be refused is the one thing it must
+    // not do.
+    let filter = doc! {
+        "room_id": &room_id,
+        "channel_id": &channel_id,
+        "closed": false,
+        "ends_at": { "$gt": now_millis() },
+    };
+    let mut records: Vec<PollRecord> = Vec::new();
+    if let Ok(mut cursor) = state
+        .db
+        .collection::<PollRecord>("polls")
+        .find(filter)
+        .sort(doc! { "created_at": -1 })
+        .limit(OPEN_POLLS_LIMIT)
+        .await
+    {
+        while let Ok(Some(record)) = cursor.try_next().await {
+            records.push(record);
+        }
+    }
+
+    let ids: Vec<String> = records.iter().map(|r| r.poll_id.clone()).collect();
+    let mut states = get_polls_for_events(&state, &ids).await;
+    let polls: Vec<Value> = records
+        .iter()
+        .map(|r| {
+            json!({
+                "poll_id": r.poll_id,
+                "question": r.question,
+                "channel_id": r.channel_id,
+                "creator": r.creator,
+                "created_at": r.created_at,
+                "ends_at": r.ends_at,
+                "poll": states.remove(&r.poll_id),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "polls": polls })))
+}
+
 /// The poll, once the caller is known to be allowed to see the channel it is
 /// in. Every refusal answers the same 404: which polls exist in a channel
 /// somebody cannot open is itself something they should not learn.

@@ -4104,6 +4104,24 @@ export async function apiGetPoll(roomId: string, pollId: string) {
   return (await eventsJson(res, "Could not load the poll")) as { poll: PollState };
 }
 
+/** A running poll, as much of it as a channel's banner draws. */
+export interface OpenPoll {
+  poll_id: string;
+  question: string;
+  channel_id: string;
+  creator: string;
+  created_at: number;
+  ends_at: number;
+  poll: PollState | null;
+}
+
+/** The polls still running in a channel, newest first. */
+export async function apiGetOpenPolls(roomId: string, channelId?: string) {
+  const qs = channelId ? `?channel_id=${encodeURIComponent(channelId)}` : "";
+  const res = await authenticatedFetch(`/api/rooms/${encodeURIComponent(roomId)}/polls${qs}`);
+  return (await eventsJson(res, "Could not load the polls")) as { polls: OpenPoll[] };
+}
+
 export async function apiClosePoll(roomId: string, pollId: string) {
   const res = await authenticatedFetch(
     `/api/rooms/${encodeURIComponent(roomId)}/polls/${encodeURIComponent(pollId)}/close`,

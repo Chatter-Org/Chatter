@@ -52,7 +52,7 @@ use super::{
         },
         notification_settings::{get_notification_settings, set_notification_level},
         pins::{list_pins, pin_message, unpin_message},
-        polls::{close_poll_now, create_poll, get_poll, vote_poll},
+        polls::{close_poll_now, create_poll, get_poll, list_open_polls, vote_poll},
         presence::{get_room_presence, get_voice_channel_status},
         push::{push_public_key, push_subscribe, push_unsubscribe},
         reactions::{add_reaction, get_reactions},
@@ -284,7 +284,10 @@ pub(crate) fn build_router() -> Router<Arc<AppState>> {
             post(pin_message).delete(unpin_message),
         )
         // Polls
-        .route("/api/rooms/{room_id}/polls", post(create_poll))
+        .route(
+            "/api/rooms/{room_id}/polls",
+            post(create_poll).get(list_open_polls),
+        )
         .route("/api/rooms/{room_id}/polls/{poll_id}", get(get_poll))
         .route("/api/rooms/{room_id}/polls/{poll_id}/vote", put(vote_poll))
         .route(
