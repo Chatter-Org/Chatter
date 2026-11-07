@@ -10,24 +10,28 @@ import { apiGetOpenPolls, type OpenPoll } from "@/lib/api";
  * `state.polls`. Shared by the banner and by the composer, which stops
  * offering a poll when the channel is full.
  */
+const EMPTY: OpenPoll[] = [];
+
 export function useOpenPolls(): OpenPoll[] {
   const { state } = useAppContext();
   const roomId = state.currentRoomId;
   const channelId = state.currentChannelId ?? "";
-  const [fetched, setFetched] = useState<OpenPoll[]>([]);
+  const key = `${roomId}/${channelId}`;
+  const [loaded, setLoaded] = useState<{ key: string; polls: OpenPoll[] }>({ key: "", polls: [] });
+  // A fetch for another channel is stale the moment the channel changes.
+  const fetched = loaded.key === key ? loaded.polls : EMPTY;
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    setFetched([]);
     if (!roomId) return;
     let live = true;
     apiGetOpenPolls(roomId, channelId || undefined)
-      .then(({ polls }) => live && setFetched(polls))
+      .then(({ polls }) => live && setLoaded({ key, polls }))
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [roomId, channelId]);
+  }, [roomId, channelId, key]);
 
   // The clock running out is the one change that arrives without a message.
   useEffect(() => {
