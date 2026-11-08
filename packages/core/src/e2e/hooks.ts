@@ -38,8 +38,8 @@ export interface SealMeta {
 
 export interface SealedSend {
   e2e: SealedMessage;
-  /** Upload links in the text, sent beside it in the clear so the server
-   *  keeps the files (uploads are not encrypted yet). */
+  /** The encrypted files' links (no keys: those stay sealed in the text),
+   *  sent beside the ciphertext so the server keeps the files. */
   attachments: string[];
 }
 

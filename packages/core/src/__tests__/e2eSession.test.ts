@@ -35,7 +35,11 @@ vi.mock("../api", () => ({
   apiE2ePutIdentity: async (identity: any, _totp: string, replace: boolean) => {
     if (server.identities.has(server.caller) && !replace) throw new E2eRequestError("exists", 409, "M_E2E_EXISTS");
     server.identities.set(server.caller, identity);
-    if (replace) server.copies = server.copies.filter((c) => c.user_id !== server.caller);
+    if (replace) {
+      server.copies = server.copies.filter((c) => c.user_id !== server.caller);
+      // As the real route: a reset owes every room the caller is in a new key.
+      for (const room of server.rooms.values()) if (room.members.includes(server.caller) && room.epoch >= 0) room.rotate = true;
+    }
   },
   apiE2eQueryKeys: async (ids: string[]) =>
     Object.fromEntries(
@@ -337,6 +341,48 @@ describe("e2e session against a lying server", () => {
     expect(late.content.e2e_state).toBe("unverified");
   }, 60_000);
 
+  it("still opens the keys a contact made before a reset it accepted, after a reload", async () => {
+    const { bob, first } = await pair();
+    const stamped = { ...first.event, origin_server_ts: Date.now() - 1000 };
+    expect((await bob.read("!dm", [stamped]))[0].content.body).toBe("hello");
+
+    const newAlice = await device("@alice:x");
+    await newAlice.as(() => newAlice.session.startE2e("@alice:x"));
+    await newAlice.as(() => newAlice.session.setUpE2e("alice new passphrase", "123456", true));
+    // The reset owes the room a new key, which the new keys' owner makes.
+    newAlice.session.noteRoomEncryption("!dm", true);
+    await newAlice.as(() => newAlice.session.syncRoomKeys("!dm", true));
+    expect(server.rooms.get("!dm")!.epoch).toBe(1);
+    bob.session.handleE2eEvent({ type: "m.e2e.identity", room_id: "!dm", user_id: "@alice:x" });
+    await bob.as(() => bob.session.syncRoomKeys("!dm", true)).catch(() => {});
+    await bob.session.acceptKeyChange("@alice:x");
+
+    // Room keys are only kept in memory, so a reload opens the copies again.
+    await bob.as(() => bob.session.stopE2e());
+    await bob.as(() => bob.session.startE2e("@bob:x"));
+    await bob.as(() => bob.session.unlockE2e("bob passphrase"));
+    const [after] = await bob.read("!dm", [stamped]);
+    expect(after.content.body).toBe("hello");
+    expect(after.content.e2e_state).toBe("ok");
+  }, 60_000);
+
+  it("shows a sealed message as plain text whatever type the server gives it", async () => {
+    const { alice, bob } = await pair();
+    const { event } = await alice.send("!dm", "reset your keys now");
+    const flipped = { ...event, content: { ...event.content, msgtype: "m.system" } };
+    const [shown] = await bob.read("!dm", [flipped]);
+    expect(shown.content.msgtype).toBe("m.text");
+    expect(shown.content.body).toBe("reset your keys now");
+  }, 60_000);
+
+  it("takes the watch party's notices as the server's own", async () => {
+    const { bob } = await pair();
+    const [notice] = await bob.read("!dm", [
+      { event_id: "$wp", room_id: "!dm", sender: "@alice:x", type: "m.room.message", content: { msgtype: "m.watchparty", body: "alice paused the video" } },
+    ]);
+    expect(notice.content.body).toBe("alice paused the video");
+  }, 60_000);
+
   it("keeps this device's seed when the server's keys stop matching it", async () => {
     const { alice } = await pair();
     const seedBefore = alice.secrets.get("e2e-seed:@alice:x");
@@ -348,10 +394,11 @@ describe("e2e session against a lying server", () => {
 });
 
 describe("uploadLinks", () => {
-  it("finds the links the server would count as uploads", async () => {
+  it("finds the encrypted uploads, without the keys that ride in their links", async () => {
     const { uploadLinks } = await import("../e2e/session");
-    const upload = "https://chat.example/external/0123456789abcdef0123456789abcdef/cat.png";
-    expect(uploadLinks(`look (${upload}) and https://elsewhere.example/x.png`)).toEqual([upload]);
+    const enc = "https://chat.example/external/0123456789abcdef0123456789abcdef/9f8e7d6c5b4a.enc";
+    const plain = "https://chat.example/external/0123456789abcdef0123456789abcdef/cat.png";
+    expect(uploadLinks(`look (${enc}#k=AAAA&n=cat%2Epng) and https://elsewhere.example/x.png ${plain}`)).toEqual([enc]);
     expect(uploadLinks("no links here")).toEqual([]);
   });
 });

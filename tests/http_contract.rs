@@ -3830,7 +3830,7 @@ async fn e2e_dms_take_sealed_messages_under_the_current_key() {
     assert_eq!(bob_state["keys"][0]["sender"], alice_id.as_str());
 
     // A sealed send is stored as the seal and a placeholder.
-    let upload = "http://localhost/external/0123456789abcdef0123456789abcdef/cat.png";
+    let upload = "http://localhost/external/0123456789abcdef0123456789abcdef/9f8e7d6c.enc";
     let mut with_file = sealed_message(0);
     with_file["attachments"] = json!([upload]);
     let sent = send(alice.clone(), "t2", with_file).await;
@@ -3841,6 +3841,21 @@ async fn e2e_dms_take_sealed_messages_under_the_current_key() {
         send(alice.clone(), "t3", body).await
     };
     assert_eq!(smuggled.status(), StatusCode::BAD_REQUEST);
+    // A file that was not encrypted by the sender's client is refused.
+    let plain_file = {
+        let mut body = sealed_message(0);
+        body["attachments"] =
+            json!(["http://localhost/external/0123456789abcdef0123456789abcdef/cat.png"]);
+        send(alice.clone(), "t3b", body).await
+    };
+    assert_eq!(plain_file.status(), StatusCode::BAD_REQUEST);
+    // And a person cannot send the server's own message types here.
+    let impostor = {
+        let mut body = sealed_message(0);
+        body["msgtype"] = json!("m.system");
+        send(alice.clone(), "t3c", body).await
+    };
+    assert_eq!(impostor.status(), StatusCode::BAD_REQUEST);
 
     let page: Value = client
         .get(format!(

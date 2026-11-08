@@ -131,7 +131,8 @@ pub(crate) async fn send_message(
     // An encrypted DM's text arrives sealed. From here on `req.body` is the
     // placeholder and any upload links, so every check and record below that
     // reads a body reads that, and none of them can see the message.
-    let sealed = super::e2e::check_send(&room, req.e2e.as_ref(), req.attachments.as_deref())?;
+    let sealed = super::e2e::check_send(&room, req.e2e.as_ref(), req.attachments.as_deref(), &[])?;
+    super::e2e::check_msgtype(&room, req.msgtype.as_deref())?;
     if let Some(ref surface) = sealed {
         req.body = surface.body.clone();
     }
@@ -1272,7 +1273,30 @@ pub(crate) async fn edit_message(
 
     // An edit to an encrypted message is sealed afresh, under the current
     // epoch, as a send is.
-    let sealed = super::e2e::check_send(&room, req.e2e.as_ref(), req.attachments.as_deref())?;
+    // Files the message already carries may stay, whatever they are called.
+    let already = if room.e2e {
+        state
+            .db
+            .collection::<mongodb::bson::Document>("messages")
+            .find_one(doc! { "event_id": &event_id, "room_id": &room_id })
+            .await
+            .ok()
+            .flatten()
+            .and_then(|m| {
+                m.get_document("content")
+                    .ok()
+                    .and_then(|c| c.get_str("body").ok().map(super::media::attachment_folders))
+            })
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
+    let sealed = super::e2e::check_send(
+        &room,
+        req.e2e.as_ref(),
+        req.attachments.as_deref(),
+        &already,
+    )?;
     if let Some(ref surface) = sealed {
         req.body = surface.body.clone();
     }
@@ -1566,7 +1590,8 @@ pub(crate) async fn send_thread_message(
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Room not found"))?;
 
     // Sealed as in `send_message`.
-    let sealed = super::e2e::check_send(&room, req.e2e.as_ref(), req.attachments.as_deref())?;
+    let sealed = super::e2e::check_send(&room, req.e2e.as_ref(), req.attachments.as_deref(), &[])?;
+    super::e2e::check_msgtype(&room, req.msgtype.as_deref())?;
     if let Some(ref surface) = sealed {
         req.body = surface.body.clone();
     }

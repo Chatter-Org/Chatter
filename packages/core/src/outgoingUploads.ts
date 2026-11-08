@@ -5,6 +5,8 @@ import {
   apiUploadFile,
 } from "./api";
 import { runPool, UPLOAD_CONCURRENCY } from "./concurrency";
+import { apiUploadEncryptedFile } from "./e2e/files";
+import { getE2eStatus, isRoomEncrypted } from "./e2e/session";
 import type { UploadSource } from "./uploadResume";
 
 export type UploadStatus = "queued" | "uploading" | "processing" | "done" | "failed";
@@ -246,12 +248,25 @@ async function run(id: string) {
   // wait was not only for the bytes: `complete` remuxes and probes on the
   // server, and the uplink sat idle through all of it, so ten files spent most
   // of their time sending nothing.
+  // Files sent into an encrypted conversation are sealed here first; the
+  // server only ever holds the ciphertext.
+  const encrypted = isRoomEncrypted(start.target.roomId);
+  if (encrypted && getE2eStatus() !== "ready") {
+    patchBatch(id, (batch) => ({
+      ...batch,
+      status: "failed",
+      error: "Unlock encrypted messages to send files in this conversation",
+      files: batch.files.map((entry) => ({ ...entry, status: "failed" as const, pct: 0 })),
+    }));
+    return;
+  }
+  const upload = encrypted ? apiUploadEncryptedFile : apiUploadFile;
   const outcomes = await runPool(start.files, UPLOAD_CONCURRENCY, async (entry) => {
     // Discarding the batch stops the files that have not started yet.
     if (!batches.some((batch) => batch.id === id)) return null;
     patchFile(id, entry.id, "uploading", 0);
     try {
-      const { url } = await apiUploadFile(entry.file, (pct) => {
+      const { url } = await upload(entry.file, (pct) => {
         // At 100% the bytes are in and the server takes over — remuxing a
         // video can take longer than sending it did, and a bar sitting at
         // 100% looks like a hang.

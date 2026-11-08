@@ -157,10 +157,15 @@ pub(crate) struct Surface {
 /// they always have. An encrypted room takes only sealed messages: a plaintext
 /// one from an app that predates encryption would otherwise land in the clear
 /// in a conversation everyone believes is private.
+///
+/// `already` is the upload folders the message being edited carries (empty for
+/// a new message): those may stay whatever they are called, so an edit of a
+/// message sent before uploads were encrypted does not lose its file.
 pub(crate) fn check_send(
     room: &RoomRecord,
     sealed: Option<&SealedContent>,
     attachments: Option<&[String]>,
+    already: &[String],
 ) -> Result<Option<Surface>, (StatusCode, Json<Value>)> {
     let Some(sealed) = sealed else {
         if room.e2e {
@@ -210,6 +215,24 @@ pub(crate) fn check_send(
             "Attachments must be links to uploads",
         ));
     }
+    // And the file behind each must have been encrypted by the sender's
+    // client (it names them `<random>.enc`). The server cannot tell, but it
+    // can refuse a client that is about to put a plaintext file into a
+    // conversation everyone believes is private. A fragment or query never
+    // reaches the server, so none is allowed here.
+    let all_encrypted = attachments.iter().all(|url| {
+        is_encrypted_upload(url)
+            || super::media::attachment_folders(url)
+                .iter()
+                .all(|folder| already.contains(folder))
+    });
+    if !all_encrypted {
+        return Err(refusal(
+            StatusCode::BAD_REQUEST,
+            "M_E2E_PLAINTEXT_UPLOAD",
+            "Files sent here must be encrypted. Update Chatter to send them.",
+        ));
+    }
     let mut body = PLACEHOLDER_BODY.to_string();
     for url in attachments {
         body.push('\n');
@@ -221,10 +244,42 @@ pub(crate) fn check_send(
     }))
 }
 
+/// Whether this upload link names a file its sender's client encrypted.
+fn is_encrypted_upload(url: &str) -> bool {
+    !url.contains(['#', '?']) && url.to_ascii_lowercase().ends_with(ENCRYPTED_UPLOAD_SUFFIX)
+}
+
+/// What an encrypted upload is named on disk: a random name and this.
+pub(crate) const ENCRYPTED_UPLOAD_SUFFIX: &str = ".enc";
+
+/// Message types only the server makes. A member sealing one would draw as a
+/// notice in the conversation with nobody's name on it ("Alice reset their
+/// encryption keys"), so an encrypted room takes none of them from a person.
+pub(crate) fn check_msgtype(
+    room: &RoomRecord,
+    msgtype: Option<&str>,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    if room.e2e && matches!(msgtype, Some("m.system" | "m.watchparty")) {
+        return Err(refusal(
+            StatusCode::BAD_REQUEST,
+            "M_E2E_BAD",
+            "That message type is not available here",
+        ));
+    }
+    Ok(())
+}
+
 /// Membership of an encrypted room changed: the next message waits on a new
 /// key. Told to the room so whichever member's client is online makes one.
 pub(crate) async fn membership_changed(state: &AppState, room_id: &str) {
     let rooms = state.db.collection::<RoomRecord>("rooms");
+    // Whatever list of members a key is being made from is now out of date.
+    let _ = rooms
+        .update_one(
+            doc! { "_id": room_id, "e2e": true },
+            doc! { "$inc": { "e2e_ver": 1 } },
+        )
+        .await;
     let changed = rooms
         .update_one(
             doc! { "_id": room_id, "e2e": true, "e2e_epoch": { "$gte": 0 } },
@@ -404,6 +459,9 @@ pub(crate) async fn put_identity(
         event["room_id"] = json!(room_id);
         broadcast_to_room(&state, &room_id, &event).await;
         if req.replace {
+            // Whoever still holds the seed that was replaced holds the current
+            // key too; the next one is made for the new keys alone.
+            membership_changed(&state, &room_id).await;
             let notice = json!({
                 "type": "m.room.message",
                 "room_id": room_id,
@@ -516,6 +574,16 @@ async fn encrypted_room_for_member(
     room_id: &str,
     user_id: &str,
 ) -> Result<(RoomRecord, Vec<String>), (StatusCode, Json<Value>)> {
+    // The room first, then the members: `membership_changed` bumps the room's
+    // version after the member list is updated, so a member list read after
+    // the room is at least as new as the version read with it.
+    let room = state
+        .db
+        .collection::<RoomRecord>("rooms")
+        .find_one(doc! { "_id": room_id })
+        .await
+        .ok()
+        .flatten();
     let members: Vec<String> = {
         let rm = state.room_members.read().await;
         rm.get(room_id).cloned().unwrap_or_default()
@@ -526,14 +594,7 @@ async fn encrypted_room_for_member(
             "Not a member of this room",
         ));
     }
-    let room = state
-        .db
-        .collection::<RoomRecord>("rooms")
-        .find_one(doc! { "_id": room_id })
-        .await
-        .ok()
-        .flatten()
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Room not found"))?;
+    let room = room.ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Room not found"))?;
     Ok((room, members))
 }
 
@@ -695,7 +756,12 @@ pub(crate) async fn post_room_keys(
             .db
             .collection::<RoomRecord>("rooms")
             .update_one(
-                doc! { "_id": &room_id, "e2e_epoch": room.e2e_epoch, "e2e_rotate": room.e2e_rotate },
+                doc! {
+                    "_id": &room_id,
+                    "e2e_epoch": room.e2e_epoch,
+                    "e2e_rotate": room.e2e_rotate,
+                    "e2e_ver": room.e2e_ver,
+                },
                 doc! { "$set": { "e2e_epoch": req.epoch, "e2e_rotate": false } },
             )
             .await
@@ -784,19 +850,24 @@ mod tests {
         }
     }
 
-    const UPLOAD: &str = "https://chat.example/external/0123456789abcdef0123456789abcdef/cat.png";
+    const UPLOAD: &str =
+        "https://chat.example/external/0123456789abcdef0123456789abcdef/9f8e7d6c.enc";
 
     #[test]
     fn plaintext_rooms_take_plaintext_and_refuse_ciphertext() {
         let plain = room(false, -1, false);
-        assert!(check_send(&plain, None, None).unwrap().is_none());
-        let err = check_send(&plain, Some(&sealed(0)), None).err().unwrap();
+        assert!(check_send(&plain, None, None, &[]).unwrap().is_none());
+        let err = check_send(&plain, Some(&sealed(0)), None, &[])
+            .err()
+            .unwrap();
         assert_eq!(err.1 .0["errcode"], "M_E2E_NOT_ENCRYPTED");
     }
 
     #[test]
     fn encrypted_rooms_refuse_plaintext() {
-        let err = check_send(&room(true, 0, false), None, None).err().unwrap();
+        let err = check_send(&room(true, 0, false), None, None, &[])
+            .err()
+            .unwrap();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert_eq!(err.1 .0["errcode"], "M_E2E_REQUIRED");
     }
@@ -808,11 +879,13 @@ mod tests {
             (room(true, 2, true), 2),
             (room(true, 2, false), 1),
         ] {
-            let err = check_send(&r, Some(&sealed(epoch)), None).err().unwrap();
+            let err = check_send(&r, Some(&sealed(epoch)), None, &[])
+                .err()
+                .unwrap();
             assert_eq!(err.0, StatusCode::CONFLICT);
             assert_eq!(err.1 .0["errcode"], "M_E2E_EPOCH");
         }
-        let surface = check_send(&room(true, 2, false), Some(&sealed(2)), None)
+        let surface = check_send(&room(true, 2, false), Some(&sealed(2)), None, &[])
             .unwrap()
             .unwrap();
         assert_eq!(surface.body, PLACEHOLDER_BODY);
@@ -821,7 +894,7 @@ mod tests {
     #[test]
     fn attachments_must_be_bare_upload_links() {
         let r = room(true, 0, false);
-        let surface = check_send(&r, Some(&sealed(0)), Some(&[UPLOAD.to_string()]))
+        let surface = check_send(&r, Some(&sealed(0)), Some(&[UPLOAD.to_string()]), &[])
             .unwrap()
             .unwrap();
         assert_eq!(surface.body, format!("{PLACEHOLDER_BODY}\n{UPLOAD}"));
@@ -829,9 +902,33 @@ mod tests {
             "secret words".to_string(),
             format!("{UPLOAD} secret"),
             "https://elsewhere.example/cat.png".to_string(),
+            format!("{UPLOAD}#k=abc"),
         ] {
-            assert!(check_send(&r, Some(&sealed(0)), Some(&[smuggled])).is_err());
+            assert!(check_send(&r, Some(&sealed(0)), Some(&[smuggled]), &[]).is_err());
         }
+    }
+
+    #[test]
+    fn files_sent_here_must_be_encrypted_ones() {
+        let r = room(true, 0, false);
+        let plain = "https://chat.example/external/0123456789abcdef0123456789abcdef/cat.png";
+        let err = check_send(&r, Some(&sealed(0)), Some(&[plain.to_string()]), &[])
+            .err()
+            .unwrap();
+        assert_eq!(err.1 .0["errcode"], "M_E2E_PLAINTEXT_UPLOAD");
+        // An edit of a message that already carried it keeps it.
+        let already = vec!["0123456789abcdef0123456789abcdef".to_string()];
+        assert!(check_send(&r, Some(&sealed(0)), Some(&[plain.to_string()]), &already).is_ok());
+    }
+
+    #[test]
+    fn people_cannot_send_the_servers_message_types() {
+        let r = room(true, 0, false);
+        assert!(check_msgtype(&r, Some("m.text")).is_ok());
+        assert!(check_msgtype(&r, None).is_ok());
+        assert!(check_msgtype(&r, Some("m.system")).is_err());
+        assert!(check_msgtype(&r, Some("m.watchparty")).is_err());
+        assert!(check_msgtype(&room(false, -1, false), Some("m.system")).is_ok());
     }
 
     #[test]
@@ -839,9 +936,9 @@ mod tests {
         let r = room(true, 0, false);
         let mut bad = sealed(0);
         bad.nonce = b64(12);
-        assert!(check_send(&r, Some(&bad), None).is_err());
+        assert!(check_send(&r, Some(&bad), None, &[]).is_err());
         let mut bad = sealed(0);
         bad.v = 2;
-        assert!(check_send(&r, Some(&bad), None).is_err());
+        assert!(check_send(&r, Some(&bad), None, &[]).is_err());
     }
 }

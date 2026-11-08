@@ -13,6 +13,8 @@ import {
   apiGetAuthenticatedBlobUrl,
 } from "@/lib/api";
 import { AuthImage, AuthAvatarImage } from "./AuthImage";
+import { EncryptedAttachment } from "./EncryptedAttachment";
+import { parseEncryptedFileLink } from "@chatter/core/e2e/files";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -235,7 +237,8 @@ function getYouTubeVideoId(url: string): string | null {
 }
 
 /** Extract media URLs from body for rendering as React elements */
-function extractMediaUrls(body: string): { images: string[]; videos: string[]; audios: string[]; files: string[]; links: string[]; youtubeIds: string[] } {
+function extractMediaUrls(body: string): { images: string[]; videos: string[]; audios: string[]; files: string[]; links: string[]; youtubeIds: string[]; sealedFiles: string[] } {
+  const sealedFiles: string[] = [];
   const images: string[] = [];
   const videos: string[] = [];
   const audios: string[] = [];
@@ -253,6 +256,12 @@ function extractMediaUrls(body: string): { images: string[]; videos: string[]; a
       // index.html and answers with its <title> — so every shared message
       // came with a second, contentless "Chatter" card under the real one.
       if (parseMessageLink(url)) continue;
+      // A file sent into an encrypted conversation: its key is in the link, and
+      // it is fetched and opened here rather than handed to the page as it is.
+      if (parseEncryptedFileLink(url)) {
+        sealedFiles.push(url);
+        continue;
+      }
       // A forum post or reply link is the same: it draws its own card, and
       // left to fall through it would get the same contentless OG card.
       if (parseForumLink(url)) continue;
@@ -265,7 +274,7 @@ function extractMediaUrls(body: string): { images: string[]; videos: string[]; a
       else links.push(url);
     }
   }
-  return { images, videos, audios, files, links, youtubeIds };
+  return { images, videos, audios, files, links, youtubeIds, sealedFiles };
 }
 
 /** Link preview card — fetches OG metadata on mount */
@@ -865,7 +874,7 @@ const gifUrlPattern = /\.gif(\?.*)?$/i;
 
 const MediaPreview = memo(function MediaPreview({ body, media, hiddenBySpoiler, onReveal, encrypted }: { body: string; media?: Record<string, { w: number; h: number }>; hiddenBySpoiler?: boolean; onReveal?: () => void; encrypted?: boolean }) {
   const { state } = useAppContext();
-  const { images, videos, audios, files, links, youtubeIds } = useMemo(() => extractMediaUrls(body), [body]);
+  const { images, videos, audios, files, links, youtubeIds, sealedFiles } = useMemo(() => extractMediaUrls(body), [body]);
   const [lightbox, setLightbox] = useState<{ url: string; type: "image" | "video" } | null>(null);
   const { addFavorite, removeFavorite, isFavorite } = useFavoriteGifs();
   const { castState, castVideo, deviceName } = useChromecast();
@@ -874,7 +883,7 @@ const MediaPreview = memo(function MediaPreview({ body, media, hiddenBySpoiler, 
   /** Return the URL unchanged — the media_session HttpOnly cookie is sent automatically. */
   const withAuth = useCallback((url: string) => url, []);
 
-  const hasMedia = images.length > 0 || videos.length > 0 || audios.length > 0 || files.length > 0 || links.length > 0 || youtubeIds.length > 0;
+  const hasMedia = sealedFiles.length > 0 || images.length > 0 || videos.length > 0 || audios.length > 0 || files.length > 0 || links.length > 0 || youtubeIds.length > 0;
   if (!hasMedia) return null;
 
   if (hiddenBySpoiler) {
@@ -894,6 +903,9 @@ const MediaPreview = memo(function MediaPreview({ body, media, hiddenBySpoiler, 
     <div className="mt-2 space-y-2">
       {youtubeIds.map((id) => (
         <YouTubeEmbed key={id} id={id} />
+      ))}
+      {sealedFiles.map((link) => (
+        <EncryptedAttachment key={link} link={link} />
       ))}
       {images.map((url) => {
         const isGif = gifUrlPattern.test(url);

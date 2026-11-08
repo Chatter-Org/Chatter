@@ -3018,6 +3018,13 @@ export async function apiGetAuthenticatedBlobUrl(url: string): Promise<string> {
   return URL.createObjectURL(blob);
 }
 
+/** A file's bytes, fetched with the session's credentials. */
+export async function apiGetAuthenticatedBytes(url: string): Promise<Uint8Array> {
+  const res = await authenticatedFetch(url);
+  if (!res.ok) throw new Error("Failed to fetch file");
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 export async function apiAdminRefreshInvite(): Promise<{ invite_code: string }> {
   const res = await authenticatedFetch("/api/admin/settings/refresh-invite", {
     method: "POST",

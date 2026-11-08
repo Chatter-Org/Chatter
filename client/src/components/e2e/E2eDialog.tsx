@@ -129,7 +129,7 @@ export function E2eDialog({ open, onOpenChange }: E2eDialogProps) {
             />
           )}
           <p className="text-xs text-muted-foreground">
-            Files and images you send are not encrypted yet. Only the text of your messages is.
+            Your messages, files and images are encrypted. The server can still see who you talk to, when, and how big a file is.
           </p>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex items-center justify-between gap-2">

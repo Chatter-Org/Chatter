@@ -254,6 +254,12 @@ pub(crate) struct RoomRecord {
     /// someone who arrived must not read what came before.
     #[serde(default)]
     pub(crate) e2e_rotate: bool,
+    /// Bumped by every membership change (and every key reset). Starting an
+    /// epoch is a compare-and-set on it, so a key made from a member list that
+    /// has since changed — a copy for someone just removed — is refused even
+    /// when a rotation was already owed.
+    #[serde(default)]
+    pub(crate) e2e_ver: i64,
 }
 
 /// How a room is moderated. Every field defaults to what a room behaved like

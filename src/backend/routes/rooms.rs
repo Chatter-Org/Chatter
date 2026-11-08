@@ -110,6 +110,7 @@ pub(crate) async fn create_room(
                     e2e,
                     e2e_epoch: -1,
                     e2e_rotate: false,
+                    e2e_ver: 0,
                 };
                 let rooms_coll = state.db.collection::<RoomRecord>("rooms");
                 let _ = rooms_coll.insert_one(room_record).await;
@@ -271,6 +272,7 @@ pub(crate) async fn create_room(
                     e2e,
                     e2e_epoch: -1,
                     e2e_rotate: false,
+                    e2e_ver: 0,
                 };
                 let _ = rooms_coll.insert_one(room_record).await;
 
@@ -462,6 +464,7 @@ pub(crate) async fn create_room(
         e2e: is_dm && e2e,
         e2e_epoch: -1,
         e2e_rotate: false,
+        e2e_ver: 0,
     };
     let rooms_coll = state.db.collection::<RoomRecord>("rooms");
     let _ = rooms_coll.insert_one(room_record).await;

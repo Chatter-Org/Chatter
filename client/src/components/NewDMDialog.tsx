@@ -166,7 +166,7 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
             </Label>
             <p className="text-xs text-muted-foreground">
               {e2e
-                ? "Only members can read messages. Files are not encrypted yet, and the Android app cannot send here yet."
+                ? "Only members can read messages. Files are encrypted too. The Android app cannot send here yet."
                 : "The server can read messages. Works in every app."}
             </p>
           </div>

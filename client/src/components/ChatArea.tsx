@@ -1582,7 +1582,7 @@ export function ChatArea({ onJoinVoice, dmCall }: ChatAreaProps) {
                 ? `# ${state.channels.find((c) => c.channel_id === state.currentChannelId)?.name || "channel"}`
                 : roomInfo?.name || "Unnamed Room"}
               {roomInfo?.is_direct && state.currentRoomId && (isRoomEncrypted(state.currentRoomId) || roomInfo.e2e) ? (
-                <span title="End-to-end encrypted. Files and images are not encrypted yet." className="inline-flex shrink-0">
+                <span title="End-to-end encrypted, including files and images (the server sees only a file’s size)." className="inline-flex shrink-0">
                   <Lock className="h-4 w-4 text-success" strokeWidth={2.75} aria-label="End-to-end encrypted" />
                 </span>
               ) : roomInfo?.is_direct ? (

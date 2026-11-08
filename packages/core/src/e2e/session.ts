@@ -100,7 +100,10 @@ const roomSyncs = new Map<string, Promise<void>>();
 const openedBodies = new Map<string, string>();
 /** What each opened message was sealed with besides its text, by event id:
  *  an edit must carry the same, and no other event may carry its `mid`. */
-const openedMeta = new Map<string, { mid: string; in_reply_to?: string; thread_id?: string; spoiler?: boolean }>();
+const openedMeta = new Map<
+  string,
+  { mid: string; in_reply_to?: string; thread_id?: string; spoiler?: boolean; links: string[] }
+>();
 const midOwners = new Map<string, string>();
 const OPENED_KEPT = 2000;
 const REPLY_QUOTE_CHARS = 100;
@@ -213,6 +216,10 @@ export async function startE2e(userId: string): Promise<E2eStatus> {
 
 async function adopt(next: Identity) {
   identity = next;
+  // Our own keys are the ones we hold, whatever was cached for the account
+  // before (a reset announces itself on the socket, and can be answered before
+  // the request that made it returns).
+  if (me) publicKeys.set(me, { enc: next.encPub, sign: next.signPub });
   keysReplacedElsewhere = false;
   if (me) await host.secretSet(seedName(me), toB64(next.seed)).catch(() => {});
   // Anything opened as "locked" can be opened now; keys fetched before are
@@ -490,8 +497,21 @@ function openCopies(roomId: string, room: E2eRoomState) {
     if (held.has(copy.epoch)) continue;
     const signer = publicKeys.get(copy.sender);
     if (!signer) continue;
-    if (copy.epoch === room.epoch && (!members.has(copy.sender) || changedKeys.has(copy.sender))) continue;
-    const key = unwrapRoomKey(copy, { roomId, epoch: copy.epoch, recipient: me, sender: copy.sender }, identity, signer.sign);
+    const current = copy.epoch === room.epoch;
+    if (current && (!members.has(copy.sender) || changedKeys.has(copy.sender))) continue;
+    const context = { roomId, epoch: copy.epoch, recipient: me, sender: copy.sender };
+    let key = unwrapRoomKey(copy, context, identity, signer.sign);
+    // A key the maker signed before they reset theirs, which this device
+    // accepted, still vouches for what they made then. Without this, accepting
+    // a reset loses every earlier epoch they made — on the next reload, since
+    // room keys are only kept in memory. Not for the current epoch, which this
+    // device sends under, and which must come from keys that are trusted now.
+    if (!key && !current) {
+      for (const earlier of pins[copy.sender]?.previous ?? []) {
+        key = unwrapRoomKey(copy, context, identity, fromB64(earlier.sign_pub));
+        if (key) break;
+      }
+    }
     if (key) held.set(copy.epoch, key);
   }
   roomKeys.set(roomId, held);
@@ -577,7 +597,7 @@ type Sealable = {
 
 /** Message types the server makes itself, which are not sealed and are not
  *  anyone's words. */
-const SERVER_MSGTYPES = new Set(["m.system", "m.poll", "m.poll_results"]);
+const SERVER_MSGTYPES = new Set(["m.system", "m.poll", "m.poll_results", "m.watchparty"]);
 
 function sealedOf(msg: Sealable): SealedMessage | null {
   const sealed = msg.content?.e2e;
@@ -649,7 +669,13 @@ function openOne<T extends Sealable>(roomId: string, msg: T): T {
     remember(openedBodies, msg.event_id, p.body);
     if (p.mid !== undefined) {
       remember(midOwners, p.mid, msg.event_id);
-      remember(openedMeta, msg.event_id, { mid: p.mid, in_reply_to: p.in_reply_to, thread_id: p.thread_id, spoiler: p.spoiler });
+      remember(openedMeta, msg.event_id, {
+        mid: p.mid,
+        in_reply_to: p.in_reply_to,
+        thread_id: p.thread_id,
+        spoiler: p.spoiler,
+        links: allUploadLinks(p.body),
+      });
     }
   }
   const inReplyTo = msg.content?.in_reply_to as string | undefined;
@@ -658,6 +684,10 @@ function openOne<T extends Sealable>(roomId: string, msg: T): T {
     ...msg,
     content: {
       ...msg.content,
+      // A person's sealed message is always plain text. The type is the
+      // server's to say and not signed, so a flipped one (a notice, with no
+      // name on it) is put back rather than believed.
+      msgtype: "m.text",
       body: p.body,
       // The server's quote is the parent's placeholder; never show that.
       reply_to_body: inReplyTo ? (replyQuote ?? "🔒 Encrypted message") : msg.content?.reply_to_body,
@@ -773,14 +803,23 @@ async function openEvent(msg: any): Promise<any> {
   return openEventNow(msg);
 }
 
-/** Upload links in a body, as the server reads them (`media::attachment_folders`):
- *  a whitespace-separated token naming a file in a 32-hex upload folder. */
-export function uploadLinks(body: string): string[] {
+/** Every upload link in a body, as the server reads them
+ *  (`media::attachment_folders`): a whitespace-separated token naming a file in
+ *  a 32-hex upload folder. An encrypted file's key rides in the link's
+ *  fragment, which is dropped here: it must never reach the server. */
+function allUploadLinks(body: string): string[] {
   const links = body
     .split(/\s+/)
     .map((t) => t.replace(/^[([<"']+/, "").replace(/[.,)\]>"'!?]+$/, ""))
-    .filter((t) => /\/external\/[0-9a-f]{32}\/[^/]/i.test(t));
+    .filter((t) => /\/external\/[0-9a-f]{32}\/[^/]/i.test(t))
+    .map((t) => t.split("#")[0]);
   return [...new Set(links)];
+}
+
+/** The links in a body that name files this client encrypted (`.enc`): the
+ *  only uploads the server accepts beside a sealed message. */
+export function uploadLinks(body: string): string[] {
+  return allUploadLinks(body).filter((link) => /\.enc$/i.test(link));
 }
 
 async function seal(roomId: string, body: string, meta: SealMeta = {}): Promise<SealedSend | null> {
@@ -824,7 +863,9 @@ async function seal(roomId: string, body: string, meta: SealMeta = {}): Promise<
   }
   return {
     e2e: sealMessage(plaintext, key, { roomId, epoch: current.epoch, sender: me }, identity),
-    attachments: uploadLinks(body),
+    // An edit may also keep a plaintext file the message already carried
+    // (sent before files were encrypted), so it keeps its reference.
+    attachments: allUploadLinks(body).filter((link) => /\.enc$/i.test(link) || !!meta.edits && !!openedMeta.get(meta.edits)?.links.includes(link)),
   };
 }
 
