@@ -7,6 +7,8 @@ import type { UploadRecord, SessionInfo } from "@/lib/api";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AuthImage, AuthAvatarImage } from "./AuthImage";
 import { Button } from "@/components/ui/button";
+import { E2eDialog } from "@/components/e2e/E2eDialog";
+import { useE2eStatus } from "@/hooks/useE2eStatus";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -344,6 +346,8 @@ export function UserProfileDialog({
   // Account tab state
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const e2eStatus = useE2eStatus();
+  const [e2eResetOpen, setE2eResetOpen] = useState(false);
   const [passwordTotpCode, setPasswordTotpCode] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -1832,6 +1836,17 @@ export function UserProfileDialog({
   const accountContent = (
     <div className="px-5 py-4 space-y-6">
       <SettingsGroup label="Security">
+        {(e2eStatus === "ready" || e2eStatus === "locked") && (
+          <SettingsSection
+            title="Encrypted Messages"
+            hint="If you think your passphrase or a device holding your keys is in someone else's hands, make new keys. Messages sent after that are out of their reach; what they could already read stays readable to them."
+          >
+            <Button variant="destructive" size="sm" onClick={() => setE2eResetOpen(true)}>
+              Reset encryption keys
+            </Button>
+            <E2eDialog open={e2eResetOpen} onOpenChange={setE2eResetOpen} startOver />
+          </SettingsSection>
+        )}
         <SettingsSection title="Two-Factor Authentication">
           {state.totpVerified ? (
             <div className="flex items-center gap-2 text-sm text-success">

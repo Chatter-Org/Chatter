@@ -9,6 +9,8 @@ import { useE2eStatus } from "@/hooks/useE2eStatus";
 interface E2eDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Open straight to making new keys, for someone who suspects theirs are out. */
+  startOver?: boolean;
 }
 
 type Mode = "setup" | "unlock" | "reset";
@@ -20,7 +22,7 @@ type Mode = "setup" | "unlock" | "reset";
  * cannot recover it — the copy it keeps is sealed under it. Starting over
  * makes new keys: what was sent before cannot be read by this account again.
  */
-export function E2eDialog({ open, onOpenChange }: E2eDialogProps) {
+export function E2eDialog({ open, onOpenChange, startOver = false }: E2eDialogProps) {
   const status = useE2eStatus();
   const [resetting, setResetting] = useState(false);
   const [passphrase, setPassphrase] = useState("");
@@ -29,7 +31,14 @@ export function E2eDialog({ open, onOpenChange }: E2eDialogProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const mode: Mode = status === "locked" ? (resetting ? "reset" : "unlock") : "setup";
+  const mode: Mode =
+    startOver && (status === "ready" || status === "locked")
+      ? "reset"
+      : status === "locked"
+        ? resetting
+          ? "reset"
+          : "unlock"
+        : "setup";
   const choosing = mode !== "unlock";
 
   function handleOpenChange(next: boolean) {
@@ -145,7 +154,7 @@ export function E2eDialog({ open, onOpenChange }: E2eDialogProps) {
               >
                 Forgot your passphrase?
               </button>
-            ) : mode === "reset" ? (
+            ) : mode === "reset" && !startOver ? (
               <button
                 type="button"
                 className="text-xs text-muted-foreground underline-offset-2 hover:underline cursor-pointer"
