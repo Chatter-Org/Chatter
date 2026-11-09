@@ -3703,7 +3703,8 @@ async fn e2e_dms_take_sealed_messages_under_the_current_key() {
         }
     };
     assert!(get(alice.clone()).await["identity"].is_null());
-    // A session token alone cannot set keys: it takes a TOTP code too.
+    // A session token alone cannot replace keys: it takes a TOTP code too.
+    // A first setup replaces nothing, so it takes none.
     let mut identity = json!({
         "enc_pub": common::B64_32,
         "sign_pub": common::B64_32,
@@ -3712,6 +3713,7 @@ async fn e2e_dms_take_sealed_messages_under_the_current_key() {
             "salt": common::B64_16, "nonce": common::B64_24, "ct": common::B64_48,
         },
     });
+    identity["replace"] = json!(true);
     let unconfirmed = client
         .put(format!("{base}/api/e2e/identity"))
         .header("authorization", bearer(&alice))
@@ -3720,7 +3722,15 @@ async fn e2e_dms_take_sealed_messages_under_the_current_key() {
         .await
         .unwrap();
     assert_eq!(unconfirmed.status(), StatusCode::FORBIDDEN);
-    put_e2e_identity(&client, &base, &alice, "alice", &alice_secret).await;
+    identity["replace"] = json!(false);
+    let first = client
+        .put(format!("{base}/api/e2e/identity"))
+        .header("authorization", bearer(&alice))
+        .json(&identity)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
     assert_eq!(
         get(alice.clone()).await["identity"]["backup"]["kdf"],
         "scrypt"

@@ -8,7 +8,7 @@
  * - `off` — nobody is signed in, or it has not been asked yet.
  * - `setup` — the account has never set up encryption.
  * - `locked` — it has, on another device or before a sign-out, and this one
- *   needs the passphrase.
+ *   needs the recovery key (or the passphrase an older setup used).
  * - `ready` — this device holds the seed.
  * - `error` — the server could not be asked. Tried again on the next start.
  *
@@ -30,10 +30,12 @@ import {
 } from "../api";
 import { host } from "../platform";
 import {
+  canonicalSecret,
   fromB64,
   identityFromSeed,
   newIdentity,
   newMessageId,
+  newRecoveryKey,
   newRoomKey,
   openBackup,
   messageSignedBy,
@@ -111,6 +113,12 @@ const REPLY_QUOTE_CHARS = 100;
 const seedName = (userId: string) => `e2e-seed:${userId}`;
 const pinsName = (userId: string) => `e2e-pins:${userId}`;
 const roomsName = (userId: string) => `e2e-rooms:${userId}`;
+const recoveryName = (userId: string) => `e2e-recovery:${userId}`;
+
+/** The recovery key made for this account, until the person has been shown it
+ *  and said they kept it. Held on the device meanwhile, so a reload does not
+ *  lose the only copy; forgotten after, and on sign-out. */
+let unsavedRecoveryKey: string | null = null;
 
 function notify() {
   for (const listener of listeners) listener();
@@ -181,11 +189,12 @@ export async function startE2e(userId: string): Promise<E2eStatus> {
   me = userId;
   const gen = generation;
   try {
-    const [record, stored, storedPins, storedRooms] = await Promise.all([
+    const [record, stored, storedPins, storedRooms, storedRecovery] = await Promise.all([
       apiE2eGetIdentity(),
       host.secretGet(seedName(userId)).catch(() => null),
       readJson<typeof pins>(pinsName(userId), {}),
       readJson<string[]>(roomsName(userId), []),
+      host.secretGet(recoveryName(userId)).catch(() => null),
     ]);
     if (gen !== generation) return status;
     pins = { ...storedPins, ...pins };
@@ -200,7 +209,9 @@ export async function startE2e(userId: string): Promise<E2eStatus> {
       const local = identityFromSeed(fromB64(stored));
       if (sameBytes(local.encPub, fromB64(record.enc_pub)) && sameBytes(local.signPub, fromB64(record.sign_pub))) {
         identity = local;
+        unsavedRecoveryKey = storedRecovery;
         setStatus("ready");
+        notify();
         return status;
       }
       keysReplacedElsewhere = true;
@@ -241,11 +252,12 @@ async function adopt(next: Identity) {
  */
 export async function setUpE2e(passphrase: string, totpCode: string, replace = false): Promise<void> {
   if (!me) throw new Error("Not signed in");
-  const problem = passphraseProblem(passphrase);
+  const secret = canonicalSecret(passphrase);
+  const problem = passphraseProblem(secret);
   if (problem) throw new Error(problem);
   const previous = identity;
   const next = newIdentity();
-  const backup = await sealBackup(next.seed, passphrase, me);
+  const backup = await sealBackup(next.seed, secret, me);
   try {
     await apiE2ePutIdentity({ ...publicIdentity(next), backup }, totpCode, replace);
   } catch (err) {
@@ -272,7 +284,59 @@ export async function setUpE2e(passphrase: string, totpCode: string, replace = f
   await adopt(next);
 }
 
-/** Unlock with the passphrase. False when it is the wrong one. */
+/**
+ * Make keys for the person, with nothing for them to choose: the backup is
+ * sealed under a recovery key made here, which they are shown to keep
+ * (`getUnsavedRecoveryKey`). Only run once an account is in `setup`; a second
+ * call while one is under way shares it.
+ */
+let autoSetup: Promise<void> | null = null;
+export function autoSetUpE2e(): Promise<void> {
+  if (status !== "setup") return Promise.resolve();
+  autoSetup ??= makeKeysWithRecoveryKey("", false).finally(() => {
+    autoSetup = null;
+  });
+  return autoSetup;
+}
+
+/** Start over with new keys and a new recovery key. Takes an authenticator or
+ *  recovery code: it is what a person does when they think the old keys are
+ *  out, and what someone holding only a stolen session would want to do. */
+export function resetE2e(totpCode: string): Promise<void> {
+  return makeKeysWithRecoveryKey(totpCode, true);
+}
+
+async function makeKeysWithRecoveryKey(totpCode: string, replace: boolean): Promise<void> {
+  const user = me;
+  if (!user) throw new Error("Not signed in");
+  const key = newRecoveryKey();
+  // Kept before the request, so a reload between the server saving the keys
+  // and the person seeing the key cannot lose the only way back in.
+  await host.secretSet(recoveryName(user), key).catch(() => {});
+  try {
+    await setUpE2e(key, totpCode, replace);
+  } catch (err) {
+    await host.secretDelete(recoveryName(user)).catch(() => {});
+    throw err;
+  }
+  unsavedRecoveryKey = key;
+  notify();
+}
+
+/** The recovery key to show the person, until they say they have kept it. */
+export function getUnsavedRecoveryKey(): string | null {
+  return unsavedRecoveryKey;
+}
+
+/** The person has kept the recovery key; this device forgets it. */
+export async function acknowledgeRecoveryKey(): Promise<void> {
+  unsavedRecoveryKey = null;
+  notify();
+  if (me) await host.secretDelete(recoveryName(me)).catch(() => {});
+}
+
+/** Unlock with the recovery key (or a passphrase chosen earlier). False when
+ *  it is the wrong one. */
 export async function unlockE2e(passphrase: string): Promise<boolean> {
   if (!me) throw new Error("Not signed in");
   const record = await apiE2eGetIdentity();
@@ -280,7 +344,7 @@ export async function unlockE2e(passphrase: string): Promise<boolean> {
     setStatus("setup");
     throw new Error("Encryption isn't set up for this account yet");
   }
-  const seed = await openBackup(record.backup, passphrase, me);
+  const seed = await openBackup(record.backup, canonicalSecret(passphrase), me);
   if (!seed) return false;
   const next = identityFromSeed(seed);
   if (!sameBytes(next.encPub, fromB64(record.enc_pub)) || !sameBytes(next.signPub, fromB64(record.sign_pub))) {
@@ -293,6 +357,7 @@ export async function unlockE2e(passphrase: string): Promise<boolean> {
 function clearSession() {
   generation++;
   identity = null;
+  unsavedRecoveryKey = null;
   keysReplacedElsewhere = false;
   encryptedRooms.clear();
   roomKeys.clear();
@@ -316,7 +381,10 @@ export async function stopE2e(): Promise<void> {
   clearSession();
   me = null;
   setStatus("off");
-  if (userId) await host.secretDelete(seedName(userId)).catch(() => {});
+  if (userId) {
+    await host.secretDelete(seedName(userId)).catch(() => {});
+    await host.secretDelete(recoveryName(userId)).catch(() => {});
+  }
 }
 
 // ─── Contacts' keys ─────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import { RecoveryKeyPrompt } from "@/components/e2e/RecoveryKeyDialog";
 import { Suspense } from "react";
 import { WifiOff } from "lucide-react";
 import { useAppContext, AppProvider } from "@/lib/store";
@@ -89,6 +90,7 @@ function App() {
               <GifFavoritesSync />
               <ThemeInvite />
               <MessageLinkOpener />
+              <RecoveryKeyPrompt />
               <ForumLinkOpener />
               <AppContent />
             </ConfirmProvider>

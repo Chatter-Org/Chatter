@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { passphraseProblem } from "@chatter/core/e2e/crypto";
-import { setUpE2e, unlockE2e } from "@chatter/core/e2e/session";
+import { resetE2e, unlockE2e } from "@chatter/core/e2e/session";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -13,38 +12,31 @@ interface E2eDialogProps {
   startOver?: boolean;
 }
 
-type Mode = "setup" | "unlock" | "reset";
+type Mode = "unlock" | "reset";
 
 /**
- * Set up, unlock or start over with end-to-end encryption.
+ * Unlock encrypted messages on this device with the recovery key, or start
+ * over with new keys.
  *
- * The passphrase is the only way back in on a new device, and the server
- * cannot recover it — the copy it keeps is sealed under it. Starting over
- * makes new keys: what was sent before cannot be read by this account again.
+ * Keys are made for people when they first use an encrypted DM, so there is
+ * nothing to set up here. The recovery key is the only way back in on a new
+ * device, and the server cannot recover it — the copy it keeps is sealed
+ * under it. Starting over makes new keys and a new recovery key: what was sent
+ * before cannot be read by this account again.
  */
 export function E2eDialog({ open, onOpenChange, startOver = false }: E2eDialogProps) {
   const status = useE2eStatus();
   const [resetting, setResetting] = useState(false);
-  const [passphrase, setPassphrase] = useState("");
-  const [confirm, setConfirm] = useState("");
+  const [secret, setSecret] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const mode: Mode =
-    startOver && (status === "ready" || status === "locked")
-      ? "reset"
-      : status === "locked"
-        ? resetting
-          ? "reset"
-          : "unlock"
-        : "setup";
-  const choosing = mode !== "unlock";
+  const mode: Mode = startOver || resetting ? "reset" : "unlock";
 
   function handleOpenChange(next: boolean) {
     if (!next) {
-      setPassphrase("");
-      setConfirm("");
+      setSecret("");
       setTotpCode("");
       setError(null);
       setResetting(false);
@@ -56,30 +48,19 @@ export function E2eDialog({ open, onOpenChange, startOver = false }: E2eDialogPr
     e.preventDefault();
     if (busy) return;
     setError(null);
-    if (choosing) {
-      const problem = passphraseProblem(passphrase);
-      if (problem) {
-        setError(problem);
-        return;
-      }
-      if (passphrase !== confirm) {
-        setError("The passphrases don't match");
-        return;
-      }
-      if (!totpCode.trim()) {
-        setError("Enter the code from your authenticator app");
-        return;
-      }
+    if (mode === "reset" && !totpCode.trim()) {
+      setError("Enter the code from your authenticator app");
+      return;
     }
     setBusy(true);
     try {
       if (mode === "unlock") {
-        if (!(await unlockE2e(passphrase))) {
-          setError("That passphrase isn't right");
+        if (!(await unlockE2e(secret))) {
+          setError("That isn't the right recovery key");
           return;
         }
       } else {
-        await setUpE2e(passphrase, totpCode.trim(), mode === "reset");
+        await resetE2e(totpCode.trim());
       }
       handleOpenChange(false);
     } catch (err) {
@@ -89,52 +70,41 @@ export function E2eDialog({ open, onOpenChange, startOver = false }: E2eDialogPr
     }
   }
 
-  const title = {
-    setup: "Set up encrypted messages",
-    unlock: "Unlock encrypted messages",
-    reset: "Start over with new keys",
-  }[mode];
-
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open && (status === "locked" || status === "ready")} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
+          <DialogTitle>{mode === "unlock" ? "Unlock encrypted messages" : "Make new encryption keys"}</DialogTitle>
           <DialogDescription>
-            {mode === "setup" &&
-              "Direct messages are end-to-end encrypted: only the people in the conversation can read them. Choose a long passphrase to protect your keys — a few unrelated words works well. You'll need it to read your messages on a new device, and it can't be recovered if you forget it."}
-            {mode === "unlock" && "Enter your encryption passphrase to read your direct messages on this device."}
-            {mode === "reset" &&
-              "New keys mean you won't be able to read any encrypted message sent before now, on any device. The people you talk to are told your keys changed, and you'll get new messages once they accept it."}
+            {mode === "unlock"
+              ? "Enter your recovery key to read your direct messages on this device. A password manager may fill it in."
+              : "New keys mean you won't be able to read any encrypted message sent before now, on any device. The people you talk to are told your keys changed, and you'll get new messages once they accept it. You'll be given a new recovery key."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
-          <Input
-            type="password"
-            autoComplete={choosing ? "new-password" : "current-password"}
-            placeholder={choosing ? "New passphrase" : "Passphrase"}
-            value={passphrase}
-            onChange={(e) => setPassphrase(e.target.value)}
-            autoFocus
-          />
-          {choosing && (
-            <Input
-              type="password"
-              autoComplete="new-password"
-              placeholder="Confirm passphrase"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-            />
-          )}
-          {choosing && (
+          {mode === "unlock" ? (
+            <>
+              {/* Gives a password manager something to file the key under. */}
+              <input type="text" name="username" autoComplete="username" value="Chatter encryption key" readOnly hidden />
+              <Input
+                type="password"
+                autoComplete="current-password"
+                placeholder="Recovery key"
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+                autoFocus
+              />
+            </>
+          ) : (
             // Changing who can read the account's messages takes more than
             // being signed in.
             <Input
               inputMode="numeric"
               autoComplete="one-time-code"
-              placeholder="Authenticator code (or a recovery code)"
+              placeholder="Authenticator code (or a 2FA recovery code)"
               value={totpCode}
               onChange={(e) => setTotpCode(e.target.value)}
+              autoFocus
             />
           )}
           <p className="text-xs text-muted-foreground">
@@ -148,20 +118,19 @@ export function E2eDialog({ open, onOpenChange, startOver = false }: E2eDialogPr
                 className="text-xs text-muted-foreground underline-offset-2 hover:underline cursor-pointer"
                 onClick={() => {
                   setResetting(true);
-                  setPassphrase("");
+                  setSecret("");
                   setError(null);
                 }}
               >
-                Forgot your passphrase?
+                Lost your recovery key?
               </button>
-            ) : mode === "reset" && !startOver ? (
+            ) : !startOver ? (
               <button
                 type="button"
                 className="text-xs text-muted-foreground underline-offset-2 hover:underline cursor-pointer"
                 onClick={() => {
                   setResetting(false);
-                  setPassphrase("");
-                  setConfirm("");
+                  setTotpCode("");
                   setError(null);
                 }}
               >
@@ -171,7 +140,7 @@ export function E2eDialog({ open, onOpenChange, startOver = false }: E2eDialogPr
               <span />
             )}
             <Button type="submit" disabled={busy} variant={mode === "reset" ? "destructive" : "default"}>
-              {busy ? "Working…" : mode === "unlock" ? "Unlock" : mode === "reset" ? "Make new keys" : "Set up"}
+              {busy ? "Working…" : mode === "unlock" ? "Unlock" : "Make new keys"}
             </Button>
           </div>
         </form>

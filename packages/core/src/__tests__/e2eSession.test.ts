@@ -155,6 +155,43 @@ describe("e2e session", () => {
     expect([...phone.secrets.keys()].some((k) => k.startsWith("e2e-seed:"))).toBe(false);
   }, 30_000);
 
+  it("makes keys for the person, who is shown a recovery key that opens them elsewhere", async () => {
+    const laptop = await device("@alice:x");
+    expect(await laptop.as(() => laptop.session.startE2e("@alice:x"))).toBe("setup");
+    await laptop.as(() => laptop.session.autoSetUpE2e());
+    expect(laptop.session.getE2eStatus()).toBe("ready");
+    const key = laptop.session.getUnsavedRecoveryKey()!;
+    expect(key).toMatch(/^([A-HJ-NP-Z2-9]{4}-){7}[A-HJ-NP-Z2-9]{4}$/);
+    // Survives a reload until it has been kept.
+    expect(await laptop.as(() => laptop.session.startE2e("@alice:x"))).toBe("ready");
+    expect(laptop.session.getUnsavedRecoveryKey()).toBe(key);
+
+    // Typed lower case, without dashes, as a person might.
+    const phone = await device("@alice:x");
+    expect(await phone.as(() => phone.session.startE2e("@alice:x"))).toBe("locked");
+    expect(await phone.as(() => phone.session.unlockE2e("not the key"))).toBe(false);
+    expect(await phone.as(() => phone.session.unlockE2e(key.replace(/-/g, " ").toLowerCase()))).toBe(true);
+
+    await laptop.session.acknowledgeRecoveryKey();
+    expect(laptop.session.getUnsavedRecoveryKey()).toBeNull();
+    expect([...laptop.secrets.keys()].some((k) => k.startsWith("e2e-recovery:"))).toBe(false);
+  }, 30_000);
+
+  it("resets to new keys and a new recovery key, and the old one no longer opens them", async () => {
+    const laptop = await device("@alice:x");
+    await laptop.as(() => laptop.session.startE2e("@alice:x"));
+    await laptop.as(() => laptop.session.autoSetUpE2e());
+    const oldKey = laptop.session.getUnsavedRecoveryKey()!;
+    await laptop.as(() => laptop.session.resetE2e("123456"));
+    const newKey = laptop.session.getUnsavedRecoveryKey()!;
+    expect(newKey).not.toBe(oldKey);
+
+    const phone = await device("@alice:x");
+    await phone.as(() => phone.session.startE2e("@alice:x"));
+    expect(await phone.as(() => phone.session.unlockE2e(oldKey))).toBe(false);
+    expect(await phone.as(() => phone.session.unlockE2e(newKey))).toBe(true);
+  }, 30_000);
+
   it("seals a DM that only its members can open, and hands the key to a late member", async () => {
     server.rooms.set("!dm", { epoch: -1, rotate: false, members: ["@alice:x", "@bob:x"] });
     const alice = await device("@alice:x");

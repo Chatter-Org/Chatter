@@ -8,6 +8,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AuthImage, AuthAvatarImage } from "./AuthImage";
 import { Button } from "@/components/ui/button";
 import { E2eDialog } from "@/components/e2e/E2eDialog";
+import { RecoveryKeyDialog } from "@/components/e2e/RecoveryKeyDialog";
+import { useUnsavedRecoveryKey } from "@/hooks/useUnsavedRecoveryKey";
 import { useE2eStatus } from "@/hooks/useE2eStatus";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -348,6 +350,8 @@ export function UserProfileDialog({
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const e2eStatus = useE2eStatus();
   const [e2eResetOpen, setE2eResetOpen] = useState(false);
+  const [recoveryKeyOpen, setRecoveryKeyOpen] = useState(false);
+  const unsavedRecoveryKey = useUnsavedRecoveryKey();
   const [passwordTotpCode, setPasswordTotpCode] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -1839,11 +1843,17 @@ export function UserProfileDialog({
         {(e2eStatus === "ready" || e2eStatus === "locked") && (
           <SettingsSection
             title="Encrypted Messages"
-            hint="If you think your passphrase or a device holding your keys is in someone else's hands, make new keys. Messages sent after that are out of their reach; what they could already read stays readable to them."
+            hint="Keys are made for you. If you think your recovery key or a device holding your keys is in someone else's hands, make new keys: you'll get a new recovery key, and messages sent after that are out of their reach. What they could already read stays readable to them."
           >
+            {unsavedRecoveryKey && (
+              <Button variant="outline" size="sm" onClick={() => setRecoveryKeyOpen(true)}>
+                Show recovery key
+              </Button>
+            )}
             <Button variant="destructive" size="sm" onClick={() => setE2eResetOpen(true)}>
               Reset encryption keys
             </Button>
+            <RecoveryKeyDialog open={recoveryKeyOpen} onOpenChange={setRecoveryKeyOpen} />
             <E2eDialog open={e2eResetOpen} onOpenChange={setE2eResetOpen} startOver />
           </SettingsSection>
         )}

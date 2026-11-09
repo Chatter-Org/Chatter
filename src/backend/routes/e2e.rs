@@ -360,7 +360,9 @@ pub(crate) struct PutIdentityRequest {
     pub(crate) replace: bool,
     /// A current TOTP code or a recovery code. Keys decide who can read the
     /// account's conversations, so a session token alone — stolen, or left
-    /// signed in somewhere — must not be enough to change them.
+    /// signed in somewhere — must not be enough to change them. Required to
+    /// replace keys; a first setup replaces nothing and needs none, so that
+    /// turning encryption on is not a chore.
     #[serde(default)]
     pub(crate) totp_code: String,
 }
@@ -420,7 +422,9 @@ pub(crate) async fn put_identity(
         .next()
         .unwrap_or(&user_id)
         .trim_start_matches('@');
-    super::auth::verify_totp_or_recovery(req.totp_code.trim(), &user, username, &state).await?;
+    if req.replace {
+        super::auth::verify_totp_or_recovery(req.totp_code.trim(), &user, username, &state).await?;
+    }
 
     let coll = state.db.collection::<IdentityRecord>(IDENTITIES);
     let record = IdentityRecord {

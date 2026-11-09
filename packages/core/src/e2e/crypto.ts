@@ -133,6 +133,39 @@ export function passphraseProblem(passphrase: string): string | null {
   return null;
 }
 
+// ─── Recovery key ───────────────────────────────────────────────────────────
+
+/** 32 characters with nothing easily misread (no I, O, 0 or 1). */
+const RECOVERY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const RECOVERY_KEY_CHARS = 32;
+
+/**
+ * The secret a backup is sealed under when the app makes it for the person:
+ * 160 random bits, written as eight groups of four. Far beyond guessing, so
+ * nobody has to choose, remember or type a good one — it is saved by a
+ * password manager, or kept somewhere safe, and entered on a new device.
+ */
+export function newRecoveryKey(): string {
+  for (;;) {
+    const bytes = randomBytes(RECOVERY_KEY_CHARS);
+    let chars = "";
+    for (const b of bytes) chars += RECOVERY_ALPHABET[b & 31];
+    const key = chars.match(/.{4}/g)!.join("-");
+    if (passphraseProblem(key) === null) return key;
+  }
+}
+
+/** What a backup is sealed and opened with: a recovery key typed with other
+ *  spacing, dashes or case becomes the one written form; anything else — a
+ *  passphrase chosen before keys were made for people — is used as typed. */
+export function canonicalSecret(input: string): string {
+  const stripped = input.replace(/[\s-]/g, "").toUpperCase();
+  if (stripped.length === RECOVERY_KEY_CHARS && [...stripped].every((c) => RECOVERY_ALPHABET.includes(c))) {
+    return stripped.match(/.{4}/g)!.join("-");
+  }
+  return input;
+}
+
 async function passphraseKey(passphrase: string, salt: Uint8Array, params: { log_n: number; r: number; p: number }) {
   return scryptAsync(passphrase.normalize("NFKC"), salt, {
     N: 2 ** params.log_n,

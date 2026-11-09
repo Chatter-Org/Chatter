@@ -1,6 +1,6 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Lock, ShieldAlert } from "lucide-react";
-import { acceptKeyChange, getChangedKeys, getKeysReplacedElsewhere, startE2e, subscribeE2e } from "@chatter/core/e2e/session";
+import { acceptKeyChange, autoSetUpE2e, getChangedKeys, getKeysReplacedElsewhere, startE2e, subscribeE2e } from "@chatter/core/e2e/session";
 import { Button } from "@/components/ui/button";
 import { useAppContext } from "@/lib/store";
 import { useE2eStatus } from "@/hooks/useE2eStatus";
@@ -18,6 +18,14 @@ export function E2eBanner() {
   const replacedElsewhere = useSyncExternalStore(subscribeE2e, getKeysReplacedElsewhere);
   const { state } = useAppContext();
   const [open, setOpen] = useState(false);
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
+  // Nothing to set up by hand: the first encrypted DM makes the keys.
+  useEffect(() => {
+    if (status !== "setup") return;
+    autoSetUpE2e().catch((err) => setSetupError(err instanceof Error ? err.message : "Couldn't set up encryption"));
+  }, [status, attempt]);
 
   const members = new Set(state.roomMembers.map((m) => m.userId));
   const changedHere = changed.filter((id) => members.has(id));
@@ -30,10 +38,12 @@ export function E2eBanner() {
             <Lock className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0">
               {status === "setup"
-                ? "This conversation is end-to-end encrypted. Set up encryption to read and send messages."
+                ? setupError
+                  ? `Couldn't set up encryption: ${setupError}`
+                  : "Setting up encryption…"
                 : status === "locked"
                   ? replacedElsewhere
-                    ? "Your encryption keys were changed from somewhere else. If that wasn't you, change your password. Otherwise unlock with your new passphrase."
+                    ? "Your encryption keys were changed from somewhere else. If that wasn't you, change your password. Otherwise unlock with your new recovery key."
                     : "This conversation is end-to-end encrypted. Unlock it on this device to read and send messages."
                   : "Couldn't load your encryption keys."}
             </span>
@@ -42,9 +52,18 @@ export function E2eBanner() {
             <Button size="sm" variant="outline" onClick={() => state.userId && void startE2e(state.userId)}>
               Try again
             </Button>
+          ) : status === "setup" ? (
+            setupError && (
+              <Button size="sm" variant="outline" onClick={() => {
+                  setSetupError(null);
+                  setAttempt((n) => n + 1);
+                }}>
+                Try again
+              </Button>
+            )
           ) : (
             <Button size="sm" onClick={() => setOpen(true)}>
-              {status === "setup" ? "Set up" : "Unlock"}
+              Unlock
             </Button>
           )}
           <E2eDialog open={open} onOpenChange={setOpen} />
