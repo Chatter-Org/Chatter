@@ -224,15 +224,18 @@ async fn faststart_in_place(path: &str, ext: &str) -> bool {
     ok
 }
 
-/// Rewrite a WebM audio file with its duration and cues filled in.
+/// Rewrite a WebM file with its duration and cues filled in.
 ///
 /// `MediaRecorder` streams WebM as it records and never goes back to the
-/// header, so a voice message from Chromium or the desktop app reports no
-/// duration: a native player shows `0:00` and a progress bar that never moves,
-/// and seeking has no index to work from. Copying it through ffmpeg into a
-/// seekable file writes both. A failure leaves the original, which still plays.
-async fn index_webm_audio_in_place(path: &str) -> bool {
+/// header, so a voice message or a clip from Chromium or the desktop app
+/// reports no duration: a native player shows `0:00` and a progress bar that
+/// never moves, and seeking has no index to work from. Copying it through
+/// ffmpeg into a seekable file writes both. A failure — or a copy that came
+/// out missing a kind of stream the source had — leaves the original, which
+/// still plays.
+async fn index_webm_in_place(path: &str) -> bool {
     let _job = metrics::media_job();
+    let before = stream_kinds(path).await;
     let tmp = format!("{}.index.tmp", path);
     let result = tokio::process::Command::new("ffmpeg")
         .args(["-y", "-i", path, "-c", "copy", "-f", "webm", &tmp])
@@ -241,10 +244,54 @@ async fn index_webm_audio_in_place(path: &str) -> bool {
         .status()
         .await;
     let ok = matches!(result, Ok(status) if status.success())
-        && has_audio(&tmp).await
+        && {
+            let after = stream_kinds(&tmp).await;
+            !after.is_empty() && before.iter().all(|kind| after.contains(kind))
+        }
         && tokio::fs::rename(&tmp, path).await.is_ok();
     let _ = tokio::fs::remove_file(&tmp).await;
     ok
+}
+
+/// A file's duration in seconds, or `None` when its container does not say —
+/// which is what a WebM straight out of `MediaRecorder` looks like.
+async fn probe_duration(path: &str) -> Option<f64> {
+    let output = tokio::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ])
+        .output()
+        .await
+        .ok()?;
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+/// Give a WebM with no duration one, at most once per file.
+///
+/// Run at upload and again from the serving path, which is what reaches the
+/// clips and recordings uploaded before video was covered: those arrived with
+/// no duration, so a shared link played in Discord (or any native player)
+/// showed `0:00` for its length. The serving path runs on every range
+/// request, so the answer is written down in a `.indexed` marker — whether or
+/// not the pass was needed or worked — and the probe is not repeated.
+async fn index_webm_once(path: &str) {
+    let job = media_job_lock(path).await;
+    let _guard = job.lock().await;
+
+    let marker = format!("{}.indexed", path);
+    if tokio::fs::metadata(&marker).await.is_ok() {
+        return;
+    }
+    if probe_duration(path).await.is_none() {
+        index_webm_in_place(path).await;
+    }
+    let _ = tokio::fs::write(&marker, b"").await;
 }
 
 /// Re-encode, in place, an MP4 or MOV already on disk whose picture no
@@ -1470,10 +1517,10 @@ async fn finalize_upload(
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    // A voice message recorded in the browser is written as it is captured,
-    // so it arrives with no duration and no seek index.
-    if ext == "weba" {
-        index_webm_audio_in_place(&path).await;
+    // A voice message or a clip recorded in the browser is written as it is
+    // captured, so it arrives with no duration and no seek index.
+    if matches!(ext.as_str(), "weba" | "webm") {
+        index_webm_once(&path).await;
     }
 
     // Generate first-frame thumbnail for video files
@@ -2736,6 +2783,7 @@ async fn remove_upload_record(state: &Arc<AppState>, record: &UploadRecord) {
             ".preview.webp",
             "@subs.json",
             ".faststarted",
+            ".indexed",
             ".playable",
             ".web-playable",
             ".browser-playable",
@@ -3246,6 +3294,11 @@ pub(crate) async fn upload_guard(
         {
             repair_unplayable_in_place(&disk_path).await;
             faststart_in_place(&disk_path, &ext).await;
+        }
+
+        // A WebM uploaded before video was indexed at upload has no duration.
+        if !disk_path.is_empty() && ext == "webm" && tokio::fs::metadata(&disk_path).await.is_ok() {
+            index_webm_once(&disk_path).await;
         }
 
         // Lazily generate thumbnail + subtitle sidecars for existing videos
@@ -4296,23 +4349,6 @@ mod tests {
         assert!(!needs_replayable_mp4(&missing).await);
     }
 
-    async fn probe_duration(path: &str) -> Option<f64> {
-        let output = tokio::process::Command::new("ffprobe")
-            .args([
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                path,
-            ])
-            .output()
-            .await
-            .ok()?;
-        String::from_utf8_lossy(&output.stdout).trim().parse().ok()
-    }
-
     #[tokio::test]
     async fn a_recorded_voice_message_gets_a_duration() {
         // Written through a pipe, so ffmpeg cannot seek back to the header —
@@ -4343,12 +4379,68 @@ mod tests {
             "fixture already has a duration, so this proves nothing"
         );
 
-        assert!(index_webm_audio_in_place(&path).await);
+        assert!(index_webm_in_place(&path).await);
         let duration = probe_duration(&path)
             .await
             .expect("no duration after indexing");
         assert!((duration - 2.0).abs() < 0.2, "duration {duration}");
         assert!(has_audio(&path).await, "audio lost");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn a_recorded_clip_gets_a_duration_once() {
+        // A clip from the MediaRecorder engine, shaped as MediaRecorder writes
+        // it: VP9 and Opus streamed through a pipe, so no duration and no
+        // cues. Shared to Discord, its player showed the length as 0:00.
+        let dir = std::env::temp_dir().join(format!("chatter_clip_{}", std::process::id()));
+        let _ = tokio::fs::create_dir_all(&dir).await;
+        let path = dir.join("clip.webm").to_string_lossy().to_string();
+        let marker = format!("{path}.indexed");
+        let _ = tokio::fs::remove_file(&marker).await;
+        let output = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=2:size=160x120:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-c:v",
+                "libvpx-vp9",
+                "-deadline",
+                "realtime",
+                "-c:a",
+                "libopus",
+                "-f",
+                "webm",
+                "pipe:1",
+            ])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .await
+            .expect("ffmpeg should be available");
+        assert!(output.status.success(), "webm fixture build failed");
+        tokio::fs::write(&path, &output.stdout).await.unwrap();
+        assert!(
+            probe_duration(&path).await.is_none(),
+            "fixture already has a duration, so this proves nothing"
+        );
+
+        index_webm_once(&path).await;
+        let duration = probe_duration(&path)
+            .await
+            .expect("no duration after indexing");
+        assert!((duration - 2.0).abs() < 0.2, "duration {duration}");
+        assert!(has_video(&path).await, "video lost");
+        assert!(has_audio(&path).await, "audio lost");
+        assert!(
+            tokio::fs::metadata(&marker).await.is_ok(),
+            "no marker, so every range request would probe it again"
+        );
+
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 
