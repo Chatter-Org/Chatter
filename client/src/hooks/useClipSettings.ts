@@ -4,9 +4,9 @@ import { useCallback, useEffect, useState } from "react";
  * The clipping defaults a user keeps in their profile, and a hook that keeps
  * every component holding them in step.
  *
- * These live in localStorage rather than on the server: arming a buffer costs
- * a second video encoder on *this* machine, so the answer can reasonably
- * differ between a desktop and a laptop.
+ * These live in localStorage rather than on the server: arming a buffer runs a
+ * video encoder on *this* machine, so the answer can reasonably differ between
+ * a desktop and a laptop.
  */
 
 export const CLIP_LENGTH_OPTIONS = [15, 30, 60] as const;
@@ -24,7 +24,7 @@ const STORAGE_KEY = "chatter_clip_settings";
 const LEGACY_LENGTH_KEY = "chatter_clip_length_secs";
 
 export const DEFAULT_CLIP_SETTINGS: ClipSettings = {
-  // Off until asked for: see the cost note on useClipBuffer.
+  // Off until asked for: see the note on useClipBuffer.
   autoArm: false,
   lengthSecs: 30,
 };

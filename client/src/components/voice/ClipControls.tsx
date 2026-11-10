@@ -23,9 +23,9 @@ import { ClipChannelDialog, type TakenClip } from "./ClipChannelDialog";
  * Arm a rolling buffer over the focused screen share and save the last stretch
  * of it into a channel the user picks.
  *
- * Off unless the user's profile says otherwise: it runs a second video encoder
- * for as long as it is armed, which is a real cost to pay for a button nobody
- * may press.
+ * Off unless the user's profile says otherwise: it runs a video encoder for as
+ * long as it is armed — a light one (see `useClipBuffer`), but still a cost to
+ * pay for a button nobody may press.
  */
 export function ClipControls() {
   const { state, wsRef } = useAppContext();
@@ -59,7 +59,7 @@ export function ClipControls() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sharerId, streamVersion],
   );
-  const { armed, bufferedSecs, error, takeClip } = useClipBuffer(stream, enabled, lengthSecs);
+  const { armed, bufferedSecs, error, detail, takeClip } = useClipBuffer(stream, enabled, lengthSecs);
   const supported = clipBufferSupported();
 
   // Everyone in the channel is told, so a buffer of someone's screen is never
@@ -216,7 +216,7 @@ export function ClipControls() {
             size="sm"
             variant="ghost"
             className={`h-7 w-7 p-0 ${armed ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
-            title={armed ? "Clipping armed" : "Arm clipping"}
+            title={armed ? (detail ? `Clipping armed — ${detail}` : "Clipping armed") : "Arm clipping"}
           >
             <Scissors className="h-3.5 w-3.5" />
           </Button>
