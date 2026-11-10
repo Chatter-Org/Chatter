@@ -21,7 +21,7 @@ import {
   saveResumable,
 } from "./uploadStore";
 import { host } from "./platform";
-import type { IdentityBackup, PublicIdentity, SealedMessage, WrappedRoomKey } from "./e2e/crypto";
+import type { IdentityBackup, PublicIdentity, SealedLinkPreview, SealedMessage, WrappedRoomKey } from "./e2e/crypto";
 import { messageCrypto, type E2eMessageState, type SealMeta } from "./e2e/hooks";
 
 // Access token lives only in memory — never persisted to localStorage.
@@ -1153,6 +1153,9 @@ export interface MatrixMessage {
      *  `reply_to_body` hold what it said and `e2e_state` how that went. */
     e2e?: SealedMessage;
     e2e_state?: E2eMessageState;
+    /** The link preview sealed into an encrypted message by its sender, once
+     *  opened and checked (`acceptedPreview`). Only trusted beside `e2e`. */
+    link_preview?: SealedLinkPreview;
     /** Set by the server when the sender lacks mention_everyone: role mentions
      *  render as written but must not notify. */
     suppress_role_mentions?: boolean;

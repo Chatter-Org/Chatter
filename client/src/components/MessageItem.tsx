@@ -13,7 +13,8 @@ import {
   apiGetAuthenticatedBlobUrl,
 } from "@/lib/api";
 import { AuthImage, AuthAvatarImage } from "./AuthImage";
-import { EncryptedAttachment } from "./EncryptedAttachment";
+import { EncryptedAttachment, useDecryptedImage } from "./EncryptedAttachment";
+import type { SealedLinkPreview } from "@chatter/core/e2e/crypto";
 import { parseEncryptedFileLink } from "@chatter/core/e2e/files";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -315,6 +316,42 @@ function LinkPreviewCard({ url }: { url: string }) {
         {preview.title && (
           <span className="text-sm font-medium truncate">{preview.title}</span>
         )}
+        {preview.description && (
+          <span className="text-xs text-muted-foreground line-clamp-2">{preview.description}</span>
+        )}
+      </div>
+    </a>
+  );
+}
+
+/**
+ * A link preview its sender sealed into an encrypted message (core
+ * `e2e/linkPreview.ts`). Nothing is fetched from the linked site to draw it:
+ * the picture is an encrypted upload, opened here like any other. The site
+ * named is the link's own host — not anything the page or the sender said it
+ * was — so a preview cannot pass one site off as another.
+ */
+function SealedLinkPreviewCard({ preview }: { preview: SealedLinkPreview }) {
+  const picture = useDecryptedImage(preview.image);
+  const site = useMemo(() => {
+    try {
+      return new URL(preview.url).hostname.replace(/^www\./, "");
+    } catch {
+      return "";
+    }
+  }, [preview.url]);
+
+  return (
+    <a
+      href={preview.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-2 flex overflow-hidden rounded-md border border-border bg-secondary/30 hover:bg-secondary/50 transition-colors max-w-md"
+    >
+      {picture && <img src={picture} alt="" className="w-24 h-24 object-cover flex-shrink-0" />}
+      <div className="flex flex-col justify-center px-3 py-2 min-w-0">
+        {site && <span className="text-xs text-muted-foreground truncate">{site}</span>}
+        {preview.title && <span className="text-sm font-medium truncate">{preview.title}</span>}
         {preview.description && (
           <span className="text-xs text-muted-foreground line-clamp-2">{preview.description}</span>
         )}
@@ -872,7 +909,7 @@ function EmbedCard({ embed, eventId }: { embed: Embed; eventId?: string }) {
 /** Memoized media preview — React preserves these DOM nodes across parent re-renders */
 const gifUrlPattern = /\.gif(\?.*)?$/i;
 
-const MediaPreview = memo(function MediaPreview({ body, media, hiddenBySpoiler, onReveal, encrypted }: { body: string; media?: Record<string, { w: number; h: number }>; hiddenBySpoiler?: boolean; onReveal?: () => void; encrypted?: boolean }) {
+const MediaPreview = memo(function MediaPreview({ body, media, hiddenBySpoiler, onReveal, encrypted, sealedPreview }: { body: string; media?: Record<string, { w: number; h: number }>; hiddenBySpoiler?: boolean; onReveal?: () => void; encrypted?: boolean; sealedPreview?: SealedLinkPreview }) {
   const { state } = useAppContext();
   const { images, videos, audios, files, links, youtubeIds, sealedFiles } = useMemo(() => extractMediaUrls(body), [body]);
   const [lightbox, setLightbox] = useState<{ url: string; type: "image" | "video" } | null>(null);
@@ -967,8 +1004,13 @@ const MediaPreview = memo(function MediaPreview({ body, media, hiddenBySpoiler, 
         <FileAttachmentCard key={url} url={url} />
       ))}
       {/* A preview is fetched by the server, which would learn the link: not
-          for an end-to-end encrypted message. */}
+          for an end-to-end encrypted message. That carries its own, sealed by
+          the sender, for a link still in its text (an edit may have taken it
+          out). */}
       {links.length > 0 && !encrypted && <LinkPreviewCard url={links[0]} />}
+      {encrypted && sealedPreview && links.includes(sealedPreview.url) && (
+        <SealedLinkPreviewCard preview={sealedPreview} />
+      )}
 
       <Dialog open={lightbox !== null} onOpenChange={(open) => { if (!open) setLightbox(null); }}>
         <DialogContent className="max-w-[90vw] max-h-[90vh] p-0 border-none bg-transparent shadow-none flex items-center justify-center [&>button]:text-white [&>button]:bg-black/50 [&>button]:rounded-full [&>button]:p-1">
@@ -1700,7 +1742,18 @@ function MessageItemInner({ message, grouped, inThread, triggerEdit, onEditDone,
           )}
 
           {/* Media rendered as stable React elements — not inside innerHTML */}
-          {!isDeleted && <MediaPreview body={message.content.body} media={message.media} hiddenBySpoiler={showSpoilerMask} onReveal={() => setSpoilerRevealed(true)} encrypted={!!message.content.e2e} />}
+          {!isDeleted && (
+            <MediaPreview
+              body={message.content.body}
+              media={message.media}
+              hiddenBySpoiler={showSpoilerMask}
+              onReveal={() => setSpoilerRevealed(true)}
+              encrypted={!!message.content.e2e}
+              // Only a preview that came out of the seal; a server could put one
+              // on any message.
+              sealedPreview={message.content.e2e ? message.content.link_preview : undefined}
+            />
+          )}
 
           {/* Rich embeds */}
           {!isDeleted && message.content.embeds?.map((embed, i) => (

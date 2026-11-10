@@ -15,6 +15,22 @@
 import type { DesktopNotification } from "./notifications";
 import type { SoundEvent, SoundPack } from "./soundRules";
 
+/** What a device fetched for a link preview: where it ended up after
+ *  redirects, its content type, and its bytes (cut to a limit). */
+export interface PreviewFetchResult {
+  url: string;
+  type: string;
+  bytes: Uint8Array;
+}
+
+/**
+ * Fetch a page or a picture for a link preview from this device, never
+ * through the server, so an encrypted conversation's links stay between its
+ * members. The platform enforces the rules (`e2e/linkPreview.ts` lists them):
+ * https only, no cookies, nothing on a private network, small and quick.
+ */
+export type PreviewFetcher = (url: string, kind: "page" | "image") => Promise<PreviewFetchResult | null>;
+
 export interface ToastOptions {
   description?: string;
   action?: { label: string; onClick: () => void };
@@ -68,6 +84,12 @@ export interface Host {
   secretGet(name: string): Promise<string | null>;
   secretSet(name: string, value: string): Promise<void>;
   secretDelete(name: string): Promise<void>;
+
+  /** Link previews for encrypted conversations, made on the sender's device.
+   *  Null where the platform cannot fetch another site's page itself — a
+   *  browser, where pages may not read other sites — and then messages go
+   *  without one. */
+  fetchForPreview: PreviewFetcher | null;
 }
 
 const inert: Host = {
@@ -90,6 +112,7 @@ const inert: Host = {
   secretGet: async () => null,
   secretSet: async () => {},
   secretDelete: async () => {},
+  fetchForPreview: null,
 };
 
 let current: Host = inert;

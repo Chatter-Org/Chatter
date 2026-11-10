@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { configureHost } from "@chatter/core/platform";
 import type { GifFavoritesPayload } from "@/lib/api";
 import { adoptGifFavorites } from "@/hooks/useFavoriteGifs";
+import { desktop, hasDesktopFeature } from "@/lib/desktop/bridge";
 import {
   closeNotificationsReadElsewhere,
   closeReadNotifications,
@@ -68,6 +69,16 @@ configureHost({
       localStorage.removeItem(`chatter-secret:${name}`);
     } catch {}
   },
+  // Link previews in encrypted DMs are made by the sender's device. A browser
+  // page cannot read another site's page, so only the desktop app makes them;
+  // a browser sends none rather than ask the server, which would learn the link.
+  fetchForPreview:
+    hasDesktopFeature("link-preview@1") && desktop?.linkPreview
+      ? async (url, kind) => {
+          const res = await desktop!.linkPreview!.fetch(url, kind);
+          return res ? { url: res.url, type: res.type, bytes: new Uint8Array(res.bytes) } : null;
+        }
+      : null,
 });
 
 // Decode the built-in effects (and derive the leave sound) now, so the first

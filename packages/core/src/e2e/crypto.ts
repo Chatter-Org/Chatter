@@ -296,6 +296,40 @@ export interface MessagePlaintext {
   in_reply_to?: string;
   thread_id?: string;
   spoiler?: boolean;
+  /** A preview of a link in `body`, made on the sender's device (see
+   *  `e2e/linkPreview.ts`): readers fetch nothing to draw it. */
+  preview?: SealedLinkPreview;
+}
+
+/**
+ * A link preview as sealed. Only what the sender's device read from the page;
+ * the site shown with it is taken from `url` by the reader, not from here.
+ * `image` is an encrypted upload's link (`#k=…`), so drawing the picture asks
+ * nothing of the site the link names.
+ */
+export interface SealedLinkPreview {
+  url: string;
+  title?: string;
+  description?: string;
+  image?: string;
+}
+
+export const PREVIEW_LIMITS = { url: 2048, title: 200, description: 300 } as const;
+
+/** The preview fields of a parsed message, if they are the right shape, with
+ *  text cut to its limits. Anything else is dropped, not refused: the message
+ *  itself still opens. */
+function previewOf(value: unknown): SealedLinkPreview | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const v = value as Record<string, unknown>;
+  if (typeof v.url !== "string" || v.url.length > PREVIEW_LIMITS.url) return undefined;
+  const preview: SealedLinkPreview = { url: v.url };
+  if (typeof v.title === "string" && v.title) preview.title = v.title.slice(0, PREVIEW_LIMITS.title);
+  if (typeof v.description === "string" && v.description) {
+    preview.description = v.description.slice(0, PREVIEW_LIMITS.description);
+  }
+  if (typeof v.image === "string" && v.image.length <= PREVIEW_LIMITS.url) preview.image = v.image;
+  return preview;
 }
 
 export interface MessageContext {
@@ -347,6 +381,8 @@ export function openMessage(
       if (typeof parsed[field] === "string") plaintext[field] = parsed[field];
     }
     if (parsed.spoiler === true) plaintext.spoiler = true;
+    const preview = previewOf(parsed.preview);
+    if (preview) plaintext.preview = preview;
     let verified = false;
     if (senderSignPub) {
       try {

@@ -31,6 +31,11 @@ class E2eRequestError extends Error {
 
 vi.mock("../api", () => ({
   E2eRequestError,
+  isServerUrl: (url: string) => url.startsWith("/") || url.startsWith("https://chat.example/"),
+  apiDiscardInterruptedUpload: async () => {},
+  apiUploadFile: async (source: { name: string }) => ({
+    url: `https://chat.example/external/0123456789abcdef0123456789abcdef/${source.name}`,
+  }),
   apiE2eGetIdentity: async () => server.identities.get(server.caller) ?? null,
   apiE2ePutIdentity: async (identity: any, _totp: string, replace: boolean) => {
     if (server.identities.has(server.caller) && !replace) throw new E2eRequestError("exists", 409, "M_E2E_EXISTS");
@@ -126,7 +131,7 @@ async function device(userId: string) {
       return { event, sealed };
     });
   const read = (roomId: string, events: any[]) => as(() => hooks.messageCrypto().open(roomId, events));
-  return { session, secrets, as, send, read };
+  return { session, secrets, as, send, read, platform };
 }
 
 beforeEach(() => {
@@ -489,6 +494,33 @@ describe("e2e session against a lying server", () => {
     server.rooms.get("!dm")!.members = ["@alice:x", "@bob:x"];
     await alice.as(() => alice.session.syncRoomKeys("!dm", true));
     expect(alice.session.getNewMembers()).toEqual({ "!dm": ["@bob:x"] });
+  }, 60_000);
+
+  it("carries a link preview made by the sender, which the server never sees", async () => {
+    const { alice, bob } = await pair();
+    const page = `<meta property="og:title" content="Release notes"><meta property="og:image" content="https://example.com/p.png">`;
+    alice.platform.configureHost({
+      fetchForPreview: async (url, kind) =>
+        kind === "page"
+          ? { url, type: "text/html", bytes: new TextEncoder().encode(page) }
+          : { url, type: "image/png", bytes: new Uint8Array([1, 2, 3]) },
+    });
+    const { event, sealed } = await alice.send("!dm", "new version https://example.com/notes");
+    const onServer = JSON.stringify({ event, attachments: sealed.attachments });
+    expect(onServer).not.toContain("example.com");
+    expect(onServer).not.toContain("Release notes");
+    // The picture is an encrypted upload of the message's own, so it is kept.
+    expect(sealed.attachments).toHaveLength(1);
+    expect(sealed.attachments[0]).toMatch(/\.enc$/);
+
+    const [opened] = await bob.read("!dm", [event]);
+    expect(opened.content.link_preview).toMatchObject({ url: "https://example.com/notes", title: "Release notes" });
+    expect(opened.content.link_preview.image).toContain(`${sealed.attachments[0]}#k=`);
+
+    // One the server puts on a message is not the sealed one, and is dropped.
+    const plain = await alice.send("!dm", "no link here");
+    const forged = { ...plain.event, content: { ...plain.event.content, link_preview: { url: "https://evil.example", title: "Log in" } } };
+    expect((await bob.read("!dm", [forged]))[0].content.link_preview).toBeUndefined();
   }, 60_000);
 
   it("keeps this device's seed when the server's keys stop matching it", async () => {

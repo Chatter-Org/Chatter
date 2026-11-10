@@ -106,6 +106,37 @@ export interface DesktopAvatars {
   subscribe(listener: () => void): () => void;
 }
 
+/** What the app fetched for a link preview. */
+export interface DesktopPreviewFetch {
+  /** Where the request ended up, after redirects. */
+  url: string;
+  /** The response's Content-Type. */
+  type: string;
+  bytes: ArrayBuffer;
+}
+
+/**
+ * feature "link-preview@1": fetch a page or picture for an encrypted
+ * message's link preview from the app itself, so the server never learns the
+ * link (see `packages/core/src/e2e/linkPreview.ts`). The app must, on the
+ * request and on every redirect:
+ *   - allow `https:` only, at most 5 redirects;
+ *   - send no cookies, credentials or Referer (a session of its own, not the
+ *     page's), with a plain User-Agent;
+ *   - refuse a host that resolves to a loopback, private, link-local, CGNAT,
+ *     unique-local, multicast or unspecified address — checked on the address
+ *     actually connected to, so DNS cannot point it inward;
+ *   - for "page", answer only a text/html or application/xhtml+xml response,
+ *     and read no more than its first 1 MiB;
+ *   - for "image", answer only image/png, image/jpeg, image/gif or
+ *     image/webp, and refuse one over 2 MiB;
+ *   - give up after 8 seconds, and never run the page's scripts.
+ * Resolves null for anything refused or failed.
+ */
+export interface DesktopLinkPreview {
+  fetch(url: string, kind: "page" | "image"): Promise<DesktopPreviewFetch | null>;
+}
+
 export interface ChatterDesktopBridge {
   bridgeVersion: number;
   appVersion: string;
@@ -122,6 +153,7 @@ export interface ChatterDesktopBridge {
   ducking?: DesktopDucking;
   settings?: DesktopSettings;
   avatars?: DesktopAvatars;
+  linkPreview?: DesktopLinkPreview;
 }
 
 declare global {

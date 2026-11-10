@@ -53,6 +53,7 @@ import {
   type SealedMessage,
 } from "./crypto";
 import { configureMessageCrypto, type E2eMessageState, type SealedSend, type SealMeta } from "./hooks";
+import { acceptedPreview, linkPreviewForSend } from "./linkPreview";
 
 export type E2eStatus = "off" | "setup" | "locked" | "ready" | "error";
 
@@ -841,7 +842,13 @@ function bindingHolds(msg: Sealable, p: MessagePlaintext): boolean {
 function openOne<T extends Sealable>(roomId: string, msg: T): T {
   const unreadable = (state: keyof typeof E2E_UNREADABLE): T => ({
     ...msg,
-    content: { ...msg.content, body: E2E_UNREADABLE[state], reply_to_body: undefined, e2e_state: state },
+    content: {
+      ...msg.content,
+      body: E2E_UNREADABLE[state],
+      reply_to_body: undefined,
+      link_preview: undefined,
+      e2e_state: state,
+    },
   });
   const sealed = sealedOf(msg);
   if (!sealed) return plaintextInEncryptedRoom(roomId, msg) ? unreadable("forged") : msg;
@@ -883,6 +890,8 @@ function openOne<T extends Sealable>(roomId: string, msg: T): T {
       reply_to_body: inReplyTo ? (replyQuote ?? "🔒 Encrypted message") : msg.content?.reply_to_body,
       // Sealed, so the server cannot reveal a spoiler by dropping the flag.
       ...(p.mid !== undefined ? { spoiler: p.spoiler === true } : {}),
+      // Only ever the sealed one: a preview the server added is replaced.
+      link_preview: acceptedPreview(p.preview, p.body),
       e2e_state: verified ? "ok" : "unverified",
     },
   };
@@ -1021,6 +1030,9 @@ async function seal(roomId: string, body: string, meta: SealMeta = {}): Promise<
         : "Unlock encrypted messages to send in this conversation",
     );
   }
+  // Before the key is looked up: making a preview can take a moment, and the
+  // epoch may move meanwhile.
+  const preview = await linkPreviewForSend(roomId, body).catch(() => null);
   let current = roomEpochs.get(roomId);
   if (!current || current.rotate || !roomKeys.get(roomId)?.has(current.epoch)) {
     await syncRoomKeys(roomId, true);
@@ -1051,13 +1063,30 @@ async function seal(roomId: string, body: string, meta: SealMeta = {}): Promise<
     if (meta.threadId) plaintext.thread_id = meta.threadId;
     if (meta.spoiler) plaintext.spoiler = true;
   }
+  // An edit may also keep a plaintext file the message already carried
+  // (sent before files were encrypted), so it keeps its reference.
+  const attachments = allUploadLinks(body).filter(
+    (link) => /\.enc$/i.test(link) || (!!meta.edits && !!openedMeta.get(meta.edits)?.links.includes(link)),
+  );
+  if (preview) {
+    plaintext.preview = { ...preview };
+    // The preview's picture is an upload of this message's too, so the server
+    // keeps it. With no room left in the list, the preview goes without it.
+    const picture = preview.image?.split("#")[0];
+    if (picture && !attachments.includes(picture)) {
+      if (attachments.length < MAX_ATTACHMENTS) attachments.push(picture);
+      else delete plaintext.preview.image;
+    }
+  }
   return {
     e2e: sealMessage(plaintext, key, { roomId, epoch: current.epoch, sender: me }, identity),
-    // An edit may also keep a plaintext file the message already carried
-    // (sent before files were encrypted), so it keeps its reference.
-    attachments: allUploadLinks(body).filter((link) => /\.enc$/i.test(link) || !!meta.edits && !!openedMeta.get(meta.edits)?.links.includes(link)),
+    attachments,
   };
 }
+
+/** The server's cap on a sealed message's upload links (`MAX_ATTACHMENTS` in
+ *  `routes/e2e.rs`). */
+const MAX_ATTACHMENTS = 10;
 
 async function recover(roomId: string, errcode: string | undefined): Promise<boolean> {
   if (errcode === "M_E2E_REQUIRED") {

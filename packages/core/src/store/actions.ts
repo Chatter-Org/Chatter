@@ -75,6 +75,7 @@ import { loadLastChannels, pickLandingChannel } from "../lastChannel";
 import { channelNotificationTag, settingsKey, type NotificationLevel, type NotificationSettings } from "../notifications";
 import { host } from "../platform";
 import { confirmMembers, getE2eStatus, isRoomEncrypted, noteRoomEncryption, syncRoomKeys } from "../e2e/session";
+import { prefetchLinkPreview } from "../e2e/linkPreview";
 import type { ProfileTheme } from "../profileTheme";
 import { displayUserId, userIdFromInput } from "../utils";
 import {
@@ -324,8 +325,12 @@ export function createStoreActions(ctx: StoreContext) {
     // never wait on a round trip.
     dispatch({ type: "SET_DRAFT", payload: { roomId, channelId, text } });
     // A draft in an encrypted DM is the text of a message not yet sealed: it
-    // stays on this device and never reaches the server.
-    if (isRoomEncrypted(roomId)) return;
+    // stays on this device and never reaches the server. A link in it is read
+    // now, from this device, for the preview its message will carry.
+    if (isRoomEncrypted(roomId)) {
+      if (getE2eStatus() === "ready") prefetchLinkPreview(text);
+      return;
+    }
     try {
       await apiSetDraft(roomId, channelId, text);
     } catch {

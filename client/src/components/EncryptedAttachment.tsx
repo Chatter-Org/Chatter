@@ -19,6 +19,39 @@ const decryptToObjectUrl = async (link: string) =>
   URL.createObjectURL((await fetchEncryptedFile(link)).blob);
 
 /**
+ * An encrypted picture opened into an object URL, or null until it is (and
+ * for good when it is not a picture the page draws). For a sealed link
+ * preview's image.
+ */
+export function useDecryptedImage(link: string | undefined): string | null {
+  const [opened, setOpened] = useState<{ link: string; url: string } | null>(null);
+  useEffect(() => {
+    if (!link) return;
+    const info = parseEncryptedFileLink(link);
+    if (!info || encryptedFileKind(info.type) !== "image") return;
+    let live = true;
+    let held = false;
+    loadMediaBlob(link, decryptToObjectUrl).then(
+      (url) => {
+        if (!live) {
+          releaseMediaBlob(link);
+          return;
+        }
+        held = true;
+        setOpened({ link, url });
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+      if (held) releaseMediaBlob(link);
+    };
+  }, [link]);
+  if (!link) return null;
+  return opened?.link === link ? opened.url : peekMediaBlob(link);
+}
+
+/**
  * A file sent into an end-to-end encrypted conversation. The server holds only
  * ciphertext; this fetches it and opens it here, using the key that came inside
  * the message.
