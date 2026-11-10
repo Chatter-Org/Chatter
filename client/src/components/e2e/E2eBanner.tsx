@@ -1,6 +1,15 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Lock, ShieldAlert } from "lucide-react";
-import { acceptKeyChange, autoSetUpE2e, getChangedKeys, getKeysReplacedElsewhere, startE2e, subscribeE2e } from "@chatter/core/e2e/session";
+import {
+  acceptKeyChange,
+  autoSetUpE2e,
+  confirmMembers,
+  getChangedKeys,
+  getKeysReplacedElsewhere,
+  getNewMembers,
+  startE2e,
+  subscribeE2e,
+} from "@chatter/core/e2e/session";
 import { Button } from "@/components/ui/button";
 import { useAppContext } from "@/lib/store";
 import { useE2eStatus } from "@/hooks/useE2eStatus";
@@ -16,6 +25,7 @@ export function E2eBanner() {
   const status = useE2eStatus();
   const changed = useSyncExternalStore(subscribeE2e, getChangedKeys);
   const replacedElsewhere = useSyncExternalStore(subscribeE2e, getKeysReplacedElsewhere);
+  const newMembers = useSyncExternalStore(subscribeE2e, getNewMembers);
   const { state } = useAppContext();
   const [open, setOpen] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -29,6 +39,8 @@ export function E2eBanner() {
 
   const members = new Set(state.roomMembers.map((m) => m.userId));
   const changedHere = changed.filter((id) => members.has(id));
+  const roomId = state.currentRoomId;
+  const newHere = roomId ? (newMembers[roomId] ?? []) : [];
 
   return (
     <>
@@ -72,7 +84,48 @@ export function E2eBanner() {
       {changedHere.map((userId) => (
         <KeyChangeNotice key={userId} userId={userId} />
       ))}
+      {roomId &&
+        newHere.map((userId) => <NewMemberNotice key={userId} roomId={roomId} userId={userId} />)}
     </>
+  );
+}
+
+/**
+ * Someone is in the conversation whom this device did not see join: the server
+ * lists them, but they were not here when this device first saw the room, it
+ * did not add them, and nobody here confirmed them. A member someone else
+ * added looks like this — and so does one the server made up. This device
+ * shares nothing with them until the person here says they belong.
+ */
+function NewMemberNotice({ roomId, userId }: { roomId: string; userId: string }) {
+  const { state } = useAppContext();
+  const name = state.userPresence[userId]?.displayName || displayUserId(userId);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="flex items-center justify-between gap-3 border-b bg-destructive/10 px-4 py-2 text-sm shrink-0">
+      <span className="flex items-center gap-2 min-w-0">
+        <ShieldAlert className="h-4 w-4 shrink-0 text-destructive" />
+        <span className="min-w-0">
+          {name} is new in this conversation and wasn't added from this device. If you weren't expecting them, check
+          with the others some other way. This device won't share the conversation's keys with them until you confirm.
+        </span>
+      </span>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await confirmMembers(roomId, [userId]);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        They belong here
+      </Button>
+    </div>
   );
 }
 

@@ -420,6 +420,77 @@ describe("e2e session against a lying server", () => {
     expect(notice.content.body).toBe("alice paused the video");
   }, 60_000);
 
+  it("does not hand the conversation to a member the server slips in", async () => {
+    const { alice, bob, first } = await pair();
+    const mallory = await device("@mallory:x");
+    await mallory.as(() => mallory.session.startE2e("@mallory:x"));
+    await mallory.as(() => mallory.session.setUpE2e("mallory passphrase", "123456"));
+    // Written into the member list: no rotation, no join event.
+    server.rooms.get("!dm")!.members.push("@mallory:x");
+    await alice.as(() => alice.session.syncRoomKeys("!dm", true));
+    await bob.as(() => bob.session.syncRoomKeys("!dm", true));
+    expect(server.copies.some((c) => c.user_id === "@mallory:x")).toBe(false);
+    expect(alice.session.getNewMembers()).toEqual({ "!dm": ["@mallory:x"] });
+    mallory.session.noteRoomEncryption("!dm", true);
+    expect((await mallory.read("!dm", [first.event]))[0].content.e2e_state).toBe("missing");
+
+    // Nor is a new key made that would reach them.
+    server.rooms.get("!dm")!.rotate = true;
+    await expect(alice.send("!dm", "still private")).rejects.toThrow(/Someone new/);
+    expect(server.copies.some((c) => c.user_id === "@mallory:x")).toBe(false);
+
+    // Until the person says they belong.
+    await alice.as(() => alice.session.confirmMembers("!dm", ["@mallory:x"]));
+    expect(alice.session.getNewMembers()).toEqual({});
+    const { event } = await alice.send("!dm", "welcome");
+    expect((await mallory.read("!dm", [event]))[0].content.body).toBe("welcome");
+    // Remembered on the device, like the pins.
+    expect(JSON.parse(alice.secrets.get("e2e-rosters:@alice:x")!)["!dm"]).toContain("@mallory:x");
+  }, 60_000);
+
+  it("does not send under a key made by a member it has not agreed to share with", async () => {
+    const { alice } = await pair();
+    const mallory = await device("@mallory:x");
+    await mallory.as(() => mallory.session.startE2e("@mallory:x"));
+    await mallory.as(() => mallory.session.setUpE2e("mallory passphrase", "123456"));
+    server.rooms.get("!dm")!.members.push("@mallory:x");
+    server.rooms.get("!dm")!.rotate = true;
+    // Mallory's device makes the next key, for everyone the server lists.
+    mallory.session.noteRoomEncryption("!dm", true);
+    await mallory.as(() => mallory.session.syncRoomKeys("!dm", true));
+    expect(server.rooms.get("!dm")!.epoch).toBe(1);
+    await expect(alice.send("!dm", "for bob")).rejects.toThrow(/hasn't reached/);
+  }, 60_000);
+
+  it("shares with someone it added, and tells the others, who read their key", async () => {
+    const { alice, bob } = await pair();
+    const carol = await device("@carol:x");
+    await carol.as(() => carol.session.startE2e("@carol:x"));
+    await carol.as(() => carol.session.setUpE2e("carol passphrase", "123456"));
+    // Alice adds Carol (`addToGroupDM`): the server lists her and owes a key.
+    server.rooms.get("!dm")!.members.push("@carol:x");
+    server.rooms.get("!dm")!.rotate = true;
+    await alice.as(() => alice.session.confirmMembers("!dm", ["@carol:x"]));
+    expect(alice.session.getNewMembers()).toEqual({});
+    expect(server.copies.some((c) => c.user_id === "@carol:x" && c.epoch === 1)).toBe(true);
+
+    // Bob's device did not add her: it says so, and takes Alice's key.
+    await bob.as(() => bob.session.syncRoomKeys("!dm", true));
+    expect(bob.session.getNewMembers()).toEqual({ "!dm": ["@carol:x"] });
+    const { event } = await bob.send("!dm", "hi carol");
+    carol.session.noteRoomEncryption("!dm", true);
+    expect((await carol.read("!dm", [event]))[0].content.body).toBe("hi carol");
+  }, 60_000);
+
+  it("counts someone who left and came back as new", async () => {
+    const { alice } = await pair();
+    server.rooms.get("!dm")!.members = ["@alice:x"];
+    await alice.as(() => alice.session.syncRoomKeys("!dm", true));
+    server.rooms.get("!dm")!.members = ["@alice:x", "@bob:x"];
+    await alice.as(() => alice.session.syncRoomKeys("!dm", true));
+    expect(alice.session.getNewMembers()).toEqual({ "!dm": ["@bob:x"] });
+  }, 60_000);
+
   it("keeps this device's seed when the server's keys stop matching it", async () => {
     const { alice } = await pair();
     const seedBefore = alice.secrets.get("e2e-seed:@alice:x");

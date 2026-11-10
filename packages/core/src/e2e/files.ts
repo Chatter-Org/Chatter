@@ -19,7 +19,7 @@
 
 import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { randomBytes, utf8ToBytes } from "@noble/hashes/utils.js";
-import { apiDiscardInterruptedUpload, apiGetAuthenticatedBytes, apiUploadFile } from "../api";
+import { apiDiscardInterruptedUpload, apiGetAuthenticatedBytes, apiUploadFile, isServerUrl } from "../api";
 import { fingerprintFile, toUploadSource, type UploadSource } from "../uploadResume";
 import { fromB64, toB64 } from "./crypto";
 
@@ -93,7 +93,9 @@ export interface EncryptedFileInfo {
   size: number;
 }
 
-const ENCRYPTED_URL = /\/external\/[0-9a-f]{32}\/[^/?#]+\.enc$/i;
+/** The whole address, origin and all: an upload folder, an `.enc` name, and
+ *  nothing before or after that could send the fetch somewhere else. */
+const ENCRYPTED_URL = /^(?:https?:\/\/[^/?#\\]+)?\/external\/[0-9a-f]{32}\/[^/?#\\]+\.enc$/i;
 const MAX_NAME = 200;
 
 const b64url = (bytes: Uint8Array) => toB64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -112,12 +114,14 @@ export function encryptedFileLink(info: EncryptedFileInfo): string {
 }
 
 /** What a link in a message says about an encrypted file, or null when it is
- *  not one. */
+ *  not one. Only an upload on this server is one: the file is fetched with
+ *  the session, and anyone can post a link to their own site that looks like
+ *  an upload. */
 export function parseEncryptedFileLink(link: string): EncryptedFileInfo | null {
   const hash = link.indexOf("#");
   if (hash < 0) return null;
   const url = link.slice(0, hash);
-  if (!ENCRYPTED_URL.test(url)) return null;
+  if (!ENCRYPTED_URL.test(url) || !isServerUrl(url)) return null;
   try {
     const params = new Map<string, string>();
     for (const pair of link.slice(hash + 1).split("&")) {

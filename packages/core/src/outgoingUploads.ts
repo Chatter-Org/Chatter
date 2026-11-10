@@ -11,6 +11,23 @@ import type { UploadSource } from "./uploadResume";
 
 export type UploadStatus = "queued" | "uploading" | "processing" | "done" | "failed";
 
+/**
+ * Upload a file that is about to be posted in `roomId`. Into an encrypted
+ * conversation it is sealed on this device first, so the server only ever
+ * holds ciphertext — the server cannot check this itself, since the link sits
+ * inside the sealed message. Anything that posts a file outside the queue
+ * below (which makes the same choice) goes through here.
+ */
+export async function apiUploadFileForRoom(
+  roomId: string,
+  file: File | UploadSource,
+  onProgress?: (pct: number) => void,
+): Promise<{ url: string }> {
+  if (!isRoomEncrypted(roomId)) return apiUploadFile(file, onProgress);
+  if (getE2eStatus() !== "ready") throw new Error("Unlock encrypted messages to send files in this conversation");
+  return apiUploadEncryptedFile(file, onProgress);
+}
+
 /** A file being sent: a browser `File`, or a platform's own source. */
 export type OutgoingFileSource = File | UploadSource;
 

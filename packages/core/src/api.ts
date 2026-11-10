@@ -66,6 +66,30 @@ export function serverUrl(path: string): string {
 }
 
 /**
+ * Whether `url` is on this server: a path, or an absolute URL with the
+ * server's origin. Resolved the way `fetch` would, so `//elsewhere` and
+ * `/\elsewhere` count as the other site they are.
+ *
+ * The session's token is sent nowhere else. A message can carry a link to any
+ * site dressed up as an upload of ours, and fetching it with the token handed
+ * the session to whoever posted it.
+ */
+export function isServerUrl(url: string): boolean {
+  let origin: string;
+  try {
+    origin = new URL(_origin || host.origin()).origin;
+  } catch {
+    // No origin to compare with (tests, an unconfigured app): only a plain path.
+    return /^\/(?![/\\])/.test(url);
+  }
+  try {
+    return new URL(serverUrl(url), origin).origin === origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Every request to the server goes through here. With a token store the
  * cookie is not wanted at all — the token travels in the body — so none is
  * sent or kept, and there is never a second copy of the session to go stale.
@@ -245,6 +269,7 @@ async function authenticatedFetch(
   url: string,
   init?: RequestInit
 ): Promise<Response> {
+  if (!isServerUrl(url)) throw new Error("That address isn't on this server");
   const res = await serverFetch(url, {
     ...init,
     headers: { ...authHeaders(), ...init?.headers },

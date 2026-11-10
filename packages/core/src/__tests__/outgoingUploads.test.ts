@@ -305,3 +305,17 @@ describe("isSameTarget", () => {
     expect(isSameTarget(thread, { ...thread, threadEventId: "$b" })).toBe(false);
   });
 });
+
+describe("apiUploadFileForRoom", () => {
+  it("uploads in the clear only into a room that is not encrypted", async () => {
+    const { apiUploadFileForRoom } = await import("../outgoingUploads");
+    const { noteRoomEncryption } = await import("../e2e/session");
+    await apiUploadFileForRoom("!plain:x", fileNamed("clip.mp4"));
+    expect(apiUploadFile).toHaveBeenCalledTimes(1);
+
+    // An encrypted DM: never the plaintext upload, even when it can't seal.
+    noteRoomEncryption("!dm:x", true);
+    await expect(apiUploadFileForRoom("!dm:x", fileNamed("clip.mp4"))).rejects.toThrow(/Unlock/);
+    expect(apiUploadFile).toHaveBeenCalledTimes(1);
+  });
+});

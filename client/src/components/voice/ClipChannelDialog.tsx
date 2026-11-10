@@ -12,10 +12,10 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Hash, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { apiUploadFileForRoom } from "@chatter/core/outgoingUploads";
 import {
   apiGetPostableChannels,
   apiSendMessage,
-  apiUploadFile,
   type PostableChannel,
 } from "@/lib/api";
 
@@ -114,7 +114,8 @@ function ClipChannelForm({
     if (!ready) return;
     setPosting(true);
     try {
-      const { url } = await apiUploadFile(clip.file);
+      // Sealed first when the clip goes into an encrypted DM.
+      const { url } = await apiUploadFileForRoom(roomId, clip.file);
       // The title goes on the line above the file, the way the composer sends
       // text with an attachment, so every client already renders it.
       const caption = title.trim();

@@ -96,6 +96,20 @@ let pins: Record<string, Pin> = {};
  *  keys it gives, waiting for the person to accept them. */
 const changedKeys = new Map<string, PublicKeys>();
 let changedKeysSnapshot: string[] = [];
+/**
+ * Per room, the people this device has agreed to share its keys with
+ * (`e2e-rosters:<user>`): who was there when it first saw the room, who it
+ * added, and whoever the person confirmed since. See `checkRoster`.
+ */
+let rosters: Record<string, string[]> = {};
+/** Per room, members the server lists who are not on this device's roster.
+ *  Replaced, never changed in place, so it can be a store snapshot. */
+let newMembers: Record<string, string[]> = {};
+/** Bumped when someone is confirmed, with the time of each confirmation, so a
+ *  member list asked for before then does not drop them for not being on it
+ *  yet (`checkRoster`). */
+let rosterClock = 0;
+const confirmedAt = new Map<string, number>();
 const roomSyncs = new Map<string, Promise<void>>();
 /** Opened bodies by event id, for quoting in a reply: the server cannot
  *  quote what it cannot read, so the reply carries the quote sealed. */
@@ -113,6 +127,7 @@ const REPLY_QUOTE_CHARS = 100;
 const seedName = (userId: string) => `e2e-seed:${userId}`;
 const pinsName = (userId: string) => `e2e-pins:${userId}`;
 const roomsName = (userId: string) => `e2e-rooms:${userId}`;
+const rostersName = (userId: string) => `e2e-rosters:${userId}`;
 const recoveryName = (userId: string) => `e2e-recovery:${userId}`;
 
 /** The recovery key made for this account, until the person has been shown it
@@ -169,6 +184,10 @@ function saveRooms() {
   if (me) void host.secretSet(roomsName(me), JSON.stringify([...encryptedRooms])).catch(() => {});
 }
 
+function saveRosters() {
+  if (me) void host.secretSet(rostersName(me), JSON.stringify(rosters)).catch(() => {});
+}
+
 /** Remember that a room is encrypted, for good. */
 function markEncrypted(roomId: string) {
   if (encryptedRooms.has(roomId)) return;
@@ -189,15 +208,17 @@ export async function startE2e(userId: string): Promise<E2eStatus> {
   me = userId;
   const gen = generation;
   try {
-    const [record, stored, storedPins, storedRooms, storedRecovery] = await Promise.all([
+    const [record, stored, storedPins, storedRooms, storedRecovery, storedRosters] = await Promise.all([
       apiE2eGetIdentity(),
       host.secretGet(seedName(userId)).catch(() => null),
       readJson<typeof pins>(pinsName(userId), {}),
       readJson<string[]>(roomsName(userId), []),
       host.secretGet(recoveryName(userId)).catch(() => null),
+      readJson<typeof rosters>(rostersName(userId), {}),
     ]);
     if (gen !== generation) return status;
     pins = { ...storedPins, ...pins };
+    rosters = { ...storedRosters, ...rosters };
     for (const roomId of storedRooms) encryptedRooms.add(roomId);
     keysReplacedElsewhere = false;
     if (!record) {
@@ -366,6 +387,9 @@ function clearSession() {
   pins = {};
   changedKeys.clear();
   changedKeysSnapshot = [];
+  rosters = {};
+  newMembers = {};
+  confirmedAt.clear();
   roomSyncs.clear();
   openedBodies.clear();
   openedMeta.clear();
@@ -373,9 +397,9 @@ function clearSession() {
 }
 
 /** Signing out: this device forgets the seed, so the next person at it
- *  cannot read the conversation without the passphrase. The pins and the
- *  list of encrypted rooms stay: they are not secret, and they are what
- *  catches the server lying on the next sign-in. */
+ *  cannot read the conversation without the passphrase. The pins, the
+ *  rosters and the list of encrypted rooms stay: they are not secret, and
+ *  they are what catches the server lying on the next sign-in. */
 export async function stopE2e(): Promise<void> {
   const userId = me;
   clearSession();
@@ -477,6 +501,95 @@ export class E2eKeysChangedError extends Error {
   }
 }
 
+// ─── Who is in each room ────────────────────────────────────────────────────
+
+/** Raised instead of making a key that would reach someone this device has
+ *  not agreed to share the room with. */
+export class E2eNewMembersError extends Error {
+  readonly userIds: string[];
+  constructor(userIds: string[]) {
+    super("Someone new is in this conversation. Confirm they belong here before sending.");
+    this.userIds = userIds;
+  }
+}
+
+/** Per encrypted room, the members the server lists whom this device has not
+ *  agreed to share the room's keys with. */
+export function getNewMembers(): Record<string, string[]> {
+  return newMembers;
+}
+
+function publishNewMembers(roomId: string, fresh: string[]) {
+  const before = newMembers[roomId] ?? [];
+  if (before.length === fresh.length && before.every((id, i) => id === fresh[i])) return;
+  const next = { ...newMembers };
+  if (fresh.length > 0) next[roomId] = fresh;
+  else delete next[roomId];
+  newMembers = next;
+  notify();
+}
+
+/**
+ * Check the server's member list against the people this device agreed to
+ * share the room's keys with, and return those people.
+ *
+ * Membership is otherwise the server's word, and keys go to members: someone
+ * written into the database as a member was handed the current key by every
+ * device on its next sync, with nothing to show for it. So the device keeps
+ * its own list. The first time it sees a room, that is the room as it is,
+ * which is what the person is shown (pinned on first sight, as contacts' keys
+ * are). After that, someone the server adds is *new* until this device added
+ * them itself (`addToGroupDM`) or the person confirms them (`confirmMembers`).
+ * Until then nothing is wrapped to them here, no epoch that includes them is
+ * made here, and a current key they made is not used. Someone who leaves is
+ * dropped, so coming back is new again.
+ *
+ * `askedAt` is `rosterClock` when the list was asked for: someone confirmed
+ * since may simply not be on it yet.
+ */
+function checkRoster(roomId: string, listed: string[], askedAt: number): Set<string> {
+  const known = rosters[roomId];
+  const next = known
+    ? known.filter((id) => listed.includes(id) || (confirmedAt.get(`${roomId}\0${id}`) ?? -1) > askedAt)
+    : [...listed];
+  if (me && !next.includes(me)) next.push(me);
+  if (!known || known.length !== next.length || known.some((id, i) => id !== next[i])) {
+    rosters = { ...rosters, [roomId]: next };
+    saveRosters();
+  }
+  const roster = new Set(next);
+  publishNewMembers(
+    roomId,
+    listed.filter((id) => !roster.has(id)),
+  );
+  return roster;
+}
+
+/**
+ * Agree to share an encrypted room's keys with these people: someone this
+ * device just added, or someone the person confirmed belongs there. The room
+ * is synced again so they are given what they are now owed.
+ *
+ * A room this device has not seen yet needs nothing: it takes everyone listed
+ * the first time it sees it.
+ */
+export async function confirmMembers(roomId: string, userIds: string[]): Promise<void> {
+  const known = rosters[roomId];
+  if (!known) return;
+  rosterClock++;
+  for (const id of userIds) confirmedAt.set(`${roomId}\0${id}`, rosterClock);
+  const add = userIds.filter((id) => id && !known.includes(id));
+  if (add.length > 0) {
+    rosters = { ...rosters, [roomId]: [...known, ...add] };
+    saveRosters();
+  }
+  publishNewMembers(
+    roomId,
+    (newMembers[roomId] ?? []).filter((id) => !userIds.includes(id)),
+  );
+  if (identity && encryptedRooms.has(roomId)) await syncRoomKeys(roomId, true).catch(() => {});
+}
+
 // ─── Rooms and their keys ───────────────────────────────────────────────────
 
 /**
@@ -518,6 +631,7 @@ export function syncRoomKeys(roomId: string, fresh = false): Promise<void> {
 
 async function runRoomSync(roomId: string, gen: number, attempt = 0): Promise<void> {
   if (!identity || !me || gen !== generation) return;
+  const askedAt = rosterClock;
   const room = await apiE2eGetRoom(roomId);
   if (gen !== generation) return;
   if (!room.e2e) {
@@ -531,14 +645,15 @@ async function runRoomSync(roomId: string, gen: number, attempt = 0): Promise<vo
   roomEpochs.set(roomId, { epoch, rotate: !!room.rotate });
 
   const members = room.members ?? [];
+  const roster = checkRoster(roomId, members.map((m) => m.user_id), askedAt);
   const keyed = members.filter((m) => m.has_identity).map((m) => m.user_id);
   await loadPublicKeys([...keyed, ...(room.keys ?? []).map((k) => k.sender)]);
   if (gen !== generation) return;
-  openCopies(roomId, room);
+  openCopies(roomId, room, roster);
 
   try {
-    if (room.rotate) await startEpoch(roomId, epoch + 1, keyed);
-    else await handOut(roomId, room);
+    if (room.rotate) await startEpoch(roomId, epoch + 1, keyed, roster);
+    else await handOut(roomId, room, roster);
   } catch (err) {
     // Someone else got there first, or membership moved under us: look
     // again, a couple of times, and take whatever they made.
@@ -553,11 +668,12 @@ async function runRoomSync(roomId: string, gen: number, attempt = 0): Promise<vo
  *
  * Every copy must be signed by its maker's trusted keys. The current epoch's,
  * which this device will *send* under, must also come from someone in the
- * room whose keys have not changed: otherwise anyone the server vouched for
- * could hand this device a key of their own and read what it sends. Older
- * epochs are only read with, and may come from someone who has since left.
+ * room, on this device's roster, whose keys have not changed: otherwise anyone
+ * the server vouched for could hand this device a key of their own and read
+ * what it sends. Older epochs are only read with, and may come from someone
+ * who has since left.
  */
-function openCopies(roomId: string, room: E2eRoomState) {
+function openCopies(roomId: string, room: E2eRoomState, roster: Set<string>) {
   if (!identity || !me) return;
   const members = new Set((room.members ?? []).map((m) => m.user_id));
   const held = roomKeys.get(roomId) ?? new Map<number, Uint8Array>();
@@ -566,7 +682,7 @@ function openCopies(roomId: string, room: E2eRoomState) {
     const signer = publicKeys.get(copy.sender);
     if (!signer) continue;
     const current = copy.epoch === room.epoch;
-    if (current && (!members.has(copy.sender) || changedKeys.has(copy.sender))) continue;
+    if (current && (!members.has(copy.sender) || !roster.has(copy.sender) || changedKeys.has(copy.sender))) continue;
     const context = { roomId, epoch: copy.epoch, recipient: me, sender: copy.sender };
     let key = unwrapRoomKey(copy, context, identity, signer.sign);
     // A key the maker signed before they reset theirs, which this device
@@ -586,12 +702,16 @@ function openCopies(roomId: string, room: E2eRoomState) {
 }
 
 /** Make the room's next key and give every member who can hold one a copy.
- *  Refused while any of them has changed keys: the new key would go to
- *  whoever holds those. */
-async function startEpoch(roomId: string, epoch: number, recipients: string[]) {
+ *  Refused while any of them has changed keys, since the new key would go to
+ *  whoever holds those, or is not on this device's roster. The server takes
+ *  an epoch only with a copy for every member with keys, so leaving someone
+ *  out is not an option: it waits until they are confirmed. */
+async function startEpoch(roomId: string, epoch: number, recipients: string[], roster: Set<string>) {
   if (!identity || !me) return;
   const unreviewed = recipients.filter((id) => changedKeys.has(id));
   if (unreviewed.length > 0) throw new E2eKeysChangedError(unreviewed);
+  const unconfirmed = recipients.filter((id) => !roster.has(id));
+  if (unconfirmed.length > 0) throw new E2eNewMembersError(unconfirmed);
   const key = newRoomKey();
   const copies = recipients.flatMap((userId) => {
     const pub = publicKeys.get(userId);
@@ -604,15 +724,17 @@ async function startEpoch(roomId: string, epoch: number, recipients: string[]) {
 }
 
 /** Copies of the current key for members who have keys but no copy. Only
- *  possible for a device holding the key itself, and never for someone whose
- *  keys changed until that is accepted — a stolen session that replaced an
- *  account's keys must not be handed the conversation automatically. */
-async function handOut(roomId: string, room: E2eRoomState) {
+ *  possible for a device holding the key itself, never for someone whose keys
+ *  changed until that is accepted — a stolen session that replaced an
+ *  account's keys must not be handed the conversation automatically — and
+ *  never for someone not on this device's roster (`checkRoster`). */
+async function handOut(roomId: string, room: E2eRoomState, roster: Set<string>) {
   if (!identity || !me || room.epoch === undefined || room.epoch < 0) return;
   const key = roomKeys.get(roomId)?.get(room.epoch);
   if (!key) return;
   const owed = (room.members ?? []).filter(
-    (m) => m.has_identity && !m.has_key && publicKeys.get(m.user_id) && !changedKeys.has(m.user_id),
+    (m) =>
+      m.has_identity && !m.has_key && roster.has(m.user_id) && publicKeys.get(m.user_id) && !changedKeys.has(m.user_id),
   );
   if (owed.length === 0) return;
   const epoch = room.epoch;

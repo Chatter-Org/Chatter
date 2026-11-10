@@ -74,7 +74,7 @@ import {
 import { loadLastChannels, pickLandingChannel } from "../lastChannel";
 import { channelNotificationTag, settingsKey, type NotificationLevel, type NotificationSettings } from "../notifications";
 import { host } from "../platform";
-import { getE2eStatus, isRoomEncrypted, noteRoomEncryption, syncRoomKeys } from "../e2e/session";
+import { confirmMembers, getE2eStatus, isRoomEncrypted, noteRoomEncryption, syncRoomKeys } from "../e2e/session";
 import type { ProfileTheme } from "../profileTheme";
 import { displayUserId, userIdFromInput } from "../utils";
 import {
@@ -1239,6 +1239,10 @@ export function createStoreActions(ctx: StoreContext) {
 
   const addToGroupDM = async (roomId: string, userId: string) => {
     await apiAddToDM(roomId, userId);
+    // Added from here, so this device shares the conversation's keys with
+    // them without asking; anyone else the server adds has to be confirmed.
+    // The roster changes at once; the sync that hands them the key follows.
+    void confirmMembers(roomId, [userId]).catch(() => {});
   };
 
   const loadFriends = async () => {

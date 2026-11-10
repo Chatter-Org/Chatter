@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const stored = vi.hoisted(() => ({ files: new Map<string, Uint8Array>(), names: [] as string[], fail: false }));
 
 vi.mock("../api", () => ({
+  isServerUrl: (url: string) => url.startsWith("https://chat.example/"),
   apiDiscardInterruptedUpload: async () => {},
   apiGetAuthenticatedBytes: async (url: string) => stored.files.get(url)!,
   apiUploadFile: async (source: { name: string; chunk: (a: number, b: number) => Promise<Blob>; size: number }) => {
@@ -76,6 +77,17 @@ describe("encrypted files", () => {
     expect(parseEncryptedFileLink(`${url}#k=AAAA`)).toBeNull();
     const plain = "https://chat.example/external/0123456789abcdef0123456789abcdef/cat.png";
     expect(parseEncryptedFileLink(encryptedFileLink({ url: plain, key, name: "a", type: "", size: 1 }))).toBeNull();
+  });
+
+  it("only takes uploads on this server, at an upload's own address", () => {
+    const fragment = `#k=${"A".repeat(43)}&t=image%2Fpng&s=10&n=cat`;
+    const folder = "/external/0123456789abcdef0123456789abcdef/9f8e7d6c5b4a.enc";
+    expect(parseEncryptedFileLink(`https://chat.example${folder}${fragment}`)).not.toBeNull();
+    // Fetched with the session's token, so another site must never pass.
+    expect(parseEncryptedFileLink(`https://attacker.example${folder}${fragment}`)).toBeNull();
+    // Nor some other address on this server that merely ends like an upload.
+    expect(parseEncryptedFileLink(`https://chat.example/api/x?q=${folder}${fragment}`)).toBeNull();
+    expect(parseEncryptedFileLink(`https://chat.example/api${folder}${fragment}`)).toBeNull();
   });
 
   it("draws only the types it is willing to, never an SVG", () => {
