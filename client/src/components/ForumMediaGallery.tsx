@@ -5,7 +5,7 @@ import { AuthImage } from "@/components/AuthImage";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, File as FileIcon } from "lucide-react";
 import { FileAttachmentCard } from "@/components/FileAttachmentCard";
-import { forumAttachmentKind } from "@/lib/mediaTypes";
+import { forumAttachmentKind, videoPlaybackUrl } from "@/lib/mediaTypes";
 import { isVoiceMessageUrl } from "@chatter/core/voiceMessage";
 import { VoiceMessagePlayer } from "@/components/VoiceMessagePlayer";
 
@@ -174,7 +174,7 @@ export function ForumMediaGallery({
 function ForumVideo({ url, compact }: { url: string; compact?: boolean }) {
   return (
     <video
-      src={url}
+      src={videoPlaybackUrl(url)}
       poster={`${url}.thumb.jpg`}
       controls
       preload="metadata"

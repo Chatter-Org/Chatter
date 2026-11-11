@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/popover";
 import { cn, displayUserId } from "@/lib/utils";
 import { readProfileAccent } from "@/lib/profileTheme";
-import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS } from "@/lib/mediaTypes";
+import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, videoPlaybackUrl } from "@/lib/mediaTypes";
 import { isVoiceMessageUrl } from "@chatter/core/voiceMessage";
 import { VoiceMessagePlayer } from "@/components/VoiceMessagePlayer";
 import { reservedBox, thumbnailBox, type MediaDimensions } from "@/lib/mediaBox";
@@ -360,10 +360,11 @@ function SealedLinkPreviewCard({ preview }: { preview: SealedLinkPreview }) {
   );
 }
 
-/** Return the URL unchanged — the browser sends the media_session HttpOnly cookie
- *  automatically for /external/* requests, so no query-param token is needed. */
+/** The URL a video player loads. No token goes in it — the browser sends the
+ *  media_session HttpOnly cookie for /external/* by itself — but a WebM gets a
+ *  cache key of its own (`videoPlaybackUrl`). */
 function useAuthSrc(url: string): string {
-  return url;
+  return videoPlaybackUrl(url);
 }
 
 type SubtitleTrackDef = {
@@ -601,7 +602,7 @@ function LazyVideo({ url, dims, onExpand, onCast, castState }: { url: string; di
           />
         ) : (
           <video
-            src={url}
+            src={videoPlaybackUrl(url)}
             preload="metadata"
             className="w-full h-full max-h-[480px] rounded-md pointer-events-none"
           />
@@ -743,7 +744,7 @@ function LightboxVideo({
             el.play().then(() => { el.muted = false; }).catch(() => {});
           }
         }}
-        src={url}
+        src={videoPlaybackUrl(url)}
         controls
         className="max-w-[90vw] max-h-[90vh] object-contain rounded-md"
       >

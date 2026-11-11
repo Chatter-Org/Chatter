@@ -3052,6 +3052,22 @@ fn is_regenerable_derivative(uri_path: &str) -> bool {
         || uri_path.ends_with(".vtt")
 }
 
+/// Uploads the serving path may rewrite under their own name: an MP4 or MOV
+/// is faststarted or re-encoded there the first time it is played, and a WebM
+/// is given the duration `MediaRecorder` never wrote. Served `immutable`, a
+/// browser that fetched one before the rewrite kept the old bytes for a year —
+/// a clip with no length that could not be seeked, long after the server had
+/// fixed it. Matched on the decoded extension, like `upload_guard`.
+fn is_rewritten_in_place(uri_path: &str) -> bool {
+    let ext = percent_encoding::percent_decode_str(uri_path)
+        .decode_utf8_lossy()
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(ext.as_str(), "mp4" | "mov" | "m4v" | "webm" | "weba")
+}
+
 /// `Cache-Control` for a request under `/external`, by what the URL promises
 /// about its bytes.
 ///
@@ -3075,7 +3091,7 @@ fn cache_control_for(uri_path: &str) -> &'static str {
     const REVALIDATE: &str = "private, max-age=300, must-revalidate";
     const IMMUTABLE: &str = "private, max-age=31536000, immutable";
 
-    if is_regenerable_derivative(uri_path) {
+    if is_regenerable_derivative(uri_path) || is_rewritten_in_place(uri_path) {
         return REVALIDATE;
     }
     // `<32 hex folder>/<filename>`, exactly one level below the root. Anything
@@ -4594,6 +4610,19 @@ mod tests {
     }
 
     #[test]
+    fn a_video_the_server_may_rewrite_revalidates() {
+        // Faststart, the playable re-encode and WebM indexing all rewrite the
+        // upload under its own name. Pinned for a year, a clip fetched before
+        // its duration was filled in stayed unseekable in that browser.
+        for name in ["clip.webm", "clip.WEBM", "clip.mp4", "phone.mov", "a.m4v"] {
+            let path = format!("/{UPLOAD_FOLDER}/{name}");
+            let cc = cache_control_for(&path);
+            assert!(!cc.contains("immutable"), "{path} got {cc}");
+            assert!(cc.contains("must-revalidate"), "{path} got {cc}");
+        }
+    }
+
+    #[test]
     fn the_built_in_sounds_stay_replaceable() {
         // These sit at the `external/` root rather than in a folder of their
         // own, and an operator is free to swap the files. Pinning them for a
@@ -4649,7 +4678,7 @@ mod tests {
 
     #[test]
     fn a_served_file_and_a_range_of_one_both_get_the_header() {
-        let path = format!("/{UPLOAD_FOLDER}/clip.mp4");
+        let path = format!("/{UPLOAD_FOLDER}/song.mp3");
         for status in [StatusCode::OK, StatusCode::PARTIAL_CONTENT] {
             let resp = with_cache_control(
                 Response::builder()

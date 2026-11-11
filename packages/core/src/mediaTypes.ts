@@ -53,3 +53,20 @@ export function sortForumAttachments(uploaded: { file: { name: string; type: str
   }
   return sorted;
 }
+
+/**
+ * The URL a player should load an uploaded video from.
+ *
+ * A WebM from `MediaRecorder` (the clip engine's fallback, older clips) was
+ * uploaded with no duration, so a player could neither show its length nor
+ * seek. The server now fills the duration in, rewriting the file in place —
+ * but uploads were served `immutable` for a year, so a browser that had
+ * already fetched one kept playing the copy without it. The query is ignored
+ * by the server and only gives those players a cache key they have never
+ * seen. Only the player's `src`: thumbnails and caption sidecars are derived
+ * from the bare URL.
+ */
+export function videoPlaybackUrl(url: string): string {
+  if (!/^[^?#]*\.webm(?:[?#]|$)/i.test(url)) return url;
+  return url.includes("?") ? `${url}&indexed=1` : `${url}?indexed=1`;
+}
