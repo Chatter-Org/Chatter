@@ -227,6 +227,7 @@ async fn store_refresh_token(state: &AppState, token: &str, user_id: &str) {
         user_agent: "Unknown".to_string(),
         created_at: chrono::Utc::now().timestamp_millis(),
         session_id,
+        rotated_at: None,
     };
     let _ = collection.insert_one(record).await;
 }

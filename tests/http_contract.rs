@@ -102,6 +102,79 @@ async fn auth_contract_register_login_logout_and_failures() {
 }
 
 #[tokio::test]
+async fn refresh_survives_tabs_racing_for_the_same_token() {
+    let server = spawn_server().await;
+    let client = Client::new();
+    let (_, _, secret) =
+        register_user_with_secret(&client, &server.base_url, "alice", PASSWORD).await;
+    let login: Value = client
+        .post(format!("{}/_matrix/client/r0/login", server.base_url))
+        .json(&json!({
+            "username": "alice",
+            "password": PASSWORD,
+            "totp_code": totp_code(&secret, "alice"),
+            "device_id": "a2"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let original = login["refresh_token"].as_str().unwrap().to_string();
+
+    let refresh = |token: String| {
+        let client = client.clone();
+        let url = format!("{}/_matrix/client/r0/refresh", server.base_url);
+        async move {
+            client
+                .post(url)
+                .json(&json!({ "refresh_token": token }))
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    // Every tab shares one cookie, and after a restart they all refresh with
+    // it at once. The second must not be told the session is over.
+    let first = refresh(original.clone()).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first: Value = first.json().await.unwrap();
+    let second = refresh(original.clone()).await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let second: Value = second.json().await.unwrap();
+    let access = second["access_token"].as_str().unwrap().to_string();
+
+    // Both answers are still one session.
+    let sessions: Value = client
+        .get(format!("{}/api/account/sessions", server.base_url))
+        .header("authorization", bearer(&access))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let login_sessions = sessions["sessions"].as_array().unwrap().len();
+    // Registering also signed in once, so that session is listed too.
+    assert_eq!(login_sessions, 2);
+
+    // Signing this device out ends every token the race handed out.
+    let logout = client
+        .post(format!("{}/_matrix/client/r0/logout", server.base_url))
+        .json(&json!({ "refresh_token": first["refresh_token"] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(logout.status(), StatusCode::OK);
+    for token in [&original, second["refresh_token"].as_str().unwrap()] {
+        let after = refresh(token.to_string()).await;
+        assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+    }
+}
+
+#[tokio::test]
 async fn room_contract_join_leave_and_dm_dedup() {
     let server = spawn_server().await;
     let client = Client::new();

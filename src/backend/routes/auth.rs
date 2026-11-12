@@ -1002,10 +1002,7 @@ pub(crate) async fn logout(
         .and_then(|req| req.refresh_token)
         .filter(|token| !token.is_empty());
     if let Some(device_token) = device_token {
-        let refresh_tokens = state.db.collection::<RefreshTokenRecord>("refresh_tokens");
-        let _ = refresh_tokens
-            .delete_one(doc! { "token": &device_token })
-            .await;
+        revoke_refresh_session(&state, &device_token).await;
         return (clear_cookie_headers(), Json(json!({})));
     }
 
@@ -1018,13 +1015,26 @@ pub(crate) async fn logout(
     }
     // Also revoke the cookie-based refresh token if present
     if let Some(cookie_rt) = extract_refresh_cookie(&headers) {
-        let refresh_tokens = state.db.collection::<RefreshTokenRecord>("refresh_tokens");
-        let _ = refresh_tokens
-            .delete_one(doc! { "token": &cookie_rt })
-            .await;
+        revoke_refresh_session(&state, &cookie_rt).await;
     }
 
     (clear_cookie_headers(), Json(json!({})))
+}
+
+/// Revoke the session a refresh token belongs to: the token itself and every
+/// token rotation produced from it, including any a racing tab was handed.
+async fn revoke_refresh_session(state: &AppState, token: &str) {
+    let refresh_tokens = state.db.collection::<RefreshTokenRecord>("refresh_tokens");
+    if let Ok(Some(record)) = refresh_tokens
+        .find_one_and_delete(doc! { "token": token })
+        .await
+    {
+        if !record.session_id.is_empty() {
+            let _ = refresh_tokens
+                .delete_many(doc! { "user_id": &record.user_id, "session_id": &record.session_id })
+                .await;
+        }
+    }
 }
 
 pub(crate) async fn refresh(
@@ -1046,14 +1056,34 @@ pub(crate) async fn refresh(
 
     let user_id = claims.sub;
 
-    // Check if refresh token exists in MongoDB (not revoked)
+    // Check if refresh token exists in MongoDB (not revoked).
+    //
+    // Rotation marks the token rather than deleting it, and a marked token
+    // still renews for a short grace period. The browser's cookie is shared by
+    // every tab, so when a restart (or a new build, which reloads them all)
+    // sends several tabs to refresh at once, only the first could win a
+    // single-use token — the rest were told "revoked" and shown the login
+    // screen. A response lost to the server going down mid-refresh did the
+    // same to the one client that asked.
     let refresh_tokens = state.db.collection::<RefreshTokenRecord>("refresh_tokens");
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let grace_start = now_ms - REFRESH_REUSE_GRACE_MS;
     // A failed query and an absent token are not the same answer. Collapsing
     // both to None reported "your session is over" whenever the database was
     // merely unreachable — during a restart, say — and every client holding a
     // perfectly good session was shown the login screen for it.
     let found = match refresh_tokens
-        .find_one_and_delete(doc! { "token": &token_str })
+        .find_one_and_update(
+            doc! {
+                "token": &token_str,
+                "$or": [
+                    { "rotated_at": null },
+                    { "rotated_at": { "$gt": grace_start } },
+                ],
+            },
+            // Keep the first rotation time, so reuse cannot stretch the grace.
+            vec![doc! { "$set": { "rotated_at": { "$ifNull": ["$rotated_at", now_ms] } } }],
+        )
         .await
     {
         Ok(found) => found,
@@ -1066,12 +1096,17 @@ pub(crate) async fn refresh(
         }
     };
 
-    if found.is_none() {
+    let Some(found) = found else {
         return Err(error_response(
             StatusCode::UNAUTHORIZED,
             "Refresh token revoked or not found",
         ));
-    }
+    };
+
+    // Rotated tokens past their grace are dead; sweep this account's.
+    let _ = refresh_tokens
+        .delete_many(doc! { "user_id": &user_id, "rotated_at": { "$lte": grace_start } })
+        .await;
 
     // Look up user to include is_admin and totp_verified
     let users = state.db.collection::<UserRecord>("users");
@@ -1085,21 +1120,30 @@ pub(crate) async fn refresh(
 
     // Issue new token pair, preserving the IP/UA from the consumed token.
     // If the old token has no IP (pre-feature record), capture it from the current request.
-    let ip = found
-        .as_ref()
-        .map(|r| r.ip_address.as_str())
+    let ip = Some(found.ip_address.as_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| extract_ip(&headers, Some(peer)));
-    let ua = found
-        .as_ref()
-        .map(|r| r.user_agent.as_str())
+    let ua = Some(found.user_agent.as_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| extract_ua(&headers));
+    // The new token carries the old one's session id: it is the same device's
+    // session, so the sessions list shows it once and revoking it ends every
+    // token the rotation produced.
+    let session_id = Some(found.session_id)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(new_session_id);
     let new_access = create_access_token(&user_id, &state.jwt_secret);
     let new_refresh = create_refresh_token(&user_id, &state.jwt_secret);
-    store_refresh_token(&state, &new_refresh, &user_id, &ip, &ua).await;
+    // Handing out a token that was never stored would fail the next refresh.
+    // The old one still renews within the grace, so the client can retry.
+    if !insert_refresh_token(&state, &new_refresh, &user_id, &ip, &ua, session_id).await {
+        return Err(error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Storage unavailable, try again",
+        ));
+    }
 
     Ok((
         auth_cookie_headers(&new_access, &new_refresh),
@@ -1246,8 +1290,34 @@ async fn store_refresh_token(
     ip_address: &str,
     user_agent: &str,
 ) {
+    insert_refresh_token(
+        state,
+        token,
+        user_id,
+        ip_address,
+        user_agent,
+        new_session_id(),
+    )
+    .await;
+}
+
+fn new_session_id() -> String {
     use rand::Rng;
-    let session_id = hex::encode(rand::thread_rng().gen::<[u8; 16]>());
+    hex::encode(rand::thread_rng().gen::<[u8; 16]>())
+}
+
+/// How long a rotated refresh token keeps renewing (see `refresh`).
+const REFRESH_REUSE_GRACE_MS: i64 = 60_000;
+
+/// Store a refresh token; false when the database did not take it.
+async fn insert_refresh_token(
+    state: &AppState,
+    token: &str,
+    user_id: &str,
+    ip_address: &str,
+    user_agent: &str,
+    session_id: String,
+) -> bool {
     let collection = state.db.collection::<RefreshTokenRecord>("refresh_tokens");
     let record = RefreshTokenRecord {
         token: token.to_string(),
@@ -1257,8 +1327,9 @@ async fn store_refresh_token(
         user_agent: user_agent.to_string(),
         created_at: chrono::Utc::now().timestamp_millis(),
         session_id,
+        rotated_at: None,
     };
-    let _ = collection.insert_one(record).await;
+    collection.insert_one(record).await.is_ok()
 }
 
 /// Extract the best available client IP from request headers, falling back to the peer address.
@@ -1303,8 +1374,14 @@ pub(crate) async fn list_sessions(
         .await
         .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "DB error"))?;
 
+    // Rotation leaves tokens behind that share a session id: the one just
+    // traded in, and any a racing tab was given. They are one session.
     let mut sessions = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     while let Ok(Some(record)) = cursor.try_next().await {
+        if record.rotated_at.is_some() || !seen.insert(record.session_id.clone()) {
+            continue;
+        }
         sessions.push(json!({
             "session_id": record.session_id,
             "ip_address": record.ip_address,

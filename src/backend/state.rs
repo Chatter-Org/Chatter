@@ -768,6 +768,11 @@ pub(crate) struct RefreshTokenRecord {
     pub(crate) created_at: i64, // ms since epoch
     #[serde(default)]
     pub(crate) session_id: String,
+    /// When `/refresh` traded this token for a new one (ms since epoch).
+    /// A rotated token still renews for `REFRESH_REUSE_GRACE_MS`, so a second
+    /// tab or a response lost to a restart does not end the session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) rotated_at: Option<i64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
