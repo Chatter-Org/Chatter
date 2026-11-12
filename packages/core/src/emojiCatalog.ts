@@ -33,6 +33,11 @@ for (const [name, emoji] of Object.entries(STANDARD_SHORTCODES)) {
   emojiToNames[emoji].push(name);
 }
 
+/** The shortcode names a standard emoji answers to (["thumbsup", "+1"]), or none. */
+export function emojiShortcodes(emoji: string): string[] {
+  return emojiToNames[emoji] ?? [];
+}
+
 // --- Frequently Used emoji tracking via localStorage ---
 const FREQ_STORAGE_KEY = "emoji_freq";
 const FREQ_TOP_N = 20;
