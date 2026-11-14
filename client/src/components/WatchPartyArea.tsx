@@ -13,6 +13,7 @@ import { Play, Pause, Film, RefreshCw, Volume2, VolumeX } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AuthAvatarImage } from "./AuthImage";
 import { displayUserId } from "@/lib/utils";
+import { videoPlaybackUrl } from "@/lib/mediaTypes";
 
 /** Re-seek once a player is further than this from the shared timeline. Above
  *  a second or so the drift is visible; below it, correcting is worse than the
@@ -109,8 +110,9 @@ export function WatchPartyArea({ onJoinVoice }: { onJoinVoice: () => void }) {
   const isYoutube = ytId !== null;
 
   // The media_session HttpOnly cookie (Path=/external) is sent automatically by the
-  // browser for <video> elements — no ?access_token= query param is needed.
-  const videoSrc = watchState.videoUrl;
+  // browser for <video> elements — no ?access_token= query param is needed. An
+  // upload the server may rewrite gets a cache key of its own (`videoPlaybackUrl`).
+  const videoSrc = videoPlaybackUrl(watchState.videoUrl);
 
   useEffect(() => {
     isYoutubeRef.current = isYoutube;

@@ -361,8 +361,8 @@ function SealedLinkPreviewCard({ preview }: { preview: SealedLinkPreview }) {
 }
 
 /** The URL a video player loads. No token goes in it — the browser sends the
- *  media_session HttpOnly cookie for /external/* by itself — but a WebM gets a
- *  cache key of its own (`videoPlaybackUrl`). */
+ *  media_session HttpOnly cookie for /external/* by itself — but an upload the
+ *  server may rewrite gets a cache key of its own (`videoPlaybackUrl`). */
 function useAuthSrc(url: string): string {
   return videoPlaybackUrl(url);
 }

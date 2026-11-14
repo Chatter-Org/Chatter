@@ -55,18 +55,36 @@ export function sortForumAttachments(uploaded: { file: { name: string; type: str
 }
 
 /**
+ * An upload the server may rewrite under its own name (`is_rewritten_in_place`
+ * in media.rs): `/external/<32 hex folder>/<file>` with one of these
+ * extensions. The folder is what makes it one of this server's uploads; a
+ * video linked from anywhere else is left exactly as it was given.
+ */
+const REWRITTEN_UPLOAD_VIDEO = /\/external\/[0-9a-f]{32}\/[^/?#]+\.(?:mp4|mov|m4v|webm|mkv|avi|wmv|flv|ts)(?:[?#]|$)/i;
+
+/** Ignored by the server. Changed only if copies cached under it go stale
+ *  with nothing on the server able to reach them; `indexed=1` was the first,
+ *  and it covered WebM alone. */
+const PLAYBACK_CACHE_KEY = "cache=2";
+
+/**
  * The URL a player should load an uploaded video from.
  *
- * A WebM from `MediaRecorder` (the clip engine's fallback, older clips) was
- * uploaded with no duration, so a player could neither show its length nor
- * seek. The server now fills the duration in, rewriting the file in place —
- * but uploads were served `immutable` for a year, so a browser that had
- * already fetched one kept playing the copy without it. The query is ignored
- * by the server and only gives those players a cache key they have never
- * seen. Only the player's `src`: thumbnails and caption sidecars are derived
- * from the bare URL.
+ * The server rewrites uploads in place: it fills in the duration a
+ * `MediaRecorder` WebM never wrote, and it re-encodes an MP4, MOV or
+ * converted MKV whose picture no browser draws (HEVC, 10-bit or 4:2:2 H.264).
+ * Uploads were served `immutable` for a year, so a browser that had fetched
+ * one before its repair kept playing the old copy — a clip it could not seek,
+ * or sound over a black picture with a thumbnail that looked fine, since the
+ * thumbnail revalidates. The server now revalidates these; the query gives
+ * the copies pinned before that a cache key they have never seen. Only the
+ * player's `src`: thumbnails and caption sidecars are derived from the bare
+ * URL.
  */
 export function videoPlaybackUrl(url: string): string {
-  if (!/^[^?#]*\.webm(?:[?#]|$)/i.test(url)) return url;
-  return url.includes("?") ? `${url}&indexed=1` : `${url}?indexed=1`;
+  if (!REWRITTEN_UPLOAD_VIDEO.test(url)) return url;
+  const hash = url.indexOf("#");
+  const base = hash === -1 ? url : url.slice(0, hash);
+  const fragment = hash === -1 ? "" : url.slice(hash);
+  return `${base}${base.includes("?") ? "&" : "?"}${PLAYBACK_CACHE_KEY}${fragment}`;
 }

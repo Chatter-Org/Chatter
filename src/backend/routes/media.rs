@@ -3053,11 +3053,15 @@ fn is_regenerable_derivative(uri_path: &str) -> bool {
 }
 
 /// Uploads the serving path may rewrite under their own name: an MP4 or MOV
-/// is faststarted or re-encoded there the first time it is played, and a WebM
-/// is given the duration `MediaRecorder` never wrote. Served `immutable`, a
+/// is faststarted or re-encoded there the first time it is played, a WebM
+/// is given the duration `MediaRecorder` never wrote, and an MKV, AVI, WMV,
+/// FLV or TS is answered with the MP4 converted from it — which is made again
+/// when an older ladder left one no browser can draw. Served `immutable`, a
 /// browser that fetched one before the rewrite kept the old bytes for a year —
-/// a clip with no length that could not be seeked, long after the server had
-/// fixed it. Matched on the decoded extension, like `upload_guard`.
+/// a clip with no length that could not be seeked, or an HEVC picture that
+/// played as sound over black, long after the server had fixed it. Matched on
+/// the decoded extension, like `upload_guard`. Copies already pinned are
+/// reached from the client side, by `videoPlaybackUrl` in core.
 fn is_rewritten_in_place(uri_path: &str) -> bool {
     let ext = percent_encoding::percent_decode_str(uri_path)
         .decode_utf8_lossy()
@@ -3065,7 +3069,10 @@ fn is_rewritten_in_place(uri_path: &str) -> bool {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    matches!(ext.as_str(), "mp4" | "mov" | "m4v" | "webm" | "weba")
+    matches!(
+        ext.as_str(),
+        "mp4" | "mov" | "m4v" | "webm" | "weba" | "mkv" | "avi" | "wmv" | "flv" | "ts"
+    )
 }
 
 /// `Cache-Control` for a request under `/external`, by what the URL promises
@@ -4613,8 +4620,21 @@ mod tests {
     fn a_video_the_server_may_rewrite_revalidates() {
         // Faststart, the playable re-encode and WebM indexing all rewrite the
         // upload under its own name. Pinned for a year, a clip fetched before
-        // its duration was filled in stayed unseekable in that browser.
-        for name in ["clip.webm", "clip.WEBM", "clip.mp4", "phone.mov", "a.m4v"] {
+        // its duration was filled in stayed unseekable in that browser. An
+        // MKV and its kin are answered with an MP4 that is made again when an
+        // older ladder left an HEVC picture in it: pinned, that stayed black.
+        for name in [
+            "clip.webm",
+            "clip.WEBM",
+            "clip.mp4",
+            "phone.mov",
+            "a.m4v",
+            "rip.mkv",
+            "old.avi",
+            "a.wmv",
+            "a.flv",
+            "broadcast.ts",
+        ] {
             let path = format!("/{UPLOAD_FOLDER}/{name}");
             let cc = cache_control_for(&path);
             assert!(!cc.contains("immutable"), "{path} got {cc}");
